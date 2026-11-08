@@ -145,3 +145,6 @@
 | `game` | универсальный бот: вопрос / Wordle / клавиши / поле + флаг | `python toolbox.py game --connect h:p --auto` |
 | `wordle` | Wordle: фильтр кандидатов + энтропия | `python toolbox.py wordle play --connect h:p` |
 | `formats` | память незнакомых разметок (`Г Ж С`, `1 2 0`) | `python toolbox.py formats --list` |
+| `ocr` | текст с картинки/кадра: капча, скриншот, флаг на фото | `python toolbox.py ocr pic.png --variants` |
+| `video` | кадры MP4/GIF: OCR, отличия между кадрами | `python toolbox.py video clip.mp4 --every 5` |
+| `nearlines` | 100000 почти одинаковых строк: уникальные и отличия | `python toolbox.py nearlines file.txt` |

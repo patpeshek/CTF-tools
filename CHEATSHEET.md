@@ -115,6 +115,10 @@ python misc/formats.py --list                        # кэш разметок
 python toolbox.py ppc "12 ? 5 = 17"                     # что движок понял
 python tests/ppc_bench.py --only arith,captcha       # локальный стенд PPC
 python misc/formats.py --set "ГЖС" --green Г --yellow Ж --gray С
+python misc/ocr.py pic.png --variants                  # текст с картинки
+python misc/video.py clip.mp4 --every 5                # кадры + OCR
+python misc/nearlines.py file.txt                      # 100000 почти одинаковых строк
+python tests/corpus_bench.py --category crypto         # прогон по реальным задачам
 - Геолокация: подписи, вывески, архитектура, растительность, тени (SunCalc).
 - Никнеймы: поиск по username, архивы (Wayback Machine).
 

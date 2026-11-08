@@ -245,6 +245,13 @@ def try_all(s: str, show_all: bool = False):
                 m = re.search(rb"[A-Za-z][A-Za-z0-9_]{1,20}\{[ -~]{2,100}\}", val)
                 if m:
                     add(name + "/latin-1", val.decode("latin-1", "replace"))
+            # «NOT»: побитовая инверсия после base64/hex — частая маска флага
+            try:
+                inv = bytes(b ^ 0xFF for b in val)
+                for enc, txt in decode_bytes(inv, limit=1):
+                    add(name + "+NOT" if enc == "utf-8" else f"{name}+NOT/{enc}", txt)
+            except Exception:
+                pass
             return
         val = str(val)
         val = str(val)

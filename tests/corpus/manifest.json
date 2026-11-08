@@ -1,0 +1,2230 @@
+{
+ "corpus": "bcactf-5.0 + bcactf-4.0 + camp-2023",
+ "root": null,
+ "sources": [
+  {
+   "name": "bcactf-5.0",
+   "url": "https://github.com/BCACTF/bcactf-5.0",
+   "commit": "0bda7285e7ff79e4180ed657b76467a8d9023b16"
+  },
+  {
+   "name": "bcactf-4.0",
+   "url": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "name": "camp-2023",
+   "url": "https://github.com/BCACTF/camp-2023"
+  }
+ ],
+ "note": "эталонные флаги из challenge.yml/flag.txt; в отчёте маскируются. В каталогах задач лежат только выданные игрокам файлы (без flag.txt/solve).",
+ "tasks": [
+  {
+   "id": "23-719",
+   "name": "23 719",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 50,
+   "description": "that's a nice unanimous supreme court decision you've made public, sure would be a shame if someone didn't properly clean up remnants of a prior version of the document before publishing it",
+   "flag": "bcactf{rEAl_WOrLd_appLIc4t1ons_Of_cTf_ad04cc78601d5da8}",
+   "path": "forensic/23_719",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\forensic\\23_719\\23-719_19m2.pdf",
+   "skip": null,
+   "files": [
+    "23-719_19m2.pdf"
+   ]
+  },
+  {
+   "id": "bjuggler",
+   "name": "bjuggler",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 50,
+   "description": "My friend here has got some issues... Mainly, he can't stop juggling. P.S Dockerfile is provided but not necessary for Juggler",
+   "flag": "bcactf{juGGLy_Sup3R_JUgGLY_81520b089934c}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "bjuggler2",
+   "name": "bjuggler2",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 150,
+   "description": "Remember my old friend the juggler? Well apparently he's got another flag somewhere on his `system` Use the same port as *Juggler 1*. Also here, take this Dockerfile **(Admin is away and challenge may be unsolvable, attempt at your own risk)**",
+   "flag": "bcactf{UHM_YOU_Sh0ULdN'T_Be_hEre_951cd948f02f3}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "bporkpwnpie",
+   "name": "bporkpwnpie",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 150,
+   "description": "My friends graphic design tool, has some issues... can you help me get shell? **(Admin is away and challenge may be unsolvable, attempt at your own risk)**",
+   "flag": "bcactf{rANDOm_ChaLL_n4ME_moMENT_58f0e0b1f281e}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "bpwnage",
+   "name": "bpwnage",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 100,
+   "description": "It's either a bug, a hack, an exploit, or it's pwnage. Let this challenge stand as one of the first of many stairs to mastery over that which can only be described as pwn.",
+   "flag": "bcactf{0nE_two_thR3E_f0ur_567___sT3ps_t0_PwN4G3_70cc0e5edd6ea}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "broken-c-code",
+   "name": "broken c code",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 50,
+   "description": "Help! I was trying to make a flag printer but my C code just prints random garbage and I can't figure out why! Can you help me? Here's the file:",
+   "flag": "bcactf{c_c0dE_fIXeD_7H4NK5_762478276}",
+   "path": "rev/Broken_C_Code",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Broken_C_Code\\flagprinter",
+   "skip": null,
+   "files": [
+    "flagprinter"
+   ]
+  },
+  {
+   "id": "canary-keeper-0",
+   "name": "canary keeper 0",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 100,
+   "description": "My friend gave me this executable, but it keeps giving me errors. Can you get the flag?",
+   "flag": "bcactf{s1mple_CANaRY_9b36bd9f3fd2f}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "cha-cha-slide",
+   "name": "cha cha slide",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 100,
+   "description": "I made this cool service that lets you protect your secrets with state-of-the-art encryption. It's so secure that we don't even tell you the key we used to encrypt your message!",
+   "flag": "bcactf{b3_C4rEFu1_wItH_crypT0Gr4phy_7d12be3b}",
+   "path": null,
+   "target": null,
+   "skip": "сервер с шифром — нужен запущенный сервис"
+  },
+  {
+   "id": "chalkboardgag",
+   "name": "chalkboardgag",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 25,
+   "description": "Matt Groening sent me an unused chalkboard gag, he says there's something special inside of it.",
+   "flag": "bcactf{BaRT_W0U1D_B3_PR0uD}",
+   "path": "forensic/Chalkboard_Gag",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\forensic\\Chalkboard_Gag\\chalkboardgag.txt",
+   "skip": null,
+   "files": [
+    "chalkboardgag.txt"
+   ]
+  },
+  {
+   "id": "cinnamon-dynamics",
+   "name": "cinnamon dynamics",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 175,
+   "description": "Cinnamon Dynamics, an innovative technology company, provides a service for the public to execute short scripts to query some limited information about the company. To combat abuse, they've instated a requirement for all scripts to be approved by a company employee before they can be executed. Appro",
+   "flag": "bcactf{Th1S_I5_JuST_4_l1TtLe_t0o_1N5ECur3_95af828f32}",
+   "path": null,
+   "target": null,
+   "skip": "сервер с шифром — нужен запущенный сервис"
+  },
+  {
+   "id": "cookie-clicker",
+   "name": "cookie clicker",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "",
+   "flag": "bcactf{H0w_Did_Y0u_Cl1ck_S0_M4ny_T1mes_123}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "crabby",
+   "name": "crabby",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 125,
+   "description": "I asked somebody to open source a specific project, but they're being very crabby about it. Instead, they sent me this binary and said \"Everything is open source if you can read assembly\". I can't read assembly, can you help me out?",
+   "flag": "bcactf{h0W_Ru$7ic_f5ui3roifj354uybr823}",
+   "path": "rev/Crabby",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Crabby\\crabby",
+   "skip": null,
+   "files": [
+    "crabby"
+   ]
+  },
+  {
+   "id": "discord",
+   "name": "discord",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 10,
+   "description": "Welcome to BCACTF 5.0! Please join [our Discord server](https://discord.gg/NP9Bb7PDWf) to find the flag.",
+   "flag": "bcactf{w3lc0m3_t0_bC@c7F_5_fby4uf4dijreferuvg}",
+   "path": null,
+   "target": null,
+   "skip": "нет локальных файлов"
+  },
+  {
+   "id": "duck-finder",
+   "name": "duck finder",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "This old service lets you make some interesting queries. It hasn't been updated in a while, though.",
+   "flag": "bcactf{a_l1Ttl3_0uTd4T3d_qYR8IeICVTLPU0uK}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "enc-shop",
+   "name": "enc shop",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 50,
+   "description": "After realizing how insecure the systems of many companies are (they're always getting hacked), I decided to start offering Encryption as a Service (EaaS). With such a strong guarantee of security, I'll even give you the source code AND my encrypted super secret flag.",
+   "flag": "bcactf{w0w_@lg3br@_d3in48uth934r}",
+   "path": null,
+   "target": null,
+   "skip": "сервер с оракулом — нужен запущенный сервис"
+  },
+  {
+   "id": "flagserver",
+   "name": "flagserver",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 100,
+   "description": "It looks like Ircus have been using a fully exposed application to access their flags! Look at this traffic I captured. I can't seem to get it to work, though... can you help me get the flag for this very challenge? NOTE: During normal operation, directly connecting to flagserver using nc should giv",
+   "flag": "bcactf{thankS_5OCK3ts_and_tHreADInG_clA5s_2f6fb44c998fd8}",
+   "path": "forensic/flagserver",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\forensic\\flagserver\\flagserver.pcapng.xz",
+   "skip": null,
+   "files": [
+    "flagserver.pcapng.xz"
+   ]
+  },
+  {
+   "id": "flagtureiser",
+   "name": "flagtureiser",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 50,
+   "description": "Here's a totally normal Minecraft mod (1.19.4, Forge) I've been making, check it out! (You do not need Minecraft to solve this challenge)",
+   "flag": "bcactf{fRaCtur31s3R_sT8gE_z3R0}",
+   "path": "rev/Flagtureiser",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Flagtureiser\\flagtureiser-4.2.0.6.9.jar",
+   "skip": null,
+   "files": [
+    "flagtureiser-4.2.0.6.9.jar"
+   ]
+  },
+  {
+   "id": "float-manip",
+   "name": "float manip",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 125,
+   "description": "This code seems to encode the flag in a special way involving floats. Can you find out what is happening?",
+   "flag": "bcactf{I_1oV3_FlOat_m@N1Pu14t10N_E8FU106v}",
+   "path": "rev/float_manip",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\float_manip",
+   "skip": null,
+   "files": [
+    "encoded.bin",
+    "float-manip.cpp"
+   ]
+  },
+  {
+   "id": "fogblaze",
+   "name": "fogblaze",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 125,
+   "description": "Can you bypass this website's new stateless CAPTCHA system?",
+   "flag": "bcactf{b33p_B0oP_iM_a_B0t_1b728b571b9a}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "fps-frenzy",
+   "name": "fps frenzy",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 75,
+   "description": "My friend Timmy made a game at the MoCO (Master of Code Olympiad) in just 50 nanoseconds! He told me that he hid a secret text somewhere in the game and placed a bet that I would not solve it. I'm not good at games, so can you please find this text? [Windows](https://drive.google.com/file/d/1tmNEy_U",
+   "flag": "bcactf{7H3_14w_of_c0S1nEs_4b723470334e}",
+   "path": "rev/FPS_Frenzy",
+   "target": null,
+   "skip": "нет файлов",
+   "files": []
+  },
+  {
+   "id": "geolocation",
+   "name": "geolocation",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 100,
+   "description": "Here are some pictures. The flag format will be bcactf{ANS1_ANS2_ANS3}, where: - ANS1 is the first word of the [what3words](https://what3words.com/) code of the main Google Maps pin on the circled building in geolocation-1.jpg. For example, if it was the Empire State Building (heave.wipes.clay), ANS",
+   "flag": "bcactf{beeline_fairy_slacker}",
+   "path": null,
+   "target": null,
+   "skip": "геолокация по фото — нужен внешний поиск"
+  },
+  {
+   "id": "ghost",
+   "name": "ghost",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 75,
+   "description": "",
+   "flag": "bcactf{5YmB0l_n4MeS}",
+   "path": "rev/ghost",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\ghost\\chall",
+   "skip": null,
+   "files": [
+    "chall"
+   ]
+  },
+  {
+   "id": "historical",
+   "name": "historical",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 50,
+   "description": "One of our problem writers got sent back in time! We found a piece a very very old piece of parchment where he disappeared, alongside a long cylinder. See if you can uncover his flag!",
+   "flag": "bcactf{5c7t4l3_h15t04y_qe829xl1}",
+   "path": null,
+   "target": null,
+   "skip": "нет локальных файлов"
+  },
+  {
+   "id": "idk",
+   "name": "idk",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 150,
+   "description": "i threw some random stuff at a wall",
+   "flag": "bcactf{H1gH_QUAlITy_coDE_ccec60e091ba2}",
+   "path": "rev/idk",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\idk\\chall",
+   "skip": null,
+   "files": [
+    "chall"
+   ]
+  },
+  {
+   "id": "inaccessible",
+   "name": "inaccessible",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 50,
+   "description": "I wrote a function to generate the flag, but don't worry, I bet you can't access it!",
+   "flag": "bcactf{W0w_Y0u_m4d3_iT_b810c453a9ac9}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "js-learning",
+   "name": "js learning",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 50,
+   "description": "Hey, can you help me on this Javascript problem? Making strings is hard.",
+   "flag": "bcactf{1ava5cRIPT_mAk35_S3Nse_48129846}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "magic",
+   "name": "magic",
+   "category": "foren",
+   "all_categories": [
+    "foren",
+    "rev"
+   ],
+   "points": 75,
+   "description": "I found this piece of paper on the floor. I was going to throw it away, but it somehow screamed at me while I was holding it?!",
+   "flag": "bcactf{InTerACtIv3_PdFs_W0W_cbd14436e6aea8}",
+   "path": "rev/magic",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\magic\\magic.pdf",
+   "skip": null,
+   "files": [
+    "magic.pdf"
+   ]
+  },
+  {
+   "id": "manipulate-spreadsheet-2",
+   "name": "manipulate spreadsheet 2",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 75,
+   "description": "Sequel to a challenge from BCACTF 4. The flag lies within: https://docs.google.com/spreadsheets/d/1kGrbQpZ4oUt0ChKvwGa4PDJQ1QvUl73Qpeo585vQ6s4/edit?usp=sharing",
+   "flag": "bcactf{600D_job_Using_900G13_SHe3t5}",
+   "path": "forensic/Manipulate_Spreadsheet_2",
+   "target": null,
+   "skip": "нет файлов",
+   "files": []
+  },
+  {
+   "id": "mathjail",
+   "name": "mathjail",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 75,
+   "description": "Just a fun python calculator! Good for math class.",
+   "flag": "bcactf{math_is_so_difficult_right?8943yfg09whgh3r89ghwerp}",
+   "path": null,
+   "target": null,
+   "skip": "remote pyjail — нужен запущенный сервис"
+  },
+  {
+   "id": "michaelsoft-gring",
+   "name": "michaelsoft gring",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "From the makers of famous operating system Binbows comes a new search engine to rival the best: Gring. The sqlite database is super secure and has only the best search results picked by our custom AI (we forgot to train it but that's not important).",
+   "flag": "bcactf{59L_1n1ECTeD_026821}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "miracle",
+   "name": "miracle",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 50,
+   "description": "You'll need a miracle to get this flag. The server requires you to solve an easy addition problem, but you only get the flag if the bits magically flip to form another answer.",
+   "flag": "bcactf{j$_is_W3Ird_?rfuhie4923}",
+   "path": null,
+   "target": null,
+   "skip": "браузерная задача — нужен браузер"
+  },
+  {
+   "id": "moc-inc",
+   "name": "moc inc",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "Towards the end of last month, we started receiving reports about suspicious activity coming from a company called MOC, Inc. Our investigative team has tracked down their secret company portal and cracked the credentials to the admin account, but could not bypass the advanced 2FA system. Can you fin",
+   "flag": "bcactf{rNg_noT_r4Nd0m_3n0uGH_a248dc91}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "my-brain-hurts",
+   "name": "my brain hurts",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 25,
+   "description": "My friend sent me a weird string and a \"program\" they wrote, although it doesn't seem anything interpretable to me. Can you help me find out what they put through their program?",
+   "flag": "bcactf{Br41n_fcK-1s-fUn}",
+   "path": "rev/My_Brain_Hurts",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\My_Brain_Hurts",
+   "skip": null,
+   "files": [
+    "script.txt",
+    "string.txt"
+   ]
+  },
+  {
+   "id": "mysterious-melody",
+   "name": "mysterious melody",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 100,
+   "description": "- We intercepted this mysterious melody being played on a secretive radio station. Can you figure out what it means?",
+   "flag": "bcactf{beautiful_melody_beautiful_harmony}",
+   "path": "forensic/Mysterious_Melody",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\forensic\\Mysterious_Melody\\melody.wav.xz",
+   "skip": null,
+   "files": [
+    "melody.wav.xz"
+   ]
+  },
+  {
+   "id": "no-sql",
+   "name": "no sql",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 25,
+   "description": "I found this database that does not use SQL, is there any way to break it?",
+   "flag": "bcactf{R3gex_WH1z_54dfa9cdba13}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "palette",
+   "name": "palette",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 200,
+   "description": "I've written a script in my favorite programming language! It takes in an arbitrary string and returns a thematic color palette. You can find it at https://tinyurl.com/yuha3yfx.",
+   "flag": "bcactf{YaY_sPRead5heETs_f0deb}",
+   "path": null,
+   "target": null,
+   "skip": "данные по внешней ссылке (tinyurl), в файлах только картинка-подсказка"
+  },
+  {
+   "id": "phone-number",
+   "name": "phone number",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 50,
+   "description": "I was trying to sign into this website, but now it's asking me for a phone number. The way I'm supposed to input it is strange. Can you help me sign in? My phone number is 1234567890",
+   "flag": "bcactf{PHoN3_num8eR_EntER3D!_17847928}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "physics-test",
+   "name": "physics test",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 125,
+   "description": "Help me get an A in Physics! My teacher made this review program for us.",
+   "flag": "bcactf{yoU_p4ssED_b0ef030870ec18}",
+   "path": null,
+   "target": null,
+   "skip": "нет локальных файлов"
+  },
+  {
+   "id": "pyjail-1",
+   "name": "pyjail 1",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 100,
+   "description": "I cannot get the python file to print the flag, are you able to?",
+   "flag": "bcactf{PyTH0n_pR0_03ed78292b89c}",
+   "path": null,
+   "target": null,
+   "skip": "remote pyjail — нужен запущенный сервис"
+  },
+  {
+   "id": "pyjail-2",
+   "name": "pyjail 2",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 125,
+   "description": "The prison has increased security measures since you last escaped it. Can you still manage to escape?",
+   "flag": "bcactf{PyTH0n_M4st3R_Pr0veD}",
+   "path": null,
+   "target": null,
+   "skip": "remote pyjail — нужен запущенный сервис"
+  },
+  {
+   "id": "pyjail-revenge",
+   "name": "pyjail revenge",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 125,
+   "description": "Some of y'all cheesed the previous two jailbreaks, so it looks like they've put even more band-aids on the system...",
+   "flag": "bcactf{Wr1tING_pyJaiL5_iS_hArD_f56450aadefcc}",
+   "path": null,
+   "target": null,
+   "skip": "remote pyjail — нужен запущенный сервис"
+  },
+  {
+   "id": "rad-be-damned",
+   "name": "rad be damned",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 150,
+   "description": "My friend seems to be communicating something but I can't make out anything. Why do we live so close to Chernobyl anyways?",
+   "flag": "bcactf{yumMY-y311OWC4ke-x7CwKqQc5fLquE51V-jMUA-aG9sYS1jb21vLWVzdGFz}",
+   "path": "crypto/rad_be_damned",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\crypto\\rad_be_damned",
+   "skip": null,
+   "files": [
+    "message.py",
+    "output.txt"
+   ]
+  },
+  {
+   "id": "reload-decode",
+   "name": "reload decode",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 50,
+   "description": "Greetings neighbor. My name's Crazy Dave but you can just call me Crazy Dave. I found this weird website that seems to represent something. Says something about taco as a reward Can you find whatever the code is and hand it to me? I could really go for a taco right now",
+   "flag": "bcactf{n0w-HEr3's-@-taco-cGxhbnRzIHZzIHpvbWJpZ}",
+   "path": null,
+   "target": null,
+   "skip": "серверное приложение — нужен запущенный сервис"
+  },
+  {
+   "id": "rsa-encrypter",
+   "name": "rsa encrypter",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 100,
+   "description": "I made an rsa encrypter to send my messages but it seems to be inconsistent...",
+   "flag": "bcactf{those_were_some_rather_large_numbersosvhb9wrp8ghed}",
+   "path": null,
+   "target": null,
+   "skip": "крипто-оракул на сервере — нужен запущенный сервис"
+  },
+  {
+   "id": "script-theory",
+   "name": "script theory",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 200,
+   "description": "I rewrote some of my code in Rust to make it run faster. But where did my flag go?",
+   "flag": "bcactf{th3_uLt1maT3_L0cKb0X_ygIyaO6iacdU74Xt}",
+   "path": "rev/Script_Theory",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Script_Theory",
+   "skip": null,
+   "files": [
+    "libscript_theory_addon.node",
+    "output.txt",
+    "program.js"
+   ]
+  },
+  {
+   "id": "sea-scavenger",
+   "name": "sea scavenger",
+   "category": "foren",
+   "all_categories": [
+    "foren",
+    "webex",
+    "beginner"
+   ],
+   "points": 50,
+   "description": "Take a tour of the deep sea! Explore the depths of webpage secrets and find the hidden treasure. Pro tip: Zoom out!",
+   "flag": "bcactf{b3t_y0u_d1dnt_f1nd_th3_tre4sur3_t336e3}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "serene-abstractions",
+   "name": "serene abstractions",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 175,
+   "description": "I accidentally overwrote my JavaScript source file with its abstract syntax tree! Please help me run the program.",
+   "flag": "bcactf{a_s3REn3_D3veL0pM3nT_eXp3Ri3nC3_f7a6afef2bc1}",
+   "path": "rev/Serene_Abstractions",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Serene_Abstractions\\tree",
+   "skip": null,
+   "files": [
+    "tree"
+   ]
+  },
+  {
+   "id": "sheep",
+   "name": "sheep",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 125,
+   "description": "",
+   "flag": "bcactf{SHaPE_f1lEd_b54a11ac9c87c8}",
+   "path": "forensic/sheep",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\forensic\\sheep\\sheep.shp",
+   "skip": null,
+   "files": [
+    "sheep.shp"
+   ]
+  },
+  {
+   "id": "snail-farmer-john",
+   "name": "snail farmer john",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 125,
+   "description": "Farmer John has moved on from cows to snails. Please ignore any potential integer overflow (i.e. pretend that the program can handle arbitrarily large numbers).",
+   "flag": "bcactf{1256701987023223273425321367789648111580589191253}",
+   "path": "rev/Snail_Farmer_John",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Snail_Farmer_John",
+   "skip": null,
+   "files": [
+    "input.txt",
+    "slow.cpp"
+   ]
+  },
+  {
+   "id": "static",
+   "name": "static",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 150,
+   "description": "Here's a copy of a mysterious video we found when infiltrating a submarine. It seems rather random, though. 477e2ae9f514e89477ed54e40d97c7d5 (MD5) may help",
+   "flag": "bcactf{imag3_PROc3sSINg_yaY_2ea104d700c1a8}",
+   "path": "forensic/Static",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\forensic\\Static\\static.mp4.xz",
+   "skip": null,
+   "files": [
+    "static.mp4.xz"
+   ]
+  },
+  {
+   "id": "superstitious-2",
+   "name": "superstitious 2",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 150,
+   "description": "My client is a bit picky with the primes they are willing to use... (Sequel from [BCACTF 4.0](https://github.com/BCACTF/bcactf-4.0/tree/main/superstitious))",
+   "flag": "bcactf{l4zy_cHall3nG3_WRITinG_f8b335319e464}",
+   "path": "crypto/Superstitious_2",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\crypto\\Superstitious_2",
+   "skip": null,
+   "files": [
+    "superstitious-2.py",
+    "superstitious-2.txt"
+   ]
+  },
+  {
+   "id": "survey",
+   "name": "survey",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 25,
+   "description": "We'd love your feedback on our CTF! In exchange for 25 points, please let us know how we did and what we can improve on. We hope to see you next year! **Please note** that this challenge will **NOT** impact time-based tiebreakers and that **NO** first-blood messages will be sent. Please take your ti",
+   "flag": "bcactf{THankS_fOr_Pl4YiNG_08aa139604c6d}",
+   "path": null,
+   "target": null,
+   "skip": "нет локальных файлов"
+  },
+  {
+   "id": "talk-to-echo",
+   "name": "talk to echo",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 175,
+   "description": "",
+   "flag": "bcactf{3ChO_iS_NOW_8OtH_lOnEly_anD_bR0keN_cdccd6d49c3418}",
+   "path": null,
+   "target": null,
+   "skip": "крипто-оракул на сервере — нужен запущенный сервис"
+  },
+  {
+   "id": "thirdtimesthecharm",
+   "name": "thirdtimesthecharm",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 25,
+   "description": "We can't speak French and just say what we see. We also don't know what underscores are add them yourself. put **ONLY** the final decrypted cipher in bcactf{}, no intermediate steps key - vinegar cipher 0 - mmqaonv cipher 1 - seooizmt cipher 2 - bdoloeinbdjmmyg <- THIS ONE",
+   "flag": "bcactf{add_to_salad_yummy}",
+   "path": "crypto/Vinegar_Times_3",
+   "target": null,
+   "skip": "нет файлов",
+   "files": []
+  },
+  {
+   "id": "this-is-NOT-the-flag",
+   "name": "this is NOT the flag",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 25,
+   "description": "The flag is NOT inside this file. Do NOT even bother checking.",
+   "flag": "bcactf{7hIs_1s_7h3_fla9}",
+   "path": "misc/This_is_NOT_the_flag",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\misc\\This_is_NOT_the_flag\\NOTflag.txt",
+   "skip": null,
+   "files": [
+    "NOTflag.txt"
+   ]
+  },
+  {
+   "id": "tic-tac-toe",
+   "name": "tic tac toe",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 75,
+   "description": "My friend wrote this super cool game of tic-tac-toe. It has an AI he claims is unbeatable. I've been playing the game for a few hours and I haven't been able to win. Do you think you could beat the AI?",
+   "flag": "bcactf{7h3_m4st3r_0f_t1ct4ct0e_678d52c8}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "touch-tone-telephone",
+   "name": "touch tone telephone",
+   "category": "foren",
+   "all_categories": [
+    "foren",
+    "rev"
+   ],
+   "points": 150,
+   "description": "theres a demon inside of my head \\ now im unable to go to bed \\ i gave a shout \\ the phone rang out \\ and now theres just feelings of dread i picked up the phone and i heard \\ a resounding cry from the herd \\ of phone systems cursed \\ and stuck with the curse \\ of button pressing till theyre dead i ",
+   "flag": "bcactf{l3m0n_d3m0n_134v3_my_m1nd_p13a5e}",
+   "path": "rev/Touch_Tone_Telephone",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Touch_Tone_Telephone\\output.wav.xz",
+   "skip": null,
+   "files": [
+    "output.wav.xz"
+   ]
+  },
+  {
+   "id": "touch-tone-telephone-revenge",
+   "name": "touch tone telephone revenge",
+   "category": "foren",
+   "all_categories": [
+    "foren",
+    "rev"
+   ],
+   "points": 200,
+   "description": "Well let's quickly patch out an unintended solvepath to the original challenge... There, now go use your programming skills. Even more of a headphone warning with this one, sorry.",
+   "flag": "bcactf{dtmf_netlify_app_bad__internet_bad__im_quitting_ctf__123A_456B_789C_S0HD}",
+   "path": "rev/Touch_Tone_Telephone_Revenge",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\Touch_Tone_Telephone_Revenge\\output.wav.xz",
+   "skip": null,
+   "files": [
+    "output.wav.xz"
+   ]
+  },
+  {
+   "id": "transcriptify",
+   "name": "transcriptify",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 200,
+   "description": "The secretaries at my school are tired of manually processing transcript requests, so they've built an app to the job for them. You would hope that anything handling private student info would be secure, right? I hope so too.",
+   "flag": "bcactf{yOur_trAnSCripT_Ha5_BEeN_prOc3SS3D_1e9442f4}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "user-1",
+   "name": "user 1",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 150,
+   "description": "I was working on this website and wanted you to check it out. The code is a bit of a mess, since it's only an extremely early version. In fact, you're the very first user, with ID 1! PLEASE NOTE: What you do should, in theory, not affect other solvers. Please let us know if this is not the case.",
+   "flag": "bcactf{g3t_BEtA_t3StERs_f6a71451d481a8}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)"
+  },
+  {
+   "id": "wiretapped",
+   "name": "wiretapped",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 100,
+   "description": "I've been listening to this cable between two computers, but I feel like it's in the wrong format.",
+   "flag": "bcactf{listening_in_a28270fb0dbfd}",
+   "path": "forensic/Wiretapped",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\forensic\\Wiretapped\\wiretapped.wav.xz",
+   "skip": null,
+   "files": [
+    "wiretapped.wav.xz"
+   ]
+  },
+  {
+   "id": "xnorzzz",
+   "name": "xnorzzz",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 125,
+   "description": "A mutated man wakes up with sixteen fingers and too much time on his fingers. He challenges you to return him the number he is thinking of and he will give you a reward/cookie.",
+   "flag": "bcactf{th3fl@gUsee33ek_g3tg00d}",
+   "path": "rev/xnorzzz",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\xnorzzz",
+   "skip": null,
+   "files": [
+    "chall",
+    "output.txt"
+   ]
+  },
+  {
+   "id": "xor",
+   "name": "xor",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 50,
+   "description": "The executable below outputs an encrypted flag using the XOR operator. Can you decompile and reveal the flag?",
+   "flag": "bcactf{SYMmE7ric_eNcrYP710N_4WD0f229}",
+   "path": "rev/XOR",
+   "target": "F:\\AIproject\\ctf-files\\BCACTF\\2024\\rev\\XOR\\xor",
+   "skip": null,
+   "files": [
+    "xor"
+   ]
+  },
+  {
+   "id": "bcactf-4.0:aetherion-dynamics",
+   "name": "aetherion-dynamics",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 50,
+   "description": "Aetherion Dynamics is a cutting-edge company operating under the highest levels of secrecy. We've managed to get our hands on one of their top-secret memos, but it's redacted! You need to help us find their secret password.",
+   "flag": "bcactf{n0t_S0_5Ecre7_ANyMorE}",
+   "path": null,
+   "target": null,
+   "skip": "файлы не приложены (только исходники/сервер)",
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:babys-first-foren",
+   "name": "babys-first-foren",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 50,
+   "description": "I found this beginner's guide to forensics.",
+   "flag": "bcactf{i_h0P3_y0u_leaRN3d_s0m3th1nG_b9cvG8nf}",
+   "path": "bcactf-4.0\\babys-first-foren",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\babys-first-foren\\babys-first-foren.png",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "babys-first-foren.png"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:bcagpt",
+   "name": "bcagpt",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "",
+   "flag": "bcactf{a_d!fFer3nT_k!nD_0f_!nJ3c7i0n!_rf8eyeiw}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:chessy2.0",
+   "name": "chessy2.0",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 125,
+   "description": "I've been learning a bit more chess recently, but I'm having trouble understanding the value of this. Can you help me (again)?",
+   "flag": "bcactf{b15h0ps_4r3n7_kn16ht5_34j21nd92}",
+   "path": "bcactf-4.0\\chessy2.0",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\chessy2.0\\FEN.txt",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "FEN.txt"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:cookiejar",
+   "name": "cookiejar",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 75,
+   "description": "",
+   "flag": "bcactf{Co0kie_F4n}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:discord",
+   "name": "discord",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 25,
+   "description": "[Join our Discord Server](https://discord.com/invite/9Hnz7aCmr6) to find a team, talk to other players, and more. There might also be a flag somewhere. Maybe.",
+   "flag": "bcactf{4n0tH3R_d15C0rD_ch4Ll_jBu4Xpk}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:discord-2",
+   "name": "discord-2",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 125,
+   "description": "I thought the Discord challenge was too easy, so I buffed it with a bot. [Link](https://discord.gg/75kPh6JnJk)",
+   "flag": "bcactf{ferougnj8fdv8h5xc8yvshvx8fjvsojiovglrfgxcb8vh3t}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:dots-and-dashes",
+   "name": "dots-and-dashes",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 25,
+   "description": "My friend sent me a message by flashing his flashlight, and I recorded it using .'s and -'s. Can you help me decode it?",
+   "flag": "bcactf{n0T_QU!t3_M0r5E_981454}",
+   "path": "bcactf-4.0\\dots-and-dashes",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\dots-and-dashes\\code.txt",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "code.txt"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:duck-cord",
+   "name": "duck-cord",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 75,
+   "description": "",
+   "flag": "bcactf{H3LL0_AG3NT_DUCK_ur_m1ssi0n_I5_h4ve_fun_8e9201e}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:flag-plus",
+   "name": "flag-plus",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "I've been trying to find a flag on this site, but it looks like you have to pay to get it...",
+   "flag": "bcactf{fl4g_r3ferr3d_gn3vhx75}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:freebee",
+   "name": "freebee",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 50,
+   "description": "I want to read this really cool article, but they have a paywall Can you get me around that?",
+   "flag": "bcactf{BEeutifUl_J0b}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:git-better",
+   "name": "git-better",
+   "category": "crypto",
+   "all_categories": [
+    "crypto",
+    "rev"
+   ],
+   "points": 200,
+   "description": "#### _We at BCACTF aspire to be unique._ ###### ~me That's why we decided to use our own ✨proprietary✨ VCS for this year's challenges. It's a **new** and **more efficient**[^1] way to manage challenge versions, using The Blockchain™. If you're a cryptocurrency person though, this chain of blocks may",
+   "flag": "bcactf{app4r3ntly_y0u_5h0u1dn7_m4k3_y0ur_0wn_h45h_funct10n5}",
+   "path": null,
+   "target": null,
+   "skip": "файлы не приложены (только исходники/сервер)",
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [],
+   "missing": [
+    "app/lost_block.txt",
+    "app/git_better.tar.gz"
+   ]
+  },
+  {
+   "id": "bcactf-4.0:git-even-better",
+   "name": "git-even-better",
+   "category": "crypto",
+   "all_categories": [
+    "crypto",
+    "rev"
+   ],
+   "points": 300,
+   "description": "#### _We at BCACTF aspire to be unique._ ###### ~me *(make sure to do `Git Better` first)* Anddddddddd I've realized I can't trust you. So I made that repo verification stronger. Yeah yeah yeah, I heard that you thought: - \"It's not secure enough!!11!1!!!!!!11!!!!\" Yes it is. You're just using it wr",
+   "flag": "bcactf{7urn5_0u7_sy5t3ms_0f_1in3ar_equ4tions_4re_k1nd4_ju57_matr1c13s}",
+   "path": null,
+   "target": null,
+   "skip": "файлы не приложены (только исходники/сервер)",
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [],
+   "missing": [
+    "app/lost_block.txt",
+    "app/git_better.tar.gz"
+   ]
+  },
+  {
+   "id": "bcactf-4.0:golfers",
+   "name": "golfers",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 175,
+   "description": "I found this funny little programming language online. I didn't really understand but apparently golfers use it or something?",
+   "flag": "bcactf{w0W_g0LF1nG_l4nG5_sur3_4r3_C0mpl3x_v4fnBx7}",
+   "path": "bcactf-4.0\\golfers",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\golfers",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "golfers.vyx",
+    "golfers.out"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:hamsta",
+   "name": "hamsta",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 50,
+   "description": "I forgot the flag, yet, somehow my hamster remembers it. The further he runs, the more of the flag is revealed! I did my best to add limits to prevent him from getting tired out and revealing the flag, hopefully there's no bugs",
+   "flag": "bcactf{w3lcom3_TT0_PWN;__h4mster_8e9d89a}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:huffff",
+   "name": "huffff",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 150,
+   "description": "Have you heard of [Huffman coding](https://courses.cs.duke.edu/cps100/spring16/Huffman/)? I thought it was cool, but I wanted something cooler. I call it, Huffffman coding! See if you can decode my story!",
+   "flag": "bcactf{qu4t3rna5y_7re35_w0w_j8r3ne1j29}",
+   "path": "bcactf-4.0\\huffff",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\huffff\\story.txt.enc",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "story.txt.enc"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:interpreted-arduino",
+   "name": "interpreted-arduino",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 50,
+   "description": "I created an Arduino simulator CLI you can interact with at runtime. You can run it with code to start off, and then its built in interpreter will let you run code as you go. It's supposed to print out the flag but it's not working. Can you help me figure out what's wrong? I ran the `main.ino` file ",
+   "flag": "bcactf{h4rdW@r3_r3$Et?_!1y8fbr4eu}",
+   "path": "bcactf-4.0\\interpreted-arduino",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\interpreted-arduino\\main.ino",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "main.ino"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:lottery",
+   "name": "lottery",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 125,
+   "description": "",
+   "flag": "bcactf{0n3_1N_a_g00gOl_uf4bF8snG}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:manipulate-spreadsheet",
+   "name": "manipulate-spreadsheet",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 50,
+   "description": "They said the flag was in [this spreadsheet](https://docs.google.com/spreadsheets/d/10UYPl1kzuSTLJbN6kLkJR4aVFxo3nXUrKIiLLTQyOb8/), but it appears completely empty to me! Can you help me find it?",
+   "flag": "bcactf{goO913_shee75_i5_coOl_4wce98Nu}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:many-time-pad",
+   "name": "many-time-pad",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 50,
+   "description": "I heard that one-time pads are unbreakable! I'm going to use it for everything!!",
+   "flag": "bcactf{y3a_0nly_uS3_th3sE_1_tim3}",
+   "path": "bcactf-4.0\\many-time-pad",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\many-time-pad",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "many-time-pad.py",
+    "many-time-pad.out",
+    "grocery-list.out"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:memory-loss",
+   "name": "memory-loss",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 125,
+   "description": "> mĕm'ə-rē lŏs > A conditional instance at which point previous mental contraptions lose their referencability. I was thinking of the flag.. I think?",
+   "flag": "bcactf{9835d856a1fa46403933cebe4af95ecf21effd0c}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:mushroom",
+   "name": "mushroom",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 125,
+   "description": "Wow, a game with a mushroom in it! [Download Windows build here](https://drive.google.com/file/d/1QX4cMGFtsf1Vw5ccMnKOoVOH5AV-dbKr/view?usp=sharing)",
+   "flag": "bcactf{UN1Ty_f14g}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:not-today",
+   "name": "not-today",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 75,
+   "description": "",
+   "flag": "bcactf{y0U_m@d3_hT7p_H!$70rY?!_HDU38rndu8}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:ow",
+   "name": "ow",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 125,
+   "description": "(VOLUME WARNING) SOMEONE WAS WHISPERING THE FLAG IN MY EAR BUT I COULDN'T HEAR THEM OVER THE DEAFENING SOUND OF THE APOCALYPSE PLEASE HELP (VOLUME WARNING. NO, SERIOUSLY, SET YOUR VOLUME TO LIKE 10% OR SOMETHING AND THEN TURN IT UP IF YOU'RE A MASOCHIST I GUESS.)",
+   "flag": "bcactf{n01s3_f4s2ph6}",
+   "path": "bcactf-4.0\\ow",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\ow\\ow.mp3",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "ow.mp3"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:password-protected",
+   "name": "password-protected",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 175,
+   "description": "Can you help log Jon Wilkie back into his account?",
+   "flag": "bcactf{Passw0Rd_Pr0ffessional}",
+   "path": "bcactf-4.0\\password-protected",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\password-protected\\password_protected.py",
+   "skip": "сервис/исходник без данных (нужен запущенный сервис)",
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "password_protected.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:pet-farm",
+   "name": "pet-farm",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 275,
+   "description": "",
+   "flag": "flag{p3t_z00_als0_s04ry_4bout_th3_fg3tS_SP4M_e7a93ff_j}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:postfix-calculator",
+   "name": "postfix-calculator",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 75,
+   "description": "Mr. Wang left some tricks behind in his Intro to CS labs before leaving BCA. Can you use the Postfix lab to get the flag?",
+   "flag": "bcactf{L3@kY_fUNcT!0n5_178235}",
+   "path": "bcactf-4.0\\postfix-calculator",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\postfix-calculator\\PostfixCalculator.py",
+   "skip": "сервис/исходник без данных (нужен запущенный сервис)",
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "PostfixCalculator.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:restful-swap",
+   "name": "restful-swap",
+   "category": "webex",
+   "all_categories": [
+    "webex",
+    "foren"
+   ],
+   "points": 100,
+   "description": "",
+   "flag": "bcactf{h!dDen_f!le$$!!_3bh5j7}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:room",
+   "name": "room",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 175,
+   "description": "This is a cool room! I wonder what could be outside though. Probably nothing important. [Download Windows build here](https://drive.google.com/file/d/10lOXoLBeJjXwMMYBjrboyq2mWmlZRUqV/view?usp=sharing)",
+   "flag": "bcactf{gr34T_3sC4P3_5jHpQcZ}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:roptiludrop",
+   "name": "roptiludrop",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 150,
+   "description": "DANCE! DANCE! DAOCE! DROCE! ROCE! ROPE! ROP! ROP! ROP! Rop till you drop.",
+   "flag": "bcactf{91066a89a6f8684acc354ed5381fe8a9a1ca35e5}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:rsa-is-broken",
+   "name": "rsa-is-broken",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 150,
+   "description": "Why isn't my RSA working??? All the math checks out. Please help!!! I'll even give you my private key.",
+   "flag": "bcactf{o0p5_m3ssaGe_to0_b1g_nv93nd0}",
+   "path": "bcactf-4.0\\rsa-is-broken",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\rsa-is-broken\\rsa-broken.py",
+   "skip": "сервис/исходник без данных (нужен запущенный сервис)",
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "rsa-broken.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:signature-i",
+   "name": "signature-i",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 150,
+   "description": "The other day I learned that you can sign messages with RSA. Can you check my implementation?",
+   "flag": "bcactf{s1gN4tUr3_f0rg3D_v8F2nC4}",
+   "path": "bcactf-4.0\\signature-i",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\signature-i\\signature-i.py",
+   "skip": "сервис/исходник без данных (нужен запущенный сервис)",
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "signature-i.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:signature-ii",
+   "name": "signature-ii",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 225,
+   "description": "I recently implemented this new signing algorithm! Can you recover the flag?",
+   "flag": "bcactf{S1gnature_2_n0w_ell1ptic_Jg41C3C}",
+   "path": "bcactf-4.0\\signature-ii",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\signature-ii",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "signature-ii.sage",
+    "signature-ii-log.txt"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:silly-squares",
+   "name": "silly-squares",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 25,
+   "description": "I found this marvelous painting of these squares over a red background. It is quite a piece of art. I don't know why I found them so funny, but I can't stop laughing at them. My teacher told me I have to find the flag or I fail. However, the squares are so silly that I can't stop myself from laughin",
+   "flag": "bcactf{th1s_is_a_r34l_flag}",
+   "path": "bcactf-4.0\\silly-squares",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\silly-squares\\Silly_Squares.png",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "Silly_Squares.png"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:slideshow",
+   "name": "slideshow",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 125,
+   "description": "Somehow I really messed up this presentation I was working on. Can you help? Note: PowerPoint does not load the file correctly; LibreOffice Impress does, but neither are required to solve the challenge.",
+   "flag": "bcactf{pR353ntaT10n_cR4cK3D_c8FjE8v}",
+   "path": "bcactf-4.0\\slideshow",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\slideshow\\slideshow.odp",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "slideshow.odp"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:smithy",
+   "name": "smithy",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 250,
+   "description": "I went to a blacksmith (sometimes called a smithy) the other day to get my copper sword fixed. When I came to pick it up, the smith told me he RSA-encoded it, and gave me a key to decrypt it with. Unfortunately, he accidentally gave me a public key instead of a private key, and now I can't access my",
+   "flag": "bcactf{s4m3b1t5_l0l_4643}",
+   "path": "bcactf-4.0\\smithy",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\smithy",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "flag.enc",
+    "pubkey.pub.pem"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:studious_notetaking",
+   "name": "studious_notetaking",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 100,
+   "description": "My good friend is an assiduous student and has been diligently taking notes [here](https://github.com/Studious-Notetaker/REPO-OF-EPICNESS). I don't see his notes! Do you?",
+   "flag": "bcactf{a++_FOr_nOtE7ak1N9}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:subpixels",
+   "name": "subpixels",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 150,
+   "description": "I found this really cool picture online!",
+   "flag": "bcactf{m4NuaL_l5B_5t3G_v8Sfn3Cu}",
+   "path": "bcactf-4.0\\subpixels",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\subpixels\\subpixels.png",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "subpixels.png"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:superstitious",
+   "name": "superstitious",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 150,
+   "description": "My client is a bit picky with the primes they are willing to use...",
+   "flag": "bcactf{sup3r_5t1t10N_b4d_4_h4aLTh_3nG8xhs5}",
+   "path": "bcactf-4.0\\superstitious",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\superstitious",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "superstitious.py",
+    "superstitious.txt"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:survey",
+   "name": "survey",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 25,
+   "description": "Well, the CTF is almost over! Let us know how we did in exchange for 25 points. **Please note** that this challenge will **NOT** impact time-based tiebreakers. Please take your time filling this out and be honest as we really appreciate your feedback. See you next year! [https://forms.gle/VAuZPN7Tnm",
+   "flag": "bcactf{s33_y0U_n3xT_y34R_bC4_CTF_5_hI8C0}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:suzanne",
+   "name": "suzanne",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 175,
+   "description": "Monkey. Different monkey? Original monkey?",
+   "flag": "bcactf{b13nD3R_m0nK3Y_5hifHJf}",
+   "path": "bcactf-4.0\\suzanne",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\suzanne",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "suzanne_original.fbx",
+    "suzanne_different.fbx"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:too-fast",
+   "name": "too-fast",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 100,
+   "description": "I found this QR code, but I can't seem to scan it.",
+   "flag": "bcactf{y0U_@lm0$7_m!$s3D_!7_e3idwind}",
+   "path": "bcactf-4.0\\too-fast",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\too-fast\\ctf.gif",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "ctf.gif"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:type-faster",
+   "name": "type-faster",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 150,
+   "description": "I'm storing some secret information on my website, but I realized I need an anti-captcha service. I don't want any humans to gain these insights before the AI revolution, so I've drafted a system that only robots could beat. I don't think any humans could type *this* fast!",
+   "flag": "bcactf{jU$7_g0_f4$t3r_u439rfdnh8s}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:undoc",
+   "name": "undoc",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 75,
+   "description": "I accidentally messed with my flag? Can you undo it?",
+   "flag": "bcactf{c0ngR4t4LatI0n5!_yO4_uN5craMb7eD_1T_027447}",
+   "path": "bcactf-4.0\\undoc",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\bcactf-4.0\\undoc\\undoC",
+   "skip": null,
+   "source": "https://github.com/BCACTF/bcactf-4.0",
+   "files": [
+    "undoC"
+   ],
+   "missing": []
+  },
+  {
+   "id": "bcactf-4.0:unionized",
+   "name": "unionized",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "",
+   "flag": "bcactf{1_L0v3_sQl_UN10n_QU3r13S}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:wasmgame",
+   "name": "wasmgame",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 250,
+   "description": "My friend sent me this super game, but he told me there are still some bugs. He said that right now all the player skins and their names are sent to the client, even if the skins are hidden / secret. The name of the secret skin texture is the flag :)",
+   "flag": "bcactf{w3lcome_ag3nt_7bf43fd70}",
+   "path": null,
+   "target": null,
+   "skip": "не выдаёт файлов",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "bcactf-4.0:wordgame",
+   "name": "wordgame",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 200,
+   "description": "",
+   "flag": "bcactf{w0Rd_G4me_m0re_l1k3_uhhh_h3lp_cANt_m4k3_jokE}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/bcactf-4.0"
+  },
+  {
+   "id": "camp-2023:XylophOneR",
+   "name": "XylophOneR",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 100,
+   "description": "I found this weird program that outputs numbers, but I can't make left xor right of it. Can you help me?",
+   "flag": "camp{Y0u_4Re_4_X0R_Ch4mp1On_!!}",
+   "path": "camp-2023\\XylophOneR",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\XylophOneR\\XylophOneR.py",
+   "skip": "сервис/исходник без данных (нужен запущенный сервис)",
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "XylophOneR.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:anagrams",
+   "name": "anagrams",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 100,
+   "description": "My friend sent this game to me, but he said the code isn't quite finished yet. He also said to be careful because of limited memory and stuff, but I know I can just download more RAM. Can you beat the game?",
+   "flag": "camp{7o0_m@nY_ch@RacteR5_buf349nrf}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:binex-infinity",
+   "name": "binex-infinity",
+   "category": "binex",
+   "all_categories": [
+    "binex"
+   ],
+   "points": 125,
+   "description": "",
+   "flag": "camp{jU5t_ne3d_to_reAd_d4_s1gns}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:commentary",
+   "name": "commentary",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 25,
+   "description": "My friends seem to have a lot of commentary on my coding style. I just hope they haven't published it anywhere...",
+   "flag": "camp{h!Dd3n_in_pL41n_51GhT_fr3b9if3}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:cookies",
+   "name": "cookies",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 75,
+   "description": "My favorite snack is cookies, but I'll only reveal my secret recipe [the flag] to the right person.",
+   "flag": "camp{yUm_!_l0v3_c00k13s_duy48w3ji4tugb}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:cookies-ii",
+   "name": "cookies-ii",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 100,
+   "description": "My favorite snack is cookies, but I'll only reveal my secret recipe [the flag] to the right person. This time I [en]coded the cookies myself, so only the website admin can figure out what they really are.",
+   "flag": "camp{$w3eT_c00ki3s_3nc0deD_duy4fejiefnb}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:headers-i",
+   "name": "headers-i",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 50,
+   "description": "My friends are sending files in the group chat, but Windows doesn't know how to open them. Maybe it's because they don't have any file extensions? Anything in the flag that looks like an O is actually a zero",
+   "flag": "camp{n07_jU57_file_3xtensi0n$_fvjiljejv}",
+   "path": "camp-2023\\headers-i",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\headers-i\\weirdfile",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "weirdfile"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:headers-ii",
+   "name": "headers-ii",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 100,
+   "description": "My friends are passing even weirder files within the group chat now. I have no clue what they're trying to hide this time.",
+   "flag": "camp{wH@7s_an_3xTr@_f!l3_aNYw@y$_r3dhi8ib28bf}",
+   "path": "camp-2023\\headers-ii",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\headers-ii\\funfile",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "funfile"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:hidden-values",
+   "name": "hidden-values",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 50,
+   "description": "I have the right username and password, `bcaCTFAdmin2?` and `admin!?!?!?!`, but it's not letting me log in. Can you figure out why?",
+   "flag": "camp{YOu_WerENt_5Upp0sE_T0_se3_THI5_55d28b16d94c3}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:injection",
+   "name": "injection",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 150,
+   "description": "I feel like my doctor is hiding something in his database, but his web portal keeps telling me I'm not authorized to find out. He told me only admins are allowed to see the data, but it *is* my data, so I should be able to see it, right?",
+   "flag": "camp{SQL_!nj3cteD!_w0W_329rh8qwrfj}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:intro-rsa-1",
+   "name": "intro-rsa-1",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 125,
+   "description": "I found this document that has some leftover numbers, can you do anything with them? (Note) For RSA you need the message represented as a number, which varies depending on usage. For this case, a hex string was created by linking the ascii values of the letters in hex together, and then converting t",
+   "flag": "camp{Y0u_Got_THE_fLAg_FRom_jUSt_numbeRS}",
+   "path": "camp-2023\\intro-rsa-1",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\intro-rsa-1\\rsa1.txt",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "rsa1.txt"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:jailbreak",
+   "name": "jailbreak",
+   "category": "misc",
+   "all_categories": [
+    "misc"
+   ],
+   "points": 100,
+   "description": "After a recent prison escape due to hidden messages in letters, the facility has tightened security. Can you find a way around these new measures?",
+   "flag": "camp{PYth0n_M4steR_M2!f45}",
+   "path": "camp-2023\\jailbreak",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\jailbreak\\main.py",
+   "skip": "сервис/исходник без данных (нужен запущенный сервис)",
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "main.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:java-rev-1",
+   "name": "java-rev-1",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 50,
+   "description": "I keep on trying to get past this password checker but it won't let me, can you find the right password?",
+   "flag": "camp{C0nGr4TulAt1OnS_Y0u_4Re_J4v4_Pr0}",
+   "path": "camp-2023\\java-rev-1",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\java-rev-1\\RevOne.java",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "RevOne.java"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:java-rev-2",
+   "name": "java-rev-2",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 75,
+   "description": "After your last break-in, my friend informed me that he made it almost impossible to solve. Can you still find the password?",
+   "flag": "camp{I_Gu3SS_Th1S_W4SNT_S3cuRe}",
+   "path": "camp-2023\\java-rev-2",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\java-rev-2\\RevTwo.java",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "RevTwo.java"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:java-rev-three",
+   "name": "java-rev-three",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 125,
+   "description": "That's it. Here is a truly unbreakable password checker. But if you want to waste your time go ahead!",
+   "flag": "camp{y0U_offic1ALLY_Be4t_jAVa_REV_!!}",
+   "path": "camp-2023\\java-rev-three",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\java-rev-three\\RevThree.java",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "RevThree.java"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:julius-empire",
+   "name": "julius-empire",
+   "category": "crypto",
+   "all_categories": [
+    "crypto"
+   ],
+   "points": 50,
+   "description": "Julius Caesar sent me a bunch of flag designs for his new empire but I can't seem to make out anything. Can you help me?",
+   "flag": "camp{caesar_what_a_cool_cipher_ejeekwnenjdkwef}",
+   "path": "camp-2023\\julius-empire",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\julius-empire\\flags.txt",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "flags.txt"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:lsb",
+   "name": "lsb",
+   "category": "foren",
+   "all_categories": [
+    "foren",
+    "rev"
+   ],
+   "points": 75,
+   "description": "I sent my friend a flag, but he said it wasn't good enough. He said he made some improvements and sent it back to me, but it looks the same to me.",
+   "flag": "camp{!3aSt_$iGn!fic@nT_B!7s_fbruw9ni24u9f}",
+   "path": "camp-2023\\lsb",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\lsb\\.\\flag.png",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "./flag.png"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:no-asm-required",
+   "name": "no-asm-required",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 100,
+   "description": "",
+   "flag": "camp{FACT:CPUs_arE_pRe_A5SEmbLed_too..._0caec8a70f9a2}",
+   "path": null,
+   "target": null,
+   "skip": "файлы не приложены (только исходники/сервер)",
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [],
+   "missing": [
+    "home/ctf/chall"
+   ]
+  },
+  {
+   "id": "camp-2023:no-connection",
+   "name": "no-connection",
+   "category": "webex",
+   "all_categories": [
+    "webex"
+   ],
+   "points": 25,
+   "description": "My internet sucks, so I decided to move my login page to work offline.",
+   "flag": "camp{d0n7_aUth_oN_C!i3n7_51d3_bhiwsdwflowld}",
+   "path": null,
+   "target": null,
+   "skip": "сервисная задача (нет файлов для оффлайн-разбора)",
+   "source": "https://github.com/BCACTF/camp-2023"
+  },
+  {
+   "id": "camp-2023:py-rev-1",
+   "name": "py-rev-1",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 50,
+   "description": "- I forgot my password and now I am locked out of my accounts, can you help me retrieve it?",
+   "flag": "camp{THis_wA5_SUPpO5E_to_Be_5Ecur3_b34018d8b0f1e}",
+   "path": "camp-2023\\py-rev-1",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\py-rev-1\\main.py",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "main.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:py-rev-2",
+   "name": "py-rev-2",
+   "category": "rev",
+   "all_categories": [
+    "rev"
+   ],
+   "points": 125,
+   "description": "- After too many wrong password attempts, the system has locked me out. Can you get me back in?",
+   "flag": "camp{YOu_foUnD_A_rIGhT_P4tH!}",
+   "path": "camp-2023\\py-rev-2",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\py-rev-2\\main.py",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "main.py"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:shark-fin",
+   "name": "shark-fin",
+   "category": "?",
+   "all_categories": [],
+   "points": 50,
+   "description": "I bugged another CTF team's network and managed to capture these packets. Circumstantial evidence suggests they were trying to find a flag online -- can you help?",
+   "flag": "camp{sH4rK_go_nOM_9f2f44f4735528}",
+   "path": "camp-2023\\shark-fin",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\shark-fin\\shark-fin.pcapng",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "shark-fin.pcapng"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:space-trek",
+   "name": "space-trek",
+   "category": "rev",
+   "all_categories": [
+    "rev",
+    "crypto"
+   ],
+   "points": 125,
+   "description": "NASA has been cleaning up their files, and something seems wrong with this transcript of one of their missions. Can you find the flag and report back?",
+   "flag": "camp{5h0Ot_f0R_Th3_5t@rs_712894}",
+   "path": "camp-2023\\space-trek",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\space-trek\\mission_logs.txt",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "mission_logs.txt"
+   ],
+   "missing": []
+  },
+  {
+   "id": "camp-2023:vision",
+   "name": "vision",
+   "category": "foren",
+   "all_categories": [
+    "foren"
+   ],
+   "points": 50,
+   "description": "I've been having some arguments over the internet, and this guy keeps telling me that I'm giving contrasting opinions, and that my vision is unclear. I don't know what he's talking about, but he followed it up by sending me this file.",
+   "flag": "camp{w0W_wh47_gR3@7_v!$!on}",
+   "path": "camp-2023\\vision",
+   "target": "F:\\AIproject\\ctf-files\\corpus\\camp-2023\\vision\\flag.png",
+   "skip": null,
+   "source": "https://github.com/BCACTF/camp-2023",
+   "files": [
+    "flag.png"
+   ],
+   "missing": []
+  }
+ ]
+}

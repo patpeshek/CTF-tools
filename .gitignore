@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# venv / packaging
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Логи, временные выгрузки, результаты прогонов
+*.log
+*.tmp
+*.potfile
+*.restore
+out/
+carved/
+solve_*/
+
+# hashcat/john и локальные результаты
+*.hashcat
+*.john
+*.rec
+
+# редакторы/ОС
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# локальные словари и бинарные инструменты (качаются отдельно)
+wordlists/
+tools/
+*.exe
+*.dll
+*.so

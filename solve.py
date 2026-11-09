@@ -485,7 +485,7 @@ def steps_for(path, deep=False, depth=0):
     # архивы и офисные документы
     emb = toolbox._scan_embedded(data) if data else {}
     zip_like = data[:4] == b"PK\x03\x04" or ext in (
-        ".zip", ".docx", ".xlsx", ".pptx", ".jar", ".apk",
+        ".zip", ".docx", ".xlsx", ".pptx", ".jar", ".apk", ".ipa",
         ".odp", ".ods", ".odt", ".epub")
     if "ZIP" in emb and data[:4] != b"PK\x03\x04":
         add(("carve", [path, "--out", carve_dir(path)], "ZIP лежит внутри файла", 40))
@@ -508,6 +508,8 @@ def steps_for(path, deep=False, depth=0):
             add(("ooxml", [path], "структура OOXML/скрытые части", 40))
         if ext == ".apk":
             add(("apk", [path], "манифест/секреты APK", 40))
+        if ext == ".ipa":
+            add(("ipa", [path], "Info.plist/строки IPA", 40))
 
     if kind == "PNG":
         add(("png_chunks", [path], "нестандартные чанки/текст", 30))
@@ -516,6 +518,7 @@ def steps_for(path, deep=False, depth=0):
         add(("qr", [path], "QR на картинке", 30))
         add(("ocr", [path], "текст с картинки", 40))
         add(("ocr", [path, "--variants"], "текст + правки ошибок OCR", 50))
+        add(("geo", [path], "EXIF/GPS + ссылки для поиска", 30))
         if deep:
             add(("lsb", [path, "--channel", "all"], "все каналы", 60))
             add(("lsb", [path, "--order", "msb"], "старшие биты", 60))
@@ -527,6 +530,7 @@ def steps_for(path, deep=False, depth=0):
         add(("lsb", [path], "младшие биты", 40))
         add(("ocr", [path], "текст с картинки", 40))
         add(("ocr", [path, "--variants"], "текст + правки ошибок OCR", 50))
+        add(("geo", [path], "EXIF/GPS + ссылки для поиска", 30))
     elif kind == "GIF":
         add(("gif_frames", [path], "кадры/палитра", 30))
         add(("video", [path, "--every", "1", "--max", "80"],
@@ -559,6 +563,7 @@ def steps_for(path, deep=False, depth=0):
         add(("dns", [path], "канал в DNS", 60))
         add(("creds", [path], "пароли/куки", 40))
         add(("http", [path], "тела HTTP", 40))
+        add(("icmp", [path], "ICMP payload/скрытый канал", 40))
         # рядом может лежать лог с секретом/ключом (например Minecraft)
         try:
             ddir = os.path.dirname(path) or "."
@@ -638,6 +643,13 @@ def steps_for(path, deep=False, depth=0):
             add(("ws", [path], "пробелы/zero-width", 30))
             if near_dup_text(path):
                 add(("nearlines", [path], "почти одинаковые строки: отличия", 40))
+            # EVM calldata: 0x + селектор + слова по 32 байта
+            if re.fullmatch(r"(?i)0x[0-9a-f]{16,}", (text or "").strip()):
+                add(("evm", [path], "EVM calldata: селектор и аргументы", 20))
+            # pickle-модель: протокол 0+ начинается с 0x80
+            if (ext in (".pkl", ".pickle", ".pt", ".pth", ".joblib")
+                    or (data[:1] == b"\x80")):
+                add(("pickle", [path], "pickle: опасные глобалы и строки", 40))
             add(("esolang", [path], "BF/Ook/Cow/Befunge/Whitespace", 40))
             # BF/Ook часто читает строку-вход, которая лежит рядом
             for _nm, _inp in sibling_texts(path):
@@ -693,6 +705,8 @@ def steps_for(path, deep=False, depth=0):
             add(("enc", ["--file", path], "все кодировки/base (utf-16/32, cp, baseN)", 30))
 
     # что осталось — универсальные переборы
+    if ext in (".pkl", ".pickle", ".pt", ".pth", ".joblib") or data[:1] == b"\x80":
+        add(("pickle", [path], "pickle: опасные глобалы и строки", 40))
     add(("hunt", [path], "секреты и флаги в строках", 40))
     add(("carve", [path, "--out", carve_dir(path)], "файлы внутри файла", 40))
     if deep:

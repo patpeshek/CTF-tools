@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## 2026-11-09 — 0.46.2
+
+- **Пять новых инструментов (roadmap-карточки #122, #124, #126, #131, #132):**
+  - `forensic/ipa_info.py` — iOS `.ipa`: `Payload/*.app`, бинарный `Info.plist`,
+    URL-схемы, ATS, строки Mach-O и флаги;
+  - `network/icmp_payloads.py` — ICMP payload (ascii/hex/base64), скрытые
+    каналы в `id/seq/ttl/tos` и таймингах;
+  - `forensic/geo_photo.py` — геолокация по фото: EXIF, GPS → координаты,
+    ссылки OSM/Google/Yandex, ссылки обратного поиска и чеклист;
+  - `blockchain/evm_decode.py` — EVM calldata: известные селекторы, декод
+    address/uint/bool/string, `--sig` для Keccak-селектора;
+  - `ai/pickle_scan.py` — статический разбор pickle/`.pt`: `pickletools`
+    без запуска, опасные глобалы (`eval`, `os.system`, `subprocess`), строки
+    и флаги, в т.ч. внутри ZIP-контейнеров.
+- Все пять подключены к `solve` по типу данных (`.ipa`, ICMP в pcap, EXIF
+  картинки, hex-calldata, pickle-магия), добавлены в `REGISTRY`, `INDEX.md`,
+  `CHEATSHEET.md`.
+- Тесты: пять новых кейсов в `tests/selftest.py`.
+
 ## 2026-11-09 — 0.46.1
 
 - **`stego/carve.py`: границы GIF/JPEG/TAR по структуре, а не по первому

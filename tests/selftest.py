@@ -29,6 +29,7 @@ import hmac
 import io
 import json
 import math
+import plistlib
 import tarfile
 import wave
 
@@ -1915,6 +1916,65 @@ def main():
         except Exception:
             _ok = False
     check("carve tar boundary", _ok, r.stdout[-400:] + r.stderr)
+
+    # 126. ipa_info: Payload/Info.plist и строки
+    ipa_path = os.path.join(tmp, "app.ipa")
+    with zipfile.ZipFile(ipa_path, "w") as zf:
+        zf.writestr("Payload/Test.app/Info.plist", plistlib.dumps({
+            "CFBundleIdentifier": "com.example.test",
+            "CFBundleExecutable": "Test",
+            "CFBundleURLTypes": [{"CFBundleURLSchemes": ["testapp"]}],
+        }, fmt=plistlib.FMT_BINARY))
+        zf.writestr("Payload/Test.app/Test",
+                    b"\xcf\xfa\xed\xfe" + b"\x00" * 64 + b"CTF{ipa_flag}")
+    r = run("forensic/ipa_info.py", ipa_path)
+    check("forensic/ipa_info.py",
+          "com.example.test" in r.stdout and "testapp" in r.stdout
+          and "CTF{ipa_flag}" in r.stdout, r.stdout[-600:] + r.stderr)
+
+    # 127. icmp_payloads: склейка payload и декод
+    from scapy.all import Ether as _Ether, ICMP as _ICMP, IP as _IP
+    from scapy.all import Raw as _Raw, wrpcap as _wrpcap
+    icmp_path = os.path.join(tmp, "icmp.pcap")
+    _pkts = [_Ether() / _IP(src="1.1.1.1", dst="2.2.2.2")
+             / _ICMP(type=8, id=7, seq=i + 1) / _Raw(part)
+             for i, part in enumerate([b"CTF{icmp_", b"channel}"])]
+    _wrpcap(icmp_path, _pkts)
+    r = run("network/icmp_payloads.py", icmp_path)
+    check("network/icmp_payloads.py", "CTF{icmp_channel}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # 128. geo_photo: EXIF + ссылки обратного поиска
+    geo_path = os.path.join(tmp, "geo.jpg")
+    _im = Image.new("RGB", (16, 16), (100, 100, 100))
+    _ex = Image.Exif()
+    _ex[0x010F] = "TestMake"
+    _ex[0x0110] = "TestModel"
+    _im.save(geo_path, exif=_ex)
+    r = run("forensic/geo_photo.py", geo_path)
+    check("forensic/geo_photo.py",
+          "TestMake" in r.stdout and "yandex.com/images" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # 129. evm_decode: селектор transfer и аргументы
+    _cd = ("0xa9059cbb" + "0" * 24 + "11" * 20
+           + format(123456789, "064x"))
+    r = run("blockchain/evm_decode.py", _cd)
+    check("blockchain/evm_decode.py",
+          "transfer(address,uint256)" in r.stdout
+          and "0x" + "11" * 20 in r.stdout and "123456789" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    r = run("blockchain/evm_decode.py", "--sig", "transfer(address,uint256)")
+    check("evm selector", "a9059cbb" in r.stdout, r.stdout[-300:] + r.stderr)
+
+    # 130. pickle_scan: опасный GLOBAL и флаг
+    pkl_path = os.path.join(tmp, "model.pkl")
+    open(pkl_path, "wb").write(
+        b"CTF{pickle_scan}\n" + b"c__builtin__\neval\n(S'1+1'\ntR.")
+    r = run("ai/pickle_scan.py", pkl_path)
+    check("ai/pickle_scan.py",
+          "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
+          r.stdout[-600:] + r.stderr)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

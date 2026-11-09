@@ -27,6 +27,8 @@ python stego/jpeg_tail.py pic.jpg --extract out
 
 ```bash
 python forensic/zipmeta.py a.zip --decode
+python forensic/ipa_info.py app.ipa --out app      # iOS: Info.plist, строки
+python forensic/geo_photo.py photo.jpg --json r.json  # EXIF/GPS + ссылки
 sudo bash forensic/disk_triage.sh disk.img
 photorec disk.img                 # восстановление удалённых
 testdisk disk.img                 # разделы
@@ -37,6 +39,7 @@ cryptsetup luksOpen disk.img secure && mount /dev/mapper/secure /mnt
 
 ```bash
 python network/pcap_report.py cap.pcap --dump streams
+python network/icmp_payloads.py cap.pcap            # ICMP payload/каналы
 tshark -r cap.pcap -q -z io,phs            # иерархия протоколов
 tshark -r cap.pcap -Y http.request -T fields -e http.host -e http.request.uri
 tshark -r cap.pcap -T fields -e data.text -Y "data.text" | tr -d '\n'
@@ -160,6 +163,9 @@ python network/udp_payloads.py cap.pcap --sep / --signature MOBILE/
 python network/dns_tunnel.py cap.pcap            # домен канала определяется сам
 python network/pcap_http.py cap.pcap --out objects
 python stego/png_chunks.py pic.png --extract chunks
+python blockchain/evm_decode.py 0xa9059cbb...          # EVM calldata
+python blockchain/evm_decode.py --sig "transfer(address,uint256)"
+python ai/pickle_scan.py model.pkl                     # опасные глобалы, без запуска
 ```
 
 ## Linux: разведка и privesc

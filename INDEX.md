@@ -49,6 +49,8 @@
 | `android` | XML/SQLite/логи Android | `python toolbox.py android dump --json out.json` |
 | `vol` | pstree/envars | `python toolbox.py vol envars.txt --name agent` |
 | `apk` | APK: файлы, manifest, строки | `python toolbox.py apk app.apk --extract out` |
+| `ipa` | iOS IPA: Info.plist, строки, флаги | `python toolbox.py ipa app.ipa --out app` |
+| `geo` | геолокация по фото: EXIF/GPS + ссылки | `python toolbox.py geo photo.jpg --json report.json` |
 | `docker` | Docker-образ: слои, whiteouts, секреты | `python toolbox.py docker image.tar --out fs` |
 | `git` | git: история, секреты, удалённые файлы | `python toolbox.py git repo --all-objects` |
 | `browser` | история/куки/логины браузера | `python toolbox.py browser "Chrome/User Data"` |
@@ -66,6 +68,7 @@
 | `mc` | Minecraft AES-CFB8 + пакеты | `python toolbox.py mc cap.pcap --log latest.log` |
 | `mcblocks` | блоки → CSV | `python toolbox.py mcblocks cap.pcap --log latest.log --csv b.csv` |
 | `udp` | UDP payload/протокол | `python toolbox.py udp cap.pcap --sep /` |
+| `icmp` | ICMP payload, поля заголовка, тайминги | `python toolbox.py icmp cap.pcap` |
 | `dns` | DNS-канал: индексы, порядок, ключ из env-артефактов, XOR→zlib | `python toolbox.py dns cap.pcap` / `--seed S --host H` |
 | `http` | HTTP-объекты | `python toolbox.py http cap.pcap --out objs` |
 | `creds` | креды из трафика | `python toolbox.py creds cap.pcap` |
@@ -92,6 +95,19 @@
 | `rsa` | gcd/Ферма/малая e/Винер/CRT/dp-утечка/smallq/p^k/PEM + `auto`: числа из текста, ключи, все атаки | `python toolbox.py rsa auto task.txt` |
 | `otp` | two-time pad | `python toolbox.py otp --c1 ... --c2 ... --crib "the "` |
 | `stream` | SHA256-поток XOR | `python toolbox.py stream --cipher ... --key ... --nonce ... --brute` |
+
+## Blockchain
+
+| Имя | Что делает | Пример |
+|---|---|---|
+| `evm` | EVM calldata: селектор, аргументы, raw-слова | `python toolbox.py evm 0xa9059cbb...` |
+| `evm --sig` | посчитать селектор по сигнатуре | `python toolbox.py evm --sig "transfer(address,uint256)"` |
+
+## AI/ML
+
+| Имя | Что делает | Пример |
+|---|---|---|
+| `pickle` | pickle/модели: опасные глобалы, строки, флаги (без запуска) | `python toolbox.py pickle model.pkl` |
 
 ## Linux
 

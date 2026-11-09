@@ -1863,6 +1863,59 @@ def main():
     finally:
         srv.terminate()
 
+    # 123. carve: JPEG не обрезается по миниатюре внутри APP1
+    _thumb = b"\xff\xd8\xff\xd9"
+    _app1_payload = b"Exif\x00\x00" + _thumb
+    _app1 = b"\xff\xe1" + (len(_app1_payload) + 2).to_bytes(2, "big") + _app1_payload
+    _sos = b"\xff\xda" + (8).to_bytes(2, "big") + b"\x01\x01\x00\x00\x3f\x00"
+    _jpeg = b"\xff\xd8" + _app1 + _sos + b"\x12\x34\x56" + b"\xff\xd9"
+    _host = os.path.join(tmp, "host_jpeg.bin")
+    open(_host, "wb").write(b"JUNKJUNK" + _jpeg + b"TAILTAIL")
+    _out = os.path.join(tmp, "carve_jpeg")
+    r = run("stego/carve.py", _host, "--out", _out)
+    _jpg_files = ([f for f in os.listdir(_out) if f.endswith(".jpg")]
+                  if os.path.isdir(_out) else [])
+    _ok = bool(_jpg_files) and open(os.path.join(_out, _jpg_files[0]), "rb").read() == _jpeg
+    check("carve jpeg boundary", _ok, r.stdout[-400:] + r.stderr)
+
+    # 124. carve: GIF не обрезается по 0x3B внутри LZW-данных
+    _gif = (b"GIF89a" + b"\x01\x00\x01\x00\x00\x00\x00"
+            + b"\x2c" + b"\x00\x00\x00\x00\x01\x00\x01\x00\x00"
+            + b"\x02" + b"\x05" + b"\x3b\x3b\x3b\x3b\x3b" + b"\x00" + b"\x3b")
+    _host = os.path.join(tmp, "host_gif.bin")
+    open(_host, "wb").write(b"HOSTHOST" + _gif + b"TAIL")
+    _out = os.path.join(tmp, "carve_gif")
+    r = run("stego/carve.py", _host, "--out", _out)
+    _gif_files = ([f for f in os.listdir(_out) if f.endswith(".gif")]
+                  if os.path.isdir(_out) else [])
+    _ok = bool(_gif_files) and open(os.path.join(_out, _gif_files[0]), "rb").read() == _gif
+    check("carve gif boundary", _ok, r.stdout[-400:] + r.stderr)
+
+    # 125. carve: TAR начинается с заголовка (а не с 257) и не тянет мусор
+    _buf = io.BytesIO()
+    with tarfile.open(fileobj=_buf, mode="w") as _tf:
+        _blob = b"CTF{tar_boundary}"
+        _ti = tarfile.TarInfo("flag.txt")
+        _ti.size = len(_blob)
+        _tf.addfile(_ti, io.BytesIO(_blob))
+    _tar = _buf.getvalue()
+    _host = os.path.join(tmp, "host_tar.bin")
+    open(_host, "wb").write(b"PREFIX!!" + _tar + b"JUNKJUNK")
+    _out = os.path.join(tmp, "carve_tar")
+    r = run("stego/carve.py", _host, "--out", _out)
+    _tar_files = ([f for f in os.listdir(_out) if f.endswith(".tar")]
+                  if os.path.isdir(_out) else [])
+    _ok = False
+    if _tar_files:
+        _raw = open(os.path.join(_out, _tar_files[0]), "rb").read()
+        try:
+            with tarfile.open(fileobj=io.BytesIO(_raw)) as _tf2:
+                _member = _tf2.extractfile("flag.txt").read()
+            _ok = _member == _blob and not _raw.endswith(b"JUNKJUNK")
+        except Exception:
+            _ok = False
+    check("carve tar boundary", _ok, r.stdout[-400:] + r.stderr)
+
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)
 

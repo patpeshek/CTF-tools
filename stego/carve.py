@@ -62,6 +62,138 @@ def zip_end(data: bytes, pos: int) -> int:
     return end if end <= len(data) else len(data)
 
 
+def _gif_subblocks(data: bytes, i: int) -> int:
+    n = len(data)
+    while i < n:
+        size = data[i]
+        i += 1
+        if size == 0:
+            return i
+        i += size
+    return -1
+
+
+def gif_end(data: bytes, pos: int) -> int:
+    """Конец GIF по структуре: блоки 0x21/0x2C и их sub-blocks, затем 0x3B.
+
+    Наивный поиск первого 0x3B ломается: этот байт свободно встречается в
+    LZW-данных и в extension-блоках.
+    """
+    n = len(data)
+    if data[pos:pos + 3] != b"GIF":
+        return -1
+    i = pos + 6
+    if i + 7 > n:
+        return -1
+    packed = data[i + 4]
+    i += 7
+    if packed & 0x80:                       # global color table
+        i += 3 * (1 << ((packed & 0x07) + 1))
+    while i < n:
+        block = data[i]
+        if block == 0x3B:                   # trailer
+            return i + 1
+        if block == 0x21:                   # extension
+            i += 2                          # introducer + label
+            i = _gif_subblocks(data, i)
+            if i == -1:
+                return -1
+        elif block == 0x2C:                 # image descriptor
+            i += 1
+            if i + 9 > n:
+                return -1
+            local = data[i + 8]
+            i += 9
+            if local & 0x80:                # local color table
+                i += 3 * (1 << ((local & 0x07) + 1))
+            i += 1                          # LZW minimum code size
+            i = _gif_subblocks(data, i)
+            if i == -1:
+                return -1
+        else:
+            return -1
+    return -1
+
+
+def jpeg_end(data: bytes, pos: int) -> int:
+    """Конец JPEG по сегментам: EXIF-миниатюра внутри APP1 содержит свой
+    FFD9, поэтому поиск «первого FFD9» обрезает картинку."""
+    n = len(data)
+    if data[pos:pos + 2] != b"\xff\xd8":
+        return -1
+    i = pos + 2
+    while i + 1 < n:
+        if data[i] != 0xFF:                 # мусор — ищем следующий маркер
+            nxt = data.find(b"\xff", i)
+            if nxt == -1:
+                return -1
+            i = nxt
+        while i < n and data[i] == 0xFF:    # fill bytes
+            i += 1
+        if i >= n:
+            return -1
+        marker = data[i]
+        i += 1
+        if marker == 0xD9:                  # EOI
+            return i
+        if marker == 0x01 or 0xD0 <= marker <= 0xD8:
+            continue                        # TEM / RSTn / SOI: без длины
+        if i + 2 > n:
+            return -1
+        seg_len = int.from_bytes(data[i:i + 2], "big")
+        if seg_len < 2:
+            return -1
+        if marker == 0xDA:                  # SOS: дальше энтропийные данные
+            start = i + seg_len
+            eoi = data.find(b"\xff\xd9", start)
+            return eoi + 2 if eoi != -1 else -1
+        i += seg_len
+    return -1
+
+
+def _tar_checksum_ok(data: bytes, start: int) -> bool:
+    if start < 0 or start + 512 > len(data):
+        return False
+    header = data[start:start + 512]
+    if not header[:100].strip(b"\x00"):
+        return False
+    raw = header[148:156].strip(b"\x00 ")
+    if not raw:
+        return False
+    try:
+        want = int(raw, 8)
+    except ValueError:
+        return False
+    got = sum(header[:148]) + 8 * 0x20 + sum(header[156:])
+    return got == want
+
+
+def tar_end(data: bytes, start: int) -> int:
+    """Конец TAR: заголовки по 512 байт, данные с выравниванием, два нулевых
+    блока в конце. Позволяет не приклеивать мусор после архива."""
+    n = len(data)
+    i = start
+    zeros = 0
+    while i + 512 <= n:
+        header = data[i:i + 512]
+        if header == b"\x00" * 512:
+            zeros += 1
+            i += 512
+            if zeros >= 2:
+                return i
+            continue
+        zeros = 0
+        if not _tar_checksum_ok(data, i):
+            return i if i > start else -1
+        size_raw = header[124:136].strip(b"\x00 ").strip()
+        try:
+            size = int(size_raw, 8) if size_raw else 0
+        except ValueError:
+            return -1
+        i += 512 + ((size + 511) // 512) * 512
+    return min(i, n)
+
+
 def extent(data: bytes, found, i: int) -> int:
     pos, ext = found[i][0], found[i][1]
     if ext == ".zip":
@@ -78,13 +210,23 @@ def extent(data: bytes, found, i: int) -> int:
         if iend != -1 and iend + 8 <= len(data):
             return iend + 8
     if ext == ".jpg":
+        end = jpeg_end(data, pos)
+        if end != -1:
+            return end
         eoi = data.find(b"\xff\xd9", pos)
         if eoi != -1:
             return eoi + 2
     if ext == ".gif":
+        end = gif_end(data, pos)
+        if end != -1:
+            return end
         term = data.find(b"\x3b", pos + 6)
         if term != -1:
             return term + 1
+    if ext == ".tar":
+        end = tar_end(data, pos)
+        if end != -1:
+            return end
     return found[i + 1][0] if i + 1 < len(found) else len(data)
 
 
@@ -100,11 +242,19 @@ def main():
     for sig, ext, name in SIGS:
         start = 0
         while True:
-            pos = data.find(sig, start)
-            if pos == -1:
+            sigpos = data.find(sig, start)
+            if sigpos == -1:
                 break
+            pos = sigpos
+            if ext == ".tar":
+                # сигнатура ustar лежит на 257-м байте заголовка
+                begin = sigpos - 257
+                if begin < 0 or not _tar_checksum_ok(data, begin):
+                    start = sigpos + 1
+                    continue
+                pos = begin
             found.append((pos, ext, name, sig))
-            start = pos + 1
+            start = sigpos + 1
 
     found.sort()
     # сигнатура самого файла на нулевом смещении — это он сам, не вложение

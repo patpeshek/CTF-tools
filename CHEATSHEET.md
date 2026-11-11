@@ -196,6 +196,10 @@ python admin/win_admin.py reg SOFTWARE --key "Microsoft\Windows\CurrentVersion\R
 python admin/win_admin.py services SYSTEM           # службы: ImagePath/Start/ServiceDll
 python admin/win_admin.py run SOFTWARE NTUSER.DAT   # Run/RunOnce/Winlogon/IFEO/AppInit
 python admin/win_admin.py tasks Windows/System32/Tasks   # задачи + раскодирование -enc
+python admin/admin_triage.py fs_dump/               # всё админское: конфиги, логи, кусты, ВМ
+python admin/admin_triage.py etc/sudoers            # один конфиг (sudoers/shadow/crontab/...)
+python admin/admin_triage.py suid.txt               # find / -perm -4000 / getcap -r / → GTFOBins
+python admin/admin_triage.py fs_dump/ --no-dispatch # только конфиги, без vm/logs/winadm
 ```
 
 ## Артефакты и текстовые выгрузки

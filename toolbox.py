@@ -120,6 +120,8 @@ REGISTRY = [
      "auth/nginx/journald/auditd/history: атаки, брутфорс, таймлайн"),
     ("admin", "winadm", "admin/win_admin.py",
      "реестр regf, службы, Run-ключи, задачи, PS-история (-enc)"),
+    ("admin", "admin", "admin/admin_triage.py",
+     "дамп ФС/конфигов: sudo/SUID/cron/секреты + раздача vm/logs/winadm"),
 
     ("web", "recon", "web/recon.py", "разведка страницы: ссылки/формы/JS/куки/robots"),
     ("web", "jwt", "web/jwt_tool.py", "JWT decode/forge"),
@@ -481,6 +483,15 @@ def _plan_file(path):
         act(1, "logs", "лог/история: входы, атаки, команды, раскодирование, --timeline")
     elif adm in ("REGF", "TASKXML"):
         act(1, "winadm", "куст реестра/задача: ключи, службы, автозапуск, удалённое, -enc")
+    else:
+        try:
+            import admin_triage
+            cfg = admin_triage.classify(path, None)[0]
+        except Exception:
+            cfg = None
+        if cfg and cfg not in ("BACKUP",):
+            print(f"[+] admin-конфиг: {cfg}")
+            act(1, "admin", f"конфиг {cfg}: sudo/SUID/cron/хеши/секреты")
 
     if kind == "SQLite":
         act(2, "android", "SQLite: таблицы, чаты, токены")
@@ -591,6 +602,13 @@ def _plan_dir(path):
     print(f"    python toolbox.py solve {path} --deep")
     print(f"    python toolbox.py flaghunt {path}       # файлы flag/user/root")
     print(f"    python toolbox.py triage {path}         # отчёт по каждому")
+    try:
+        sys.path.insert(0, os.path.join(HERE, "admin"))
+        import adminlib
+        if adminlib.looks_admin_dir(path):
+            print(f"    python toolbox.py admin {path}          # похоже на дамп ФС/конфигов")
+    except Exception:
+        pass
 
 
 def cmd_auto(args):

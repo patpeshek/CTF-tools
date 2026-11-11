@@ -179,8 +179,11 @@ def history_kind(path, lines):
             sh += 1
             continue
         w = s.split()[0] if s.split() else ""
+        if ":" in w:   # passwd/group/«ключ: значение» — не команда
+            continue
         w = w.rsplit("/", 1)[-1]
-        if w in SHELL_WORDS or s.startswith(("./", "/")):
+        # голый путь без аргументов — скорее список файлов (find/SUID), чем команда
+        if w in SHELL_WORDS or s.startswith("./") or (s.startswith("/") and " " in s):
             sh += 1
     if "history" in name:
         return "PSHISTORY" if ps > sh else "SHELLHISTORY"
@@ -400,7 +403,7 @@ SUSPICIOUS = [
               r"\bnc\b[^\n]*<\s*\S|Invoke-RestMethod[^\n]*-Method\s+Post|ftp\s+-s:|"
               r"\btar\s+[a-z]*c[a-z]*f?\s+\S+\s+/(?:etc|home|root)|\bzip\s+-r"),
     ("crypto-tool", r"\bopenssl\s+(?:enc|aes|des)|\bgpg\s+(?:-c|--symmetric|--encrypt)|\bzip\s+-P\b|"
-                    r"\b7z\s+a\b.*-p|\bsteghide\b|\bxor\b"),
+                    r"\b7z\s+a\b.*-p|\bsteghide\s+embed\b"),
     ("privesc", r"\bsudo\s+-l\b|\bsudo\s+su\b|\bsu\s+-?\s*root\b|\bsudo\s+-i\b|find\s+/\s+-perm\s+-?[u4]|"
                 r"getcap\s+-r|linpeas|winpeas|pspy|GTFO"),
 ]
@@ -495,6 +498,33 @@ def print_flags(flags, where=""):
         print(f"[!!!] ФЛАГ: {f}" + (f"  ({where})" if where else ""))
         shown.append(f)
     return shown
+
+
+ADMIN_DIR_HINTS = {"etc", "var", "home", "root", "windows", "users", "system32", "opt", "srv",
+                   "boot", "usr"}
+ADMIN_FILE_HINTS = {"passwd", "shadow", "sudoers", "crontab", "sshd_config", "ntuser.dat", "sam",
+                    "consolehost_history.txt", "auth.log", "syslog", "secure", "access.log",
+                    "docker-compose.yml", "docker-compose.yaml", ".env", ".git-credentials",
+                    "authorized_keys", ".bash_history", ".zsh_history", "audit.log"}
+VM_EXT = (".vmdk", ".qcow2", ".vdi", ".vhd", ".vhdx", ".ova", ".ovf")
+
+
+def looks_admin_dir(path, limit=3000):
+    """Похожа ли папка на выгрузку ФС/конфигов (solve: звать ли admin_triage)."""
+    score, n = 0, 0
+    base = path.rstrip("\\/").count(os.sep)
+    for d, dirs, files in os.walk(path):
+        if d.count(os.sep) - base >= 3:
+            dirs[:] = []
+        score += sum(x.lower() in ADMIN_DIR_HINTS for x in dirs)
+        for fn in files:
+            n += 1
+            low = fn.lower()
+            if low in ADMIN_FILE_HINTS or low.endswith(VM_EXT + (".service",)):
+                return True
+            if n >= limit:
+                return score >= 2
+    return score >= 2
 
 
 def tool_path(rel):

@@ -102,6 +102,7 @@ python tests/selftest.py
 | координаты/пиксель-арт из пакетов | `network/mc_blocks.py` + `stego/bitmap_font.py` |
 | UDP и самодельный протокол `SIG/.../...` | `network/udp_payloads.py` |
 | Linux: sudo/SUID/cron/writable | `linux/privesc.sh`, `linux/gtfobins.py` |
+| дамп ФС/конфигов: sudoers, SUID-список, cron, shadow, секреты | `admin/admin_triage.py` |
 | надо запустить ELF/посмотреть поведение | `linux/wsl.py run .\chall --dir` (Arch WSL) |
 | скрипт от root что-то source-ит | `linux/script_audit.py` |
 | текстовые выгрузки Volatility | `forensic/volatility_text.py` |

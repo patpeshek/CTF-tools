@@ -468,6 +468,26 @@ def admin_kind(path, data):
         return None, None
 
 
+def admin_config(path):
+    """Linux-конфиг (sudoers/shadow/cron/sshd/секреты/SUID-список) → тип или None."""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "admin"))
+        import admin_triage
+        kind = admin_triage.classify(path, None)[0]
+        return kind if kind and kind != "BACKUP" else None
+    except Exception:
+        return None
+
+
+def admin_dir(path):
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "admin"))
+        import adminlib
+        return adminlib.looks_admin_dir(path)
+    except Exception:
+        return False
+
+
 def steps_for(path, deep=False, depth=0):
     """[(имя_инструмента, аргументы, зачем, таймаут)] по типу данных."""
     data = common.read_bytes(path)[:2_000_000] if os.path.isfile(path) else b""
@@ -479,6 +499,8 @@ def steps_for(path, deep=False, depth=0):
     if os.path.isdir(path):
         add(("hunt", [path], "строки/секреты во всех файлах", 60))
         add(("flaghunt", [path], "файлы flag/flag.txt/user.txt", 60))
+        if admin_dir(path):
+            add(("admin", [path], "дамп ФС/конфигов: sudo/SUID/cron/секреты, логи, кусты, ВМ", 120))
         return steps, "DIR"
 
     # Архивы: flag.wav.xz, traffic.pcapng.xz, dump.tar.bz2. Распаковываем
@@ -598,6 +620,10 @@ def steps_for(path, deep=False, depth=0):
                              "раскодирование, слепая SQLi", 60))
     elif adm in ("REGF", "TASKXML"):
         add(("winadm", [path], f"{adm}: ключи/службы/автозапуск/удалённое, -enc", 60))
+    elif data and depth == 0:
+        cfg = admin_config(path)
+        if cfg:
+            add(("admin", [path], f"конфиг {cfg}: sudo/SUID/cron/хеши/секреты", 40))
 
     # PEM/DER-ключ: рядом часто лежит cipher.bin/flag.enc
     if ext in (".pem", ".pub", ".key", ".crt", ".der") or b"-----BEGIN" in data[:200]:

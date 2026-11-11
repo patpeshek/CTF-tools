@@ -185,6 +185,29 @@ def checks_admin(tmp):
     check("solve.py winadm", win["system"][1] in r.stdout and "«winadm»" in r.stdout,
           r.stdout[-700:] + r.stderr[-300:])
 
+    # #84 admin_triage: дамп ФС с ошибками конфигов + раздача vm/logs/winadm
+    dump = os.path.join(base, "fsdump")
+    dflags = gen_admin.write_linux_dump(dump)
+    r = run("admin/admin_triage.py", dump)
+    out = r.stdout
+    must = ["toor с UID 0", "NOPASSWD /usr/bin/find — GTFOBins", "LD_PRELOAD", "wildcard-инъекция",
+            "/tmp/cleanup.sh", "reverse-shell", "PermitEmptyPasswords", "no_root_squash",
+            ".git-credentials: bob:", "docker.sock", "/opt/tools/backup — нестандартный",
+            "cap_setuid", "sha512crypt, hashcat -m 1800", "yescrypt", "у toor пустой пароль",
+            "group docker: bob", "удалён /home/bob/notes.txt"]
+    miss = [m for m in must if m not in out]
+    check("admin/admin_triage.py checks", not miss, f"нет: {miss}\n" + out[-900:] + r.stderr[-400:])
+    check("admin/admin_triage.py dispatch", all(f in out for f in dflags.values()),
+          out[-900:] + r.stderr[-400:])
+    r = run("admin/admin_triage.py", os.path.join(dump, "etc", "sudoers"))
+    check("admin/admin_triage.py file", "NOPASSWD" in r.stdout and "GTFOBins" in r.stdout,
+          r.stdout[-600:] + r.stderr[-300:])
+    r = run("solve.py", os.path.join(dump, "opt", "app", "k8s", "secret.yaml"), "--time", "40")
+    check("solve.py admin config", dflags["k8s"] in r.stdout and "«admin»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+    r = run("solve.py", dump, "--plan")
+    check("solve.py admin dir plan", "admin " in r.stdout, r.stdout[-700:] + r.stderr[-300:])
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

@@ -232,6 +232,33 @@ def checks_reverse(tmp):
           and importlib.util.MAGIC_NUMBER != open(pyc38, "rb").read(4),
           r.stdout[-800:] + r.stderr)
 
+    # #78 megarev: случайные 00 00 01 00 не считаются ICO и не вытесняют
+    # настоящие вложения; настоящий ICO находится; --time соблюдается
+    import random
+    rnd = random.Random(78)
+    png_buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (9, 9, 9)).save(png_buf, "PNG")
+    ico_buf = io.BytesIO()
+    Image.new("RGB", (16, 16), (200, 10, 10)).save(ico_buf, "ICO", sizes=[(16, 16)])
+    ico_body = (b"MZ" + rnd.randbytes(200) + struct.pack("<20I", *([0x10000] * 20))
+                + rnd.randbytes(3000) + png_buf.getvalue() + rnd.randbytes(100)
+                + make_zip_bytes("inner.txt", b"hello") + rnd.randbytes(64)
+                + ico_buf.getvalue())
+    ico_noise = os.path.join(tmp, "ico_noise.bin")
+    open(ico_noise, "wb").write(ico_body)
+    r = run("reverse/megarev.py", ico_noise, "--no-crypto")
+    check("megarev ICO false positives",
+          "PNG @0x" in r.stdout and "ZIP @0x" in r.stdout and r.stdout.count("ICO @0x") == 1,
+          r.stdout[-800:] + r.stderr)
+    words = b" ".join(b"word%03dkey" % i for i in range(300))
+    slow_bin = os.path.join(tmp, "slow_rev.bin")
+    open(slow_bin, "wb").write(b"\x7fELF" + rnd.randbytes(150_000) + words + rnd.randbytes(20_000))
+    t0 = time.time()
+    r = run("reverse/megarev.py", slow_bin, "--time", "2")
+    took = time.time() - t0
+    check("megarev --time respected", took < 6 and r.returncode == 0,
+          f"{took:.1f}s\n" + r.stdout[-400:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

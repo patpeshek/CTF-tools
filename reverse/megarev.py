@@ -98,28 +98,12 @@ def entropy(b: bytes) -> float:
 
 
 def utf16_strings(data: bytes, minlen=4, limit=200):
+    # regex вместо побайтового цикла: на мегабайтах цикл съедал весь --time
     out = []
-    i = 0
-    while i + 1 < len(data):
-        start = None
-        chars = []
-        j = i
-        while j + 1 < len(data):
-            c = data[j]
-            if 32 <= c < 127 and data[j + 1] == 0:
-                if start is None:
-                    start = j
-                chars.append(chr(c))
-                j += 2
-            else:
-                break
-        if start is not None and len(chars) >= minlen:
-            out.append((start, "".join(chars)))
-            i = j
-            if len(out) >= limit:
-                break
-        else:
-            i += 1
+    for m in re.finditer(rb"(?:[\x20-\x7e]\x00){%d,}" % minlen, data):
+        out.append((m.start(), m.group()[::2].decode("latin-1")))
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -175,6 +159,30 @@ def section_end(data: bytes):
     return 0
 
 
+def ico_size(data: bytes, pos: int) -> int:
+    """Длина ICO по ICONDIR или 0, если 00 00 01 00 — случайные байты (в коде и
+    таблицах int32 = 0x10000 их полно, и они вытесняли настоящие вложения)."""
+    if pos + 6 > len(data):
+        return 0
+    count = struct.unpack_from("<H", data, pos + 4)[0]
+    table_end = 6 + 16 * count
+    if not 1 <= count <= 255 or pos + table_end > len(data):
+        return 0
+    end = table_end
+    for i in range(count):
+        _w, _h, _colors, reserved, planes, bpp, size, off = struct.unpack_from(
+            "<BBBBHHII", data, pos + 6 + 16 * i)
+        if reserved != 0 or planes > 1 or bpp not in (0, 1, 4, 8, 16, 24, 32):
+            return 0
+        if size < 20 or off < table_end or pos + off + size > len(data):
+            return 0
+        img = data[pos + off:pos + off + 8]
+        if img != b"\x89PNG\r\n\x1a\n" and img[:4] != b"\x28\x00\x00\x00":  # PNG / BITMAPINFOHEADER
+            return 0
+        end = max(end, off + size)
+    return end
+
+
 def find_sigs(data: bytes):
     found = []
     for sig, name, ext in SIGS:
@@ -183,7 +191,8 @@ def find_sigs(data: bytes):
             pos = data.find(sig, start)
             if pos == -1:
                 break
-            found.append((pos, name, ext))
+            if name != "ICO" or ico_size(data, pos):
+                found.append((pos, name, ext))
             start = pos + 1
     found.sort()
     return found
@@ -350,15 +359,19 @@ def pyc_info(path: str, data: bytes):
     return info
 
 
-def scan_raw_flags(data: bytes, keys, report):
+def scan_raw_flags(data: bytes, keys, report, deadline=None):
     """Ищет флаги в расшифрованных байтах, даже если вокруг бинарный мусор."""
     from Crypto.Cipher import AES, ARC4
     chunks = [data] if len(data) <= 65536 else [data[-65536:]]
     for key, label in list(keys.items())[:120]:
+        if deadline and time.time() > deadline:
+            return
         outs = []
         # XOR с разными фазами: флаг может начинаться не с начала ключа
         for chunk in chunks:
             for phase in range(min(len(key), 32)):
+                if deadline and time.time() > deadline:
+                    break
                 outs.append((f"xor phase={phase}", bytes(
                     c ^ key[i % len(key)] for i, c in enumerate(chunk[phase:]))))
         try:
@@ -413,6 +426,9 @@ def main():
     deadline = time.time() + args.time
 
     for path in paths:
+        if time.time() > deadline:
+            print("[!] лимит времени: остальные файлы пропущены")
+            break
         try:
             data = open(path, "rb").read(20_000_000)
         except OSError:
@@ -466,6 +482,8 @@ def main():
         interesting = [s for s in sigs if s[0] > 0 or s[1] not in ("ELF", "ZIP")]
         for i, (off, name, ext) in enumerate(interesting[:5]):
             nxt = interesting[i + 1][0] if i + 1 < len(interesting) else len(data)
+            if name == "ICO":  # длина из ICONDIR: PNG-кадры внутри не режут иконку
+                nxt = off + ico_size(data, off)
             blob = data[off:nxt][:1_000_000]
             print(f"[+] вложено: {name} @0x{off:x} ({len(blob)} b)")
             blobs.append((f"{label}:{name}@0x{off:x}", blob))
@@ -537,18 +555,20 @@ def main():
         print(f"\n[+] токенов: {len(tokens)}  ключей: {len(keys)}  блобов: {len(blobs)}")
         for label, blob in blobs[:10]:
             if time.time() > deadline:
-                print("[!] лимит времени")
                 break
             ac.add_candidate(best, f"[{label}] raw", blob)
             # текстовый перебор имеет смысл только для более-менее текстовых блобов;
-            # для бинарников флаги ловит scan_raw_flags
-            if common.printable_ratio(blob) >= 0.5:
-                ac.transform_bytes(blob, f"[{label}] ", best, deep=args.deep)
-            scan_raw_flags(blob, keys, report)
+            # для бинарников флаги ловит scan_raw_flags. transform_bytes не прерывается
+            # (255 XOR по всему блобу), поэтому ему — только первые 64 КБ.
+            if common.printable_ratio(blob) >= 0.5 and time.time() < deadline:
+                ac.transform_bytes(blob[:65536], f"[{label}] ", best, deep=args.deep)
+            scan_raw_flags(blob, keys, report, deadline)
             for key, klabel in list(keys.items())[:250]:
                 if time.time() > deadline:
                     break
                 mg.try_key(blob, f"[{label}] {klabel}", key, best, deep=args.deep)
+        if time.time() > deadline:
+            print("[!] лимит времени")
 
     ranked = sorted(best.values(), key=lambda x: -x[0])
     for sc, how, text in ranked:

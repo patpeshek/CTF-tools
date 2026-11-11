@@ -107,6 +107,7 @@ REGISTRY = [
     ("crypto", "rsa", "crypto/rsa_tool.py", "RSA: gcd/Ферма/малая экспонента"),
     ("crypto", "otp", "crypto/otp_reuse.py", "two-time pad"),
     ("crypto", "stream", "crypto/stream_sha256.py", "SHA256-поток XOR"),
+    ("crypto", "prngstate", "crypto/prng_state.py", "состояние ГПСЧ: MT19937, LCG, усечённый LCG"),
 
     ("linux", "privesc", "linux/privesc.sh", "разведка прав"),
     ("linux", "gtfo", "linux/gtfobins.py", "GTFObins оффлайн"),

@@ -96,6 +96,7 @@
 | `hashcat` | подбор пароля: авто-режим, словарь/маска/правила, реальный запуск если hashcat установлен | `python toolbox.py hashcat <hash> --attack 3 --mask "?d?d?d?d"` |
 | `rsa` | gcd/Ферма/малая e/Винер/CRT/dp-утечка/smallq/p^k/PEM + `auto`: числа из текста, ключи, все атаки | `python toolbox.py rsa auto task.txt` |
 | `otp` | two-time pad | `python toolbox.py otp --c1 ... --c2 ... --crib "the "` |
+| `prngstate` | состояние ГПСЧ: MT19937 (клон, назад/вперёд), LCG (m,a,c), усечённый LCG (решётка), XOR шифртекста | `python toolbox.py prngstate mt outs.txt --cipher <hex>` |
 | `stream` | SHA256-поток XOR | `python toolbox.py stream --cipher ... --key ... --nonce ... --brute` |
 
 ## Blockchain

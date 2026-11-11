@@ -700,6 +700,11 @@ def steps_for(path, deep=False, depth=0):
             if len(re.findall(r"[A-Za-zА-Яа-я]", text)) >= 200:
                 add(("classical", ["vigenere-crack", "--text", text[:6000]],
                      "длинный текст без пробелов — Виженер/Цезарь", 40))
+            _ints = re.findall(r"\d{5,20}", text)
+            if len(_ints) >= 6 and len(_ints) >= len(text.split()) * 0.9:
+                if len(_ints) >= 624:
+                    add(("prngstate", ["mt", path], "624+ 32-битных чисел: клон MT19937", 30))
+                add(("prngstate", ["lcg", path], "ряд чисел: параметры LCG", 30))
             if len(re.findall(r"\d{10,}", text)) >= 2:
                 add(("rsa", ["auto", path], "RSA: числа из текста, все атаки", 60))
                 add(("all", [path, "--time", "25"], "остальные шифры/хеши", 45))

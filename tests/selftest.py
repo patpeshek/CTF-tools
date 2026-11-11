@@ -437,6 +437,51 @@ def checks_disk_image(tmp):
     r = run("forensic/disk_image.py", "scan", disk, "--find-flags")
     check("disk_image scan: раздел -> FAT -> флаг", "CTF{scan_via_mbr_part}" in r.stdout,
           r.stdout[-600:] + r.stderr)
+def checks_prng(tmp):
+    import random as _rnd
+    # MT19937: 624 выходов -> клон -> следующие и предыдущие
+    rng = _rnd.Random(20240607)
+    seq = [rng.getrandbits(32) for _ in range(800)]
+    f = os.path.join(tmp, "mt_outs.txt")
+    open(f, "w").write(" ".join(map(str, seq[100:724])))      # окно не с границы блока
+    r = run("crypto/prng_state.py", "mt", f, "--n", "6", "--prev", "4")
+    check("prngstate mt: следующие выходы",
+          str(seq[724:730]) in r.stdout, r.stdout[-500:] + r.stderr)
+    check("prngstate mt: предыдущие выходы",
+          str(seq[96:100]) in r.stdout, r.stdout[-500:] + r.stderr)
+    # шифртекст XOR randbytes -> флаг
+    pt = b"CTF{mt_cloned_ok}"
+    rng2 = _rnd.Random(99)
+    outs2 = [rng2.getrandbits(32) for _ in range(624)]
+    key = rng2.randbytes(len(pt))
+    f2 = os.path.join(tmp, "mt_outs2.txt")
+    open(f2, "w").write(" ".join(map(str, outs2)))
+    r = run("crypto/prng_state.py", "mt", f2, "--cipher", bytes(a ^ b for a, b in zip(pt, key)).hex())
+    check("prngstate mt: --cipher randbytes", "CTF{mt_cloned_ok}" in r.stdout, r.stdout[-500:])
+    # LCG с неизвестными m, a, c
+    m, a, c, x = 2 ** 31 - 1, 1103515245, 12345, 42
+    xs = []
+    for _ in range(12):
+        x = (a * x + c) % m
+        xs.append(x)
+    f3 = os.path.join(tmp, "lcg_outs.txt")
+    open(f3, "w").write(" ".join(map(str, xs[:9])))
+    r = run("crypto/prng_state.py", "lcg", f3, "--n", "3")
+    check("prngstate lcg: m, a, c и следующий",
+          f"m = {m}" in r.stdout and f"a = {a}" in r.stdout and f"c = {c}" in r.stdout
+          and str(xs[9:12]) in r.stdout, r.stdout[-500:] + r.stderr)
+    # LCG с усечёнными выходами (стиль java.util.Random: 48 бит, старшие 32)
+    m, a, c, x = 2 ** 48, 25214903917, 11, 123456789012
+    full = []
+    for _ in range(12):
+        x = (a * x + c) % m
+        full.append(x)
+    f4 = os.path.join(tmp, "lcgt_outs.txt")
+    open(f4, "w").write(" ".join(str(v >> 16) for v in full[:8]))
+    r = run("crypto/prng_state.py", "lcg-trunc", f4, "--m", m, "--a", a, "--c", c,
+            "--shift", 16, "--n", "3")
+    check("prngstate lcg-trunc: состояние и следующие",
+          str([v >> 16 for v in full[8:11]]) in r.stdout, r.stdout[-500:] + r.stderr)
 
 
 def main():
@@ -2320,6 +2365,7 @@ def main():
     checks_ctb(tmp)
     checks_zip_tricks(tmp)
     checks_disk_image(tmp)
+    checks_prng(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

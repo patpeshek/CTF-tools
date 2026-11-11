@@ -267,6 +267,48 @@ def checks_forensics(tmp):
           "CTF{arsc_string_flag}" in r.stdout and "CTF{apk_asset_flag}" in r.stdout,
           r.stdout[-800:] + r.stderr)
 
+    # #74 flag_hunt --pattern glob, artifact_hunt --context и скорость,
+    # volatility_text --keys (API_KEY) и --grep
+    hunt = os.path.join(base, "hunt")
+    os.makedirs(hunt)
+    open(os.path.join(hunt, "server.key"), "w").write("-----BEGIN TEST KEY-----\n")
+    r = run("forensic/flag_hunt.py", hunt, "--pattern", "*.key")
+    check("flag_hunt --pattern glob (#74)",
+          "server.key" in r.stdout and "Traceback" not in r.stderr,
+          r.stdout[-600:] + r.stderr[-600:])
+    ctxf = os.path.join(base, "ctx.log")
+    open(ctxf, "w").write("ctxbefore" + " ." * 40 + "\n"
+                          "secret: fake-test-value-01\n"
+                          + " ." * 40 + " ctxafter\n")
+    r = run("forensic/artifact_hunt.py", ctxf, "--context", "1")
+    check("artifact_hunt --context (#74)",
+          "fake-test-value-01" in r.stdout and "ctxbefore" in r.stdout
+          and "ctxafter" in r.stdout, r.stdout[-600:] + r.stderr)
+    nlf = os.path.join(base, "newlines.txt")
+    open(nlf, "wb").write(b"\n" * 100_000)
+    try:
+        r = subprocess.run([PY, os.path.join(KIT, "forensic", "artifact_hunt.py"), nlf],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=ENV, timeout=30)
+        ok, detail = r.returncode == 0, r.stderr[-400:]
+    except subprocess.TimeoutExpired:
+        ok, detail = False, "timeout 30s: квадратичный разбор"
+    check("artifact_hunt 100KB newlines fast (#74)", ok, detail)
+    envf = os.path.join(base, "windows.envars.txt")
+    open(envf, "w").write(
+        "PID\tProcess\tBlock\tVariable\tValue\n"
+        "1234\tagent.exe\t0x1\tPATH\tC:\\Windows\n"
+        "1234\tagent.exe\t0x1\tAPI_KEY\tzz-test-0001\n"
+        "1234\tagent.exe\t0x1\tLAB_HOST\tlab-host-01\n"
+        "5678\tother.exe\t0x2\tPATH\tC:\\Other\n")
+    r = run("forensic/volatility_text.py", envf, "--keys")
+    check("volatility_text --keys API_KEY (#74)", "zz-test-0001" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    r = run("forensic/volatility_text.py", envf, "--grep", "lab-host")
+    check("volatility_text --grep (#74)",
+          "lab-host-01" in r.stdout and "other.exe" not in r.stdout
+          and "C:\\Windows" not in r.stdout, r.stdout[-600:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

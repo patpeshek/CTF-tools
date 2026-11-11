@@ -204,7 +204,7 @@ python tests/selftest.py
 - `audio_tools.py`: `--mode auto|dtmf|morse`.
 - `lang_info.py`: `--json`.
 - `rsa_tool.py`: `wiener --n --e --cipher`, `broadcast --e --pairs "n:c"`.
-- `flag_hunt.py` / `flag_hunt.sh`: `--all`, `--pattern`, `--json`; имена `flag*` и содержимое.
+- `flag_hunt.py` / `flag_hunt.sh`: `--all`, `--pattern` (glob `*.key` или regex), `--json`; имена `flag*` и содержимое.
 - `serve.py`: `--dir`, `--port`, `--bind`, `--upload`, `--token`.
 - `aes_file.py`: `--key`, `--key-xor 42`, `--keylen 32`, `--iv`, `--ivlen 16`.
 - `ret2win.py`: `--offset`, `--addr`, `--align`, `--remote host:port`.

@@ -221,6 +221,44 @@ def checks_stego_img(tmp):
           len(got) == 1 and open(os.path.join(out, got[0]), "rb").read() == pcap,
           r.stdout[-400:] + r.stderr)
 
+    # jpeg_tail: конец JPEG по маркерам, а не последнее FF D9
+    def _jpg(color, size=(16, 16)):
+        b = io.BytesIO()
+        Image.new("RGB", size, color).save(b, "JPEG")
+        return b.getvalue()
+
+    zb = io.BytesIO()
+    with zipfile.ZipFile(zb, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("ffd9.bin", b"AA\xff\xd9BB" + b"CTF{jpeg_tail_zip}")
+    zip_ffd9 = zb.getvalue()
+    first = _jpg((1, 2, 3))
+    p = os.path.join(tmp, "jpeg_jpeg.jpg")
+    with open(p, "wb") as f:
+        f.write(first + _jpg((200, 9, 9)))
+    r = run("stego/jpeg_tail.py", p)
+    check("jpeg_tail jpeg+jpeg",
+          f"на смещении: {len(first)}" in r.stdout and ".jpg" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+    p = os.path.join(tmp, "jpeg_zip_ffd9.jpg")
+    with open(p, "wb") as f:
+        f.write(first + zip_ffd9)
+    out = os.path.join(tmp, "jpeg_zip_out")
+    r = run("stego/jpeg_tail.py", p, "--extract", out)
+    check("jpeg_tail zip with ffd9", os.path.exists(os.path.join(out, "ffd9.bin")),
+          r.stdout[-400:] + r.stderr)
+    # два скана, FF00/RST/FF-заполнитель в данных, COM с FFD9 между сканами
+    sos = b"\xff\xda" + (8).to_bytes(2, "big") + b"\x01\x01\x00\x00\x3f\x00"
+    com = b"\xff\xfe" + (6).to_bytes(2, "big") + b"\xff\xd9\xff\xd9"
+    scans = (b"\xff\xd8" + sos + b"\x12\xff\x00\x34\xff\xd0\x56\xff\xff\x00"
+             + com + sos + b"\x77\xff\x00" + b"\xff\xd9")
+    p = os.path.join(tmp, "jpeg_scans.jpg")
+    with open(p, "wb") as f:
+        f.write(scans + zip_ffd9)
+    r = run("stego/jpeg_tail.py", p)
+    check("jpeg_tail scans/RST/FF00",
+          f"на смещении: {len(scans)}" in r.stdout and ".zip" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

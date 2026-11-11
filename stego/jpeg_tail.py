@@ -21,6 +21,10 @@ except Exception:
 
 import argparse
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from carve import jpeg_end  # noqa: E402  (разбор по маркерам — общий с carve)
 
 SIGS = {
     b"PK\x03\x04": ".zip",
@@ -34,7 +38,15 @@ SIGS = {
 
 
 def find_eoi(data: bytes) -> int:
-    """Последнее вхождение FF D9 — конец JPEG (внутри миниатюры тоже бывает, берём последнее)."""
+    """Конец первого JPEG по маркерам: сегменты до SOS по длинам (FFD9
+    миниатюры в APP1 пропускается), потом энтропийные данные с учётом
+    FF00/RSTn. Последнее FF D9 не годится: JPEG+JPEG даёт «хвоста нет»,
+    а FFD9 внутри приклеенного ZIP сдвигает хвост."""
+    if data.startswith(b"\xff\xd8"):
+        end = jpeg_end(data, 0)
+        if end != -1:
+            return end
+        print("[!] маркеры JPEG не разобрались — беру последнее FF D9")
     pos = data.rfind(b"\xff\xd9")
     return pos + 2 if pos != -1 else -1
 

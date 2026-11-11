@@ -120,9 +120,28 @@ def gif_end(data: bytes, pos: int) -> int:
     return -1
 
 
+def _jpeg_entropy_end(data: bytes, i: int) -> int:
+    """Энтропийные данные после заголовка SOS идут до первого настоящего
+    маркера: FF00 — байт-стаффинг, FFD0..FFD7 — RSTn, FFFF — заполнитель.
+    Возвращает смещение FF этого маркера (EOI, DHT/SOS прогрессивного JPEG…)."""
+    n = len(data)
+    while True:
+        j = data.find(b"\xff", i)
+        if j == -1 or j + 1 >= n:
+            return -1
+        nxt = data[j + 1]
+        if nxt == 0x00 or 0xD0 <= nxt <= 0xD7:
+            i = j + 2
+        elif nxt == 0xFF:
+            i = j + 1
+        else:
+            return j
+
+
 def jpeg_end(data: bytes, pos: int) -> int:
-    """Конец JPEG по сегментам: EXIF-миниатюра внутри APP1 содержит свой
-    FFD9, поэтому поиск «первого FFD9» обрезает картинку."""
+    """Конец JPEG по маркерам: сегменты по длинам (EXIF-миниатюра в APP1
+    со своим FFD9 пропускается), после SOS — энтропийные данные до
+    настоящего маркера; сканов может быть несколько (progressive)."""
     n = len(data)
     if data[pos:pos + 2] != b"\xff\xd8":
         return -1
@@ -149,9 +168,10 @@ def jpeg_end(data: bytes, pos: int) -> int:
         if seg_len < 2:
             return -1
         if marker == 0xDA:                  # SOS: дальше энтропийные данные
-            start = i + seg_len
-            eoi = data.find(b"\xff\xd9", start)
-            return eoi + 2 if eoi != -1 else -1
+            i = _jpeg_entropy_end(data, i + seg_len)
+            if i == -1:
+                return -1
+            continue                        # стоим на FF следующего маркера
         i += seg_len
     return -1
 

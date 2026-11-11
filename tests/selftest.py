@@ -153,6 +153,61 @@ def checks_core(tmp):
           "127.0.0.1:31337" in r3.stdout and "game --connect" in r3.stdout,
           r3.stdout[-800:] + r3.stderr)
 
+    # 82. --json: в stdout один JSON с шагами и флагом; --events: поток событий
+    jdir = os.path.join(tmp, "core_json")
+    os.makedirs(jdir, exist_ok=True)
+    jflag = "CTF{" + hashlib.sha1(b"core-json").hexdigest()[:12] + "}"
+    jfile = os.path.join(jdir, "blob.txt")
+    with open(jfile, "w", encoding="utf-8") as f:
+        f.write(base64.b64encode(jflag.encode()).decode() + "\n")
+    r = run("solve.py", jfile, "--time", "40", "--json")
+    try:
+        doc = json.loads(r.stdout)
+    except ValueError:
+        doc = {}
+    step_keys = {"n", "tool", "args", "why", "timeout", "status", "rc", "seconds",
+                 "output_tail", "flags", "leads"}
+    steps = doc.get("steps") or []
+    check("solve --json",
+          r.stdout.strip().count("\n") == 0 and doc.get("flag") == jflag
+          and doc.get("status") == "solved" and doc.get("plan") and steps
+          and all(step_keys <= set(s) for s in steps)
+          and any(jflag in s["flags"] for s in steps)
+          and all(s["status"] in ("ok", "fail", "timeout", "killed", "skipped") for s in steps)
+          and "[+] тип" in r.stderr,
+          r.stdout[-800:] + r.stderr[-400:])
+    evfile = os.path.join(jdir, "events.jsonl")
+    r = run("solve.py", jfile, "--time", "40", "--jobs", "1", "--events", evfile)
+    try:
+        with open(evfile, encoding="utf-8") as f:
+            evs = [json.loads(line) for line in f if line.strip()]
+    except (OSError, ValueError):
+        evs = []
+    names = [e.get("event") for e in evs]
+    fl = next((e for e in evs if e.get("event") == "flag"), {})
+    fn = fl.get("n")
+    ordered = False
+    if names and fn is not None:
+        i_start = next((i for i, e in enumerate(evs)
+                        if e["event"] == "step_start" and e.get("n") == fn), -1)
+        i_end = next((i for i, e in enumerate(evs)
+                      if e["event"] == "step_end" and e.get("n") == fn), -1)
+        i_flag = names.index("flag")
+        ordered = (names[0] == "plan" and names[-1] == "done"
+                   and 0 < i_start < i_end < i_flag < len(names) - 1
+                   and evs[-1].get("flag") == jflag and fl.get("flag") == jflag)
+    check("solve --events order", ordered and "ФЛАГ" in r.stdout,
+          " ".join(map(str, names)) + "\n" + r.stdout[-400:] + r.stderr[-400:])
+    r = run("solve.py", base64.b64encode(jflag.encode()).decode(), "--events", "-")
+    try:
+        evs = [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
+    except ValueError:
+        evs = []
+    check("solve --events - stdout",
+          evs and evs[0]["event"] == "plan" and evs[-1]["event"] == "done"
+          and evs[-1]["flag"] == jflag and "[+] цель: строка" in r.stderr,
+          r.stdout[-600:] + r.stderr[-300:])
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

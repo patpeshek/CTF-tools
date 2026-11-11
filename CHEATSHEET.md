@@ -195,6 +195,8 @@ python toolbox.py solve <файл>              # прогнать всё сам
 python toolbox.py solve <файл> --deep --time 180
 python toolbox.py solve <файл> --desc "текст условия"    # подсказки/формат флага/пароли → план
 python toolbox.py solve --desc-file task.txt            # цель (URL, host:port) — из условия
+python toolbox.py solve <файл> --json > result.json     # итог JSON (лог — в stderr)
+python toolbox.py solve <файл> --events events.jsonl    # события plan/step_*/lead/flag/done (MANUAL §14)
 python toolbox.py hint <файл>               # объяснить, что это и почему
 python toolbox.py index
 

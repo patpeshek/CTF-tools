@@ -70,8 +70,50 @@ def harvest_candidates(runner, limit=8):
     return out[:limit]
 
 
+OUTPUT_TAIL = 2000   # сколько последних символов вывода шага кладём в JSON
+
+
+class EventSink:
+    """JSON Lines: одно событие — одна строка, flush сразу (для сайта/агентов)."""
+
+    def __init__(self, stream, own=False):
+        self.f = stream
+        self.own = own
+        self.t0 = time.time()
+        self._lock = threading.Lock()
+
+    @classmethod
+    def open(cls, dest, stdout):
+        if dest == "-":
+            return cls(stdout)
+        return cls(open(dest, "w", encoding="utf-8"), own=True)
+
+    def write(self, event, **fields):
+        rec = {"event": event, "t": round(time.time() - self.t0, 3), **fields}
+        line = json.dumps(rec, ensure_ascii=False, default=str)
+        with self._lock:
+            try:
+                self.f.write(line + "\n")
+                self.f.flush()
+            except (OSError, ValueError):
+                pass
+
+    def close(self):
+        if self.own:
+            try:
+                self.f.close()
+            except OSError:
+                pass
+
+
+def step_dict(step):
+    name, args, why, timeout = step
+    return {"tool": name, "args": list(map(str, args)), "why": why, "timeout": timeout}
+
+
 class Runner:
-    def __init__(self, budget: float, verbose: bool, log_path=None, jobs: int = 4):
+    def __init__(self, budget: float, verbose: bool, log_path=None, jobs: int = 4,
+                 events=None):
         self.deadline = time.time() + budget
         self.verbose = verbose
         self.log_path = log_path
@@ -82,6 +124,13 @@ class Runner:
         self.jobs = max(1, int(jobs))
         self._lock = threading.Lock()
         self.stop = threading.Event()
+        # машиночитаемый след: записи шагов, зацепки, план (--json/--events)
+        self.events = events
+        self.records = []
+        self.leads = []
+        self.plan = []
+        self.kind = None
+        self.mode = None
 
     def remaining(self) -> float:
         return max(1.0, self.deadline - time.time())
@@ -89,6 +138,57 @@ class Runner:
     def _say(self, msg: str):
         with self._lock:
             print(msg, flush=True)
+
+    def emit(self, event, **fields):
+        if self.events is not None:
+            self.events.write(event, **fields)
+
+    def note_plan(self, steps, kind=None, mode=None, target=None, statement=None):
+        """Запомнить основной план и отдать событие plan."""
+        self.plan = [step_dict(s) for s in steps]
+        self.kind = kind
+        self.mode = mode
+        self.emit("plan", target=target, mode=mode, kind=kind, statement=statement,
+                  steps=self.plan)
+
+    def _record(self, rec):
+        with self._lock:
+            self.records.append(rec)
+        self.emit("step_end", **rec)
+
+    def _skip(self, step, reason):
+        rec = {"n": None, **step_dict(step), "status": "skipped", "reason": reason,
+               "rc": None, "seconds": 0.0, "output_tail": "", "flags": [],
+               "leads": [], "stubs": []}
+        self._record(rec)
+
+    def _exec(self, cmd, env, limit):
+        """(status, rc, stdout, stderr): ok|fail|timeout|killed.
+
+        killed — другой шаг уже нашёл флаг (stop), процесс снят, чтобы не ждать.
+        """
+        try:
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        except OSError as e:
+            return "fail", None, b"", str(e).encode("utf-8", "replace")
+        end = time.time() + limit
+        while True:
+            try:
+                out, err = p.communicate(timeout=max(0.05, min(0.5, end - time.time())))
+                return ("ok" if p.returncode == 0 else "fail"), p.returncode, out, err
+            except subprocess.TimeoutExpired:
+                if time.time() >= end:
+                    status = "timeout"
+                elif self.stop.is_set():
+                    status = "killed"
+                else:
+                    continue
+            p.kill()
+            try:
+                out, err = p.communicate(timeout=5)
+            except Exception:
+                out, err = b"", b""
+            return status, None, out or b"", err or b""
 
     def run(self, name: str, args, why: str, timeout: float = 45.0):
         return self.run_many([(name, args, why, timeout)])
@@ -130,23 +230,33 @@ class Runner:
         name, args, why, timeout = step
         path = toolbox.path_of(name)
         if not path or not os.path.exists(path):
+            self._skip(step, "нет инструмента")
             return None
         if time.time() >= self.deadline - 1 or self.stop.is_set():
+            self._skip(step, "флаг уже найден" if self.stop.is_set() else "бюджет кончился")
             return None
         with self._lock:
             self.steps += 1
             num = self.steps
             limit = max(3.0, min(timeout, self.remaining()))
         self._say(f"[{num:02d}] {name:11s} — {why}")
+        rec = {"n": num, **step_dict(step), "status": None, "rc": None, "seconds": 0.0,
+               "output_tail": "", "flags": [], "leads": [], "stubs": []}
+        self.emit("step_start", n=num, **step_dict(step))
         cmd = [sys.executable, path, *map(str, args)]
         env = {**os.environ, "PYTHONIOENCODING": "utf-8",
                "FLAG_PREFIXES": ",".join(common.prefixes())}
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=limit, env=env)
-        except subprocess.TimeoutExpired:
-            self._say("     таймаут, пропускаю")
+        t_start = time.time()
+        status, rc, r_out, r_err = self._exec(cmd, env, limit)
+        rec.update(status=status, rc=rc, seconds=round(time.time() - t_start, 3))
+        if status in ("timeout", "killed"):
+            if status == "timeout":
+                self._say("     таймаут, пропускаю")
+            rec["output_tail"] = (r_out + r_err).decode("utf-8", "replace")[-OUTPUT_TAIL:]
+            self._record(rec)
             return None
-        out = (r.stdout + r.stderr).decode("utf-8", "replace")
+        out = (r_out + r_err).decode("utf-8", "replace")
+        rec["output_tail"] = out[-OUTPUT_TAIL:]
         with self._lock:
             self.outputs.append((name, out))
         # строки-кандидаты (OCR-варианты, «может быть») — не подтверждённый флаг
@@ -156,6 +266,7 @@ class Runner:
         )
         flags, stubs = real_flags(scan.encode())
         if stubs and not flags:
+            rec["stubs"] = list(dict.fromkeys(stubs))
             for s in dict.fromkeys(stubs):
                 with self._lock:
                     if s in self.notes:
@@ -168,6 +279,9 @@ class Runner:
         if flags:
             uniq = list(dict.fromkeys(flags))
             self._say(f"[!!!] ФЛАГ на шаге «{name}»: {' | '.join(uniq)}")
+            rec["flags"] = uniq
+            self._record(rec)
+            self.emit("flag", n=num, tool=name, flag=uniq[0], flags=uniq)
             return uniq[0]
         # полезный текст: OCR, кадры, «почти одинаковые строки» — его надо
         # показать, иначе человек не увидит распознанный флаг
@@ -186,6 +300,10 @@ class Runner:
             if re.search(r"возможный|кандидат|PIN|пароль|похоже на код", line, re.I):
                 with self._lock:
                     self.grabs.append(f"{name}: {line.strip()[:160]}")
+                    self.leads.append({"n": num, "tool": name, "text": line.strip()[:160]})
+                rec["leads"].append(line.strip()[:160])
+                self.emit("lead", n=num, tool=name, text=line.strip()[:160])
+        self._record(rec)
         return None
 
     def dump_log(self):
@@ -738,6 +856,8 @@ def solve_file(target, runner, deep, plan_only, statement=None):
         # условие: добавить шаги с паролями/ключами и поднять подсказанные
         steps = _dedupe_steps(order_steps(statement_steps(statement, target) + steps,
                                           statement))
+    runner.note_plan(steps, kind, "dir" if os.path.isdir(target) else "file",
+                     target, statement)
     print(f"[+] тип: {kind}")
     if plan_only:
         for i, (name, args, why, timeout) in enumerate(steps, 1):
@@ -833,16 +953,21 @@ def solve_file(target, runner, deep, plan_only, statement=None):
     return None
 
 
-def solve_url(url, runner, deep):
-    flag = runner.run("recon", [url], "ссылки/формы/JS/куки/robots/флаги", 40)
-    if flag:
-        return flag
-    flag = runner.run("param", [url] + (["--methods", "GET,POST"] if deep else []),
-                      "SQLi/XSS/траверсал + поиск флага в ответе", 60)
-    if flag:
-        return flag
+def solve_url(url, runner, deep, statement=None, plan_only=False):
+    steps = [("recon", [url], "ссылки/формы/JS/куки/robots/флаги", 40),
+             ("param", [url] + (["--methods", "GET,POST"] if deep else []),
+              "SQLi/XSS/траверсал + поиск флага в ответе", 60)]
     if deep:
-        return runner.run("dirfuzz", [url], "скрытые пути", 90)
+        steps.append(("dirfuzz", [url], "скрытые пути", 90))
+    runner.note_plan(steps, "URL", "url", url, statement)
+    if plan_only:
+        for i, (name, args, why, timeout) in enumerate(steps, 1):
+            print(f"  {i:02d}. {name} {' '.join(map(str, args))}   # {why}")
+        return None
+    for name, args, why, timeout in steps:
+        flag = runner.run(name, args, why, timeout)
+        if flag:
+            return flag
     return None
 
 
@@ -1269,17 +1394,50 @@ def main():
     ap.add_argument("--desc", help="текст условия: категория, подсказки, формат флага, "
                                    "пароли, адреса — меняют план")
     ap.add_argument("--desc-file", help="файл с текстом условия (UTF-8)")
+    ap.add_argument("--json", action="store_true",
+                    help="в stdout — только итоговый JSON (шаги, статусы, флаг); "
+                         "человеческий лог уходит в stderr")
+    ap.add_argument("--events", metavar="FILE|-",
+                    help="поток событий JSON Lines (plan/step_start/step_end/lead/flag/"
+                         "done) в файл или '-' (stdout)")
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
     if args.any_prefix:
         os.environ["FLAG_ANY"] = "1"
 
+    # --json / --events -: stdout только машинный, всё человеческое — в stderr
+    machine_out = None
+    if args.json or args.events == "-":
+        machine_out = sys.stdout
+        sys.stdout = sys.stderr
+    events = None
+    if args.events:
+        try:
+            events = EventSink.open(args.events, machine_out)
+        except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as e:
+            print(f"[-] не могу открыть файл событий {args.events}: {e.__class__.__name__}")
+            sys.exit(2)
+    t0 = time.time()
+
+    def finish(result):
+        result["elapsed"] = round(time.time() - t0, 3)
+        if events is not None:
+            events.write("done", status=result["status"], flag=result["flag"],
+                         steps=len(result["steps"]), elapsed=result["elapsed"])
+            events.close()
+        if args.json:
+            machine_out.write(json.dumps(result, ensure_ascii=False, default=str) + "\n")
+            machine_out.flush()
+
     statement = None
     if args.desc or args.desc_file:
         desc_text, err = load_statement(args.desc, args.desc_file)
         if err:
             print(f"[-] {err}")
+            finish({"version": 1, "status": "error", "error": err, "target": args.target,
+                    "mode": None, "kind": None, "statement": None, "plan": [],
+                    "steps": [], "flag": None, "flags": [], "leads": [], "stubs": []})
             sys.exit(2)
         statement = parse_statement(desc_text)
         apply_statement_flags(statement, args.any_prefix or os.environ.get("FLAG_ANY") == "1")
@@ -1291,29 +1449,36 @@ def main():
                  "(или адрес/строка в --desc)")
     if not args.target:
         print(f"[+] цель из условия: {target}")
-    runner = Runner(args.time, args.verbose, args.log, args.jobs)
+    runner = Runner(args.time, args.verbose, args.log, args.jobs, events=events)
+    suggest = []
 
     if os.path.exists(target):
         flag = solve_file(target, runner, args.deep, args.plan, statement)
     elif target.lower().startswith(("http://", "https://")):
         print("[+] цель: URL")
-        flag = solve_url(target, runner, args.deep)
+        flag = solve_url(target, runner, args.deep, statement, args.plan)
     elif ":" in target and target.rsplit(":", 1)[1].isdigit():
+        runner.note_plan([], "service", "service", target, statement)
         print("[+] цель: сервис host:port — автопилот не угадывает протокол")
-        print("    сначала посмотри, что он говорит:")
-        print(f"    python toolbox.py oracle --connect {target} --peek")
-        print("    потом опиши вопрос формулой:")
-        print(f"    python toolbox.py oracle --connect {target} --match \"(\\d+)\" --expr \"v\"")
-        print("    если это эхо/format string:")
-        print(f"    python toolbox.py fmtstr scan --connect {target} --deref")
+        suggest = [
+            ("сначала посмотри, что он говорит:",
+             f"python toolbox.py oracle --connect {target} --peek"),
+            ("потом опиши вопрос формулой:",
+             f"python toolbox.py oracle --connect {target} --match \"(\\d+)\" --expr \"v\""),
+            ("если это эхо/format string:",
+             f"python toolbox.py fmtstr scan --connect {target} --deref"),
+        ]
         cat = (statement or {}).get("category")
         if cat in ("ppc", "misc"):
-            print("    условие похоже на PPC/игру:")
-            print(f"    python toolbox.py game --connect {target} --auto")
+            suggest.append(("условие похоже на PPC/игру:",
+                            f"python toolbox.py game --connect {target} --auto"))
         elif cat == "pwn":
-            print("    условие похоже на pwn:")
-            print(f"    python toolbox.py fmtstr auto --connect {target}")
-        return
+            suggest.append(("условие похоже на pwn:",
+                            f"python toolbox.py fmtstr auto --connect {target}"))
+        for title, cmd in suggest:
+            print("    " + title)
+            print("    " + cmd)
+        flag = None
     else:
         print("[+] цель: строка")
         flag = None
@@ -1325,6 +1490,7 @@ def main():
         if statement:
             str_steps = _dedupe_steps(order_steps(str_steps + statement_steps(statement, target),
                                                   statement))
+        runner.note_plan(str_steps, "string", "string", target, statement)
         if args.plan:
             for i, (name, sargs, why, timeout) in enumerate(str_steps, 1):
                 print(f"  {i:02d}. {name} {' '.join(map(str, sargs))}   # {why}")
@@ -1336,7 +1502,7 @@ def main():
         if not flag:
             print("    ещё: python toolbox.py auto <строка>")
 
-    if not flag:
+    if not flag and not suggest:
         print("\n[-] флаг не найден за отведённое время.")
         if runner.grabs:
             print("[i] зацепки (не флаг, но полезно):")
@@ -1344,6 +1510,30 @@ def main():
                 print("   ", g)
         print("    что можно ещё: --deep, больше --time, или конкретный инструмент из плана")
     runner.dump_log()
+
+    flags = []
+    for rec in runner.records:
+        if rec.get("flags"):
+            flags = rec["flags"]
+            if flag in flags:
+                break
+    status = ("solved" if flag else "plan" if args.plan
+              else "service" if suggest else "not_found")
+    finish({
+        "version": 1,
+        "status": status,
+        "target": target,
+        "mode": runner.mode,
+        "kind": runner.kind,
+        "statement": statement,
+        "plan": runner.plan,
+        "steps": runner.records,
+        "flag": flag,
+        "flags": flags,
+        "leads": runner.leads,
+        "stubs": runner.notes,
+        "suggest": [cmd for _, cmd in suggest],
+    })
 
 
 if __name__ == "__main__":

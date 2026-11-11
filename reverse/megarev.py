@@ -30,6 +30,7 @@ except Exception:
 
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import math
@@ -188,40 +189,164 @@ def find_sigs(data: bytes):
     return found
 
 
-def pyc_info(path: str, data: bytes):
-    info = {"strings": [], "disasm": "", "constants": []}
-    for hdr in (16, 12, 8, 4):
-        try:
-            code = marshal.loads(data[hdr:])
+# pyc любой версии разбирается своим парсером marshal (marshal.loads понимает
+# только текущую версию и для чужой либо падает, либо даёт мусор).
+# Раскладка code-объекта: (int-полей в начале, объектов до firstlineno, объектов после).
+PYC_LAYOUTS = {
+    "3.11+": (5, 8, 2),
+    "3.8-3.10": (6, 8, 1),
+    "3.0-3.7": (5, 8, 1),
+    "2.x": (4, 8, 1),
+}
+
+
+def pyc_family(magic: int):
+    """Семейство раскладки code-объекта по номеру magic (2 младших байта)."""
+    if 3450 <= magic < 4000:
+        return "3.11+"
+    if 3400 <= magic < 3450:
+        return "3.8-3.10"
+    if 3000 <= magic < 3400:
+        return "3.0-3.7"
+    if 50000 <= magic < 63000:  # 2.0 = 50823 … 2.7 = 62211
+        return "2.x"
+    return None
+
+
+def is_pyc(data: bytes) -> bool:
+    """pyc по magic number, а не по расширению: <номер>\\r\\n + code-объект ('c')."""
+    if len(data) < 17 or data[2:4] != b"\r\n":
+        return False
+    magic = struct.unpack_from("<H", data, 0)[0]
+    if pyc_family(magic) is None:
+        return False
+    if magic >= 3390 and struct.unpack_from("<I", data, 4)[0] not in (0, 1, 3):
+        return False  # 3.7+: второе слово — флаги PEP 552
+    return any(data[h] & 0x7F == 0x63 for h in (16, 12, 8))
+
+
+class MarshalScan:
+    """Обход потока marshal без создания объектов: строки и int-константы."""
+
+    def __init__(self, data: bytes, layout):
+        self.d = data
+        self.lay = layout
+        self.strings = []
+        self.ints = []
+
+    def u32(self, p):
+        if p + 4 > len(self.d):
+            raise ValueError("eof")
+        return struct.unpack_from("<I", self.d, p)[0]
+
+    def obj(self, p, depth=0):
+        d = self.d
+        if depth > 100 or p >= len(d):
+            raise ValueError("depth/eof")
+        t = chr(d[p] & 0x7F)  # 0x80 — FLAG_REF
+        p += 1
+        if t in "0NFTS.":
+            return p
+        if t == "i":
+            self.ints.append(struct.unpack_from("<i", d, p)[0])
+            return p + 4
+        if t in "Ig":
+            return p + 8
+        if t == "y":
+            return p + 16
+        if t == "f":
+            return p + 1 + d[p]
+        if t == "x":
+            p += 1 + d[p]
+            return p + 1 + d[p]
+        if t == "l":
+            return p + 4 + 2 * abs(struct.unpack_from("<i", d, p)[0])
+        if t == "r":
+            return p + 4
+        if t in "stuaAzZ":
+            if t in "zZ":
+                n, p = d[p], p + 1
+            else:
+                n, p = self.u32(p), p + 4
+            if p + n > len(d):
+                raise ValueError("string past eof")
+            self.add(t, d[p:p + n])
+            return p + n
+        if t in "([<>)":
+            if t == ")":
+                n, p = d[p], p + 1
+            else:
+                n, p = self.u32(p), p + 4
+            if n > len(d):
+                raise ValueError("bad count")
+            for _ in range(n):
+                p = self.obj(p, depth + 1)
+            return p
+        if t == "{":
+            while p < len(d) and d[p] != 0x30:  # TYPE_NULL закрывает dict
+                p = self.obj(p, depth + 1)
+                p = self.obj(p, depth + 1)
+            return p + 1
+        if t == "c":
+            n_ints, n_before, n_after = self.lay
+            p += 4 * n_ints
+            for _ in range(n_before):
+                p = self.obj(p, depth + 1)
+            p += 4  # firstlineno
+            for _ in range(n_after):
+                p = self.obj(p, depth + 1)
+            if p > len(d):
+                raise ValueError("eof")
+            return p
+        raise ValueError(f"marshal type {t!r}")
+
+    def add(self, t, raw: bytes):
+        if t == "s":  # bytes (байткод/lnotab) или str в Python 2 — только печатное
+            if (len(raw) < 2 or not all(32 <= c < 127 or c in (9, 10, 13) for c in raw)
+                    or not any(chr(c).isalnum() for c in raw)):
+                return
+            self.strings.append(raw.decode("latin-1"))
+        elif t in "aAzZ":
+            self.strings.append(raw.decode("latin-1"))
+        else:
+            self.strings.append(raw.decode("utf-8", "replace"))
+
+
+def pyc_scan(data: bytes):
+    """(семейство версий, строки, int-константы) — без marshal.loads и без выполнения.
+    Сначала раскладка по magic, затем остальные; лучше та, что дочитала до конца."""
+    guess = pyc_family(struct.unpack_from("<H", data, 0)[0]) if len(data) >= 4 else None
+    results = []
+    for fam, layout in PYC_LAYOUTS.items():
+        for hdr in (16, 12, 8):
+            if len(data) <= hdr or data[hdr] & 0x7F != 0x63:
+                continue
+            m = MarshalScan(data, layout)
+            try:
+                end = m.obj(hdr)
+            except (ValueError, IndexError, struct.error, RecursionError):
+                continue
+            results.append(((end == len(data), fam == guess, end), fam, m))
             break
+    if not results:
+        return None, [], []
+    _, fam, m = max(results, key=lambda r: r[0])
+    return fam, list(dict.fromkeys(m.strings)), m.ints
+
+
+def pyc_info(path: str, data: bytes):
+    info = {"strings": [], "disasm": "", "constants": [], "version": None}
+    fam, strings, ints = pyc_scan(data)
+    info.update(version=fam, strings=strings, constants=ints[:200])
+    # dis — только для pyc текущей версии: marshal.loads чужого формата небезопасен
+    if data[:4] == importlib.util.MAGIC_NUMBER and len(data) > 16:
+        try:
+            import dis
+            buf = io.StringIO()
+            dis.dis(marshal.loads(data[16:]), file=buf)
+            info["disasm"] = buf.getvalue()[:200000]
         except Exception:
-            code = None
-    if code is None:
-        return info
-    consts = []
-
-    def walk(c):
-        if hasattr(c, "co_consts"):
-            for x in c.co_consts:
-                if isinstance(x, str):
-                    info["strings"].append(x)
-                elif isinstance(x, (bytes, bytearray)):
-                    info["strings"].append(x.decode("latin-1", "replace"))
-                elif isinstance(x, int):
-                    consts.append(x)
-                walk(x)
-        if hasattr(c, "co_names"):
-            info["strings"] += [n for n in c.co_names if isinstance(n, str)]
-
-    walk(code)
-    info["constants"] = consts[:200]
-    try:
-        import dis
-        buf = io.StringIO()
-        dis.dis(code, file=buf)
-        info["disasm"] = buf.getvalue()[:200000]
-    except Exception:
-        pass
+            pass
     return info
 
 
@@ -294,7 +419,7 @@ def main():
             continue
         label = os.path.basename(path)
         print(f"\n=== {path} ({len(data)} b) ===")
-        kind = "PYC" if path.lower().endswith(".pyc") else common.sniff(data)
+        kind = "PYC" if path.lower().endswith(".pyc") or is_pyc(data) else common.sniff(data)
         info = {"path": path, "size": len(data), "type": kind}
         print(f"[+] тип: {kind}")
 
@@ -382,9 +507,10 @@ def main():
             report["flags"].append(f)
 
         # pyc
-        if path.lower().endswith(".pyc") or data[:4] in (b"\xcb\r\r\n", b"\x6f\r\r\n"):
+        if kind == "PYC":
             pi = pyc_info(path, data)
-            print(f"[+] pyc: строк={len(pi['strings'])} констант={len(pi['constants'])}")
+            print(f"[+] pyc ({pi['version'] or '?'}): строк={len(pi['strings'])} "
+                  f"констант={len(pi['constants'])}")
             for s in pi["strings"][:20]:
                 print("  const:", s[:120])
             for s in pi["strings"]:

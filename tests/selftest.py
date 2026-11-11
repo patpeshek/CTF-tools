@@ -186,6 +186,52 @@ def checks_reverse(tmp):
     else:
         print("[SKIP] disasm ELF32/--func: нет capstone")
 
+    # #77 megarev: pyc чужой версии — по magic (без расширения), строки из кортежей
+    import importlib.util
+    import py_compile
+    src77 = os.path.join(tmp, "m77.py")
+    open(src77, "w").write("T = ('tup_alpha_77', 'tup_beta_77')\n")
+    pyc77 = os.path.join(tmp, "m77.pyc")
+    py_compile.compile(src77, cfile=pyc77, doraise=True)
+    blob = open(pyc77, "rb").read()
+    noext = os.path.join(tmp, "m77_noext")
+    open(noext, "wb").write(struct.pack("<H", 3413) + b"\r\n" + blob[4:])  # magic 3.8
+    r = run("reverse/megarev.py", noext, "--no-crypto")
+    check("megarev pyc foreign magic, no ext, tuple",
+          "const: tup_alpha_77" in r.stdout and "const: tup_beta_77" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+
+    # pyc старого формата (code-объекты 3.8 и 2.7) собирается здесь же, байтами
+    def m_str(s):
+        b = s.encode()
+        return b"\xfa" + bytes([len(b)]) + b  # 'z' | FLAG_REF
+
+    def m_bytes(b):
+        return b"s" + struct.pack("<I", len(b)) + b
+
+    def m_tuple(items):
+        return b")" + bytes([len(items)]) + b"".join(items)
+
+    code38 = (b"\xe3" + struct.pack("<6i", 0, 0, 0, 0, 1, 64)
+              + m_bytes(b"d\x00S\x00")
+              + m_tuple([b"N", m_tuple([m_str("old38_tuple_str"), b"i" + struct.pack("<i", 77)])])
+              + m_tuple([m_str("old38_name")]) + m_tuple([]) + m_tuple([]) + m_tuple([])
+              + m_str("x.py") + m_str("<module>") + struct.pack("<i", 1) + m_bytes(b""))
+    pyc38 = os.path.join(tmp, "old38.pyc")
+    open(pyc38, "wb").write(struct.pack("<H", 3413) + b"\r\n" + b"\x00" * 12 + code38)
+    code27 = (b"c" + struct.pack("<4i", 0, 1, 1, 64) + m_bytes(b"d\x00\x00S")
+              + b"(" + struct.pack("<I", 1) + m_bytes(b"py2_const_str")
+              + m_tuple([]) + m_tuple([]) + m_tuple([]) + m_tuple([])
+              + m_bytes(b"y.py") + b"t" + struct.pack("<I", 8) + b"<module>"
+              + struct.pack("<i", 1) + m_bytes(b""))
+    pyc27 = os.path.join(tmp, "old27.pyc")
+    open(pyc27, "wb").write(struct.pack("<H", 62211) + b"\r\n" + b"\x00" * 4 + code27)
+    r = run("reverse/megarev.py", pyc38, pyc27, "--no-crypto")
+    check("megarev pyc 3.8/2.7 without marshal.loads",
+          "const: old38_tuple_str" in r.stdout and "const: py2_const_str" in r.stdout
+          and importlib.util.MAGIC_NUMBER != open(pyc38, "rb").read(4),
+          r.stdout[-800:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

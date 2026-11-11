@@ -145,6 +145,38 @@ def checks_reverse(tmp):
     else:
         print("[SKIP] ghidra_decomp cmd.exe: только Windows")
 
+    # #75 disasm: ELF32 (i386) — секции читаются по 32-битной раскладке
+    def elf32_i386(code, addr=0x08049000):
+        shstr = b"\x00.text\x00.shstrtab\x00"
+        code_off = 0x60
+        shstr_off = code_off + len(code)
+        shoff = (shstr_off + len(shstr) + 3) & ~3
+        ehdr = struct.pack("<16sHHIIIIIHHHHHH", b"\x7fELF\x01\x01\x01" + b"\x00" * 9,
+                           2, 3, 1, addr, 0, shoff, 0, 52, 0, 0, 40, 3, 2)
+        shdrs = (struct.pack("<10I", *([0] * 10))
+                 + struct.pack("<10I", 1, 1, 6, addr, code_off, len(code), 0, 0, 16, 0)
+                 + struct.pack("<10I", 7, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0))
+        blob = ehdr.ljust(code_off, b"\x00") + code + shstr
+        return blob.ljust(shoff, b"\x00") + shdrs
+
+    try:
+        import capstone  # noqa: F401
+        have_cs = True
+    except Exception:
+        have_cs = False
+    # mov eax,0x41; cmp eax,0x42; (ff ff — не инструкция); mov ecx,0x1337; ret;
+    # push ebp; mov ebp,esp; xor eax,eax; ret
+    i386_code = (bytes.fromhex("b841000000" "83f842") + b"\xff\xff"
+                 + bytes.fromhex("b937130000" "c3" "5589e5" "31c0" "c3"))
+    elf32 = os.path.join(tmp, "i386.elf")
+    open(elf32, "wb").write(elf32_i386(i386_code))
+    if have_cs:
+        r = run("reverse/disasm.py", elf32, "--all")
+        check("disasm ELF32 i386", "0x08049000" in r.stdout and "eax, 0x41" in r.stdout,
+              r.stdout[-600:] + r.stderr)
+    else:
+        print("[SKIP] disasm ELF32: нет capstone")
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

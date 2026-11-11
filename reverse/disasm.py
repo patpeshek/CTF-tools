@@ -74,12 +74,13 @@ def parse_elf(data):
     for i in range(e_shnum):
         base = e_shoff + i * e_shentsize
         try:
+            # Elf64_Shdr: name, type, flags(8), addr@0x10, offset@0x18, size@0x20
+            # Elf32_Shdr: name, type, flags(4), addr@0x0C, offset@0x10, size@0x14
+            name_off, sh_type = struct.unpack_from(endian + "II", data, base)
             if is64:
-                name_off, sh_type = struct.unpack_from(endian + "II", data, base)
                 sh_addr, sh_offset, sh_size = struct.unpack_from(endian + "QQQ", data, base + 0x10)
             else:
-                name_off, sh_type = struct.unpack_from(endian + "II", data, base)
-                sh_addr, sh_offset, sh_size = struct.unpack_from(endian + "III", data, base + 0x10)
+                sh_addr, sh_offset, sh_size = struct.unpack_from(endian + "III", data, base + 0x0C)
         except struct.error:
             break
         name = ""

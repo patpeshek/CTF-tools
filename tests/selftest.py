@@ -1019,6 +1019,115 @@ def checks_reverse(tmp):
             for a in (("--known", "CTF{"), ("--keylen", "3"), ())]
     check("xor_scan 3-byte key from flag prefix",
           all("key=b'KEY'" in o and xflag.decode() in o for o in outs), "\n".join(outs)[-900:])
+def checks_admin(tmp):
+    """admin/*: образы ВМ, логи, Windows, триаж. Артефакты — tests/gen_admin.py."""
+    sys.path.insert(0, os.path.join(KIT, "tests"))
+    import gen_admin
+    base = os.path.join(tmp, "admin")
+
+    # #85 vm_image: QCOW2 (zlib-кластер), VDI, VMDK sparse/stream, OVA
+    vms = gen_admin.write_vm_set(os.path.join(base, "vm"))
+    for kind, (p, flag, raw) in vms.items():
+        r = run("admin/vm_image.py", p)
+        check(f"admin/vm_image.py {kind} flag", flag in r.stdout and "MBR 0x83" in r.stdout,
+              r.stdout[-700:] + r.stderr[-400:])
+        out = p + ".raw"
+        r = run("admin/vm_image.py", p, "--raw", out)
+        same = os.path.exists(out) and open(out, "rb").read() == raw
+        check(f"admin/vm_image.py {kind} --raw", same, r.stdout[-500:] + r.stderr[-400:])
+    r = run("admin/vm_image.py", vms["vmdk_sparse"][0], "--find", "flag.txt")
+    check("admin/vm_image.py --find", "0x000000050010" in r.stdout, r.stdout[-500:])
+    r = run("solve.py", vms["qcow2"][0], "--time", "40")
+    check("solve.py vm image", vms["qcow2"][1] in r.stdout and "vm" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
+    # #86 log_analyze: auth.log, nginx, journald JSON, zsh history, таймлайн
+    logs = gen_admin.write_log_set(os.path.join(base, "logs"))
+    p, flag = logs["auth"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py auth",
+          flag in r.stdout and "брутфорс удался" in r.stdout and "UID 0" in r.stdout
+          and "download-exec" in r.stdout and "backdoor → group sudo" in r.stdout,
+          r.stdout[-900:] + r.stderr[-400:])
+    p, flag = logs["access"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py web",
+          flag in r.stdout and "слепая SQLi" in r.stdout and "lfi/traversal" in r.stdout
+          and "nikto" in r.stdout and "user=guest;role=admin" in r.stdout
+          and "всплеск 4xx/5xx" in r.stdout, r.stdout[-900:] + r.stderr[-400:])
+    p, flag = logs["journal"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py journald",
+          flag in r.stdout and "journal_json" in r.stdout and "192.0.2.44" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    p, flag = logs["history"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py history",
+          flag in r.stdout and "reverse-shell" in r.stdout and "password-arg" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/log_analyze.py", logs["auth"][0], logs["history"][0], logs["journal"][0],
+            "--timeline", "--year", "2024")
+    tl = r.stdout.split("=== таймлайн", 1)[-1]
+    i1, i2, i3 = tl.find("192.0.2.44"), tl.find("wget http"), tl.find("203.0.113.7: 12")
+    check("admin/log_analyze.py --timeline", 0 <= i1 < i2 < i3, tl[:900] + r.stderr[-300:])
+    r = run("solve.py", logs["access"][0], "--time", "40")
+    check("solve.py logs", logs["access"][1] in r.stdout and "«logs»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
+    # #87 win_admin: regf (SYSTEM/NTUSER), службы, Run, удалённое, задачи, PS-история
+    win_root = os.path.join(base, "win")
+    win = gen_admin.write_win_set(win_root)
+    p, flag = win["ntuser"]
+    r = run("admin/win_admin.py", "reg", p)
+    check("admin/win_admin.py reg", flag in r.stdout and "NTUSER" in r.stdout
+          and "checksum ok" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", "reg", p, "--deleted")
+    check("admin/win_admin.py reg --deleted", win["deleted"][1] in r.stdout
+          and "удалённое значение" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", "run", p)
+    check("admin/win_admin.py run", "Updater" in r.stdout and "RunOnce" in r.stdout
+          and "[!] Updater" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["system"]
+    r = run("admin/win_admin.py", "services", p)
+    check("admin/win_admin.py services", flag in r.stdout and "[!] UpdSvc" in r.stdout
+          and "-EncodedCommand" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["task"]
+    r = run("admin/win_admin.py", "tasks", os.path.dirname(p))
+    check("admin/win_admin.py tasks", flag in r.stdout and "WIN-TEST\\admin" in r.stdout
+          and "Hidden" in r.stdout and "PT15M" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["pshistory"]
+    r = run("admin/win_admin.py", "pshistory", p)
+    check("admin/win_admin.py pshistory", flag in r.stdout and "defense-evasion" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", win_root)
+    check("admin/win_admin.py auto dir", all(win[k][1] in r.stdout for k in win),
+          r.stdout[-900:] + r.stderr[-400:])
+    r = run("solve.py", win["system"][0], "--time", "40")
+    check("solve.py winadm", win["system"][1] in r.stdout and "«winadm»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
+    # #84 admin_triage: дамп ФС с ошибками конфигов + раздача vm/logs/winadm
+    dump = os.path.join(base, "fsdump")
+    dflags = gen_admin.write_linux_dump(dump)
+    r = run("admin/admin_triage.py", dump)
+    out = r.stdout
+    must = ["toor с UID 0", "NOPASSWD /usr/bin/find — GTFOBins", "LD_PRELOAD", "wildcard-инъекция",
+            "/tmp/cleanup.sh", "reverse-shell", "PermitEmptyPasswords", "no_root_squash",
+            ".git-credentials: bob:", "docker.sock", "/opt/tools/backup — нестандартный",
+            "cap_setuid", "sha512crypt, hashcat -m 1800", "yescrypt", "у toor пустой пароль",
+            "group docker: bob", "удалён /home/bob/notes.txt"]
+    miss = [m for m in must if m not in out]
+    check("admin/admin_triage.py checks", not miss, f"нет: {miss}\n" + out[-900:] + r.stderr[-400:])
+    check("admin/admin_triage.py dispatch", all(f in out for f in dflags.values()),
+          out[-900:] + r.stderr[-400:])
+    r = run("admin/admin_triage.py", os.path.join(dump, "etc", "sudoers"))
+    check("admin/admin_triage.py file", "NOPASSWD" in r.stdout and "GTFOBins" in r.stdout,
+          r.stdout[-600:] + r.stderr[-300:])
+    r = run("solve.py", os.path.join(dump, "opt", "app", "k8s", "secret.yaml"), "--time", "40")
+    check("solve.py admin config", dflags["k8s"] in r.stdout and "«admin»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+    r = run("solve.py", dump, "--plan")
+    check("solve.py admin dir plan", "admin " in r.stdout, r.stdout[-700:] + r.stderr[-300:])
 
 
 def main():
@@ -2907,6 +3016,7 @@ def main():
     checks_forensics(tmp)
     checks_stego_audio(tmp)
     checks_reverse(tmp)
+    checks_admin(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

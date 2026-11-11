@@ -204,6 +204,31 @@ python linux/gtfobins.py --from-sudo sudo.txt
 python linux/script_audit.py /usr/local/sbin/reconcile --check-writable
 ```
 
+## Admin: образы ВМ, логи, Windows, конфиги
+
+```bash
+python admin/vm_image.py disk.qcow2                 # формат, разделы, флаги внутри диска
+python admin/vm_image.py disk.vmdk --raw disk.raw   # QCOW2/VMDK/VDI/VHD → raw (потоково)
+python admin/vm_image.py vm.ova --extract out       # OVA: .ovf/.mf/диски
+python admin/vm_image.py disk.vdi --find flag.txt   # строка ASCII/UTF-16 в диске
+python admin/vm_image.py disk.vhd --mount           # qemu-nbd/guestmount/7z/VBoxManage
+python admin/log_analyze.py auth.log                # брутфорс, вход после неудач, sudo, uid 0, cron
+python admin/log_analyze.py access.log --top 15     # SQLi/LFI/сканеры, 4xx-всплески, слепая SQLi
+python admin/log_analyze.py journal.json audit.log  # journalctl -o json/export, auditd (hex)
+python admin/log_analyze.py .bash_history           # подозрительные команды, креды, base64/-enc
+python admin/log_analyze.py var/log --timeline --year 2024   # всё в одну хронологию
+python admin/win_admin.py dump/                     # авто: кусты, Tasks, ConsoleHost_history
+python admin/win_admin.py reg NTUSER.DAT --deleted  # сводка + флаги + удалённые ключи/значения
+python admin/win_admin.py reg SOFTWARE --key "Microsoft\Windows\CurrentVersion\Run"
+python admin/win_admin.py services SYSTEM           # службы: ImagePath/Start/ServiceDll
+python admin/win_admin.py run SOFTWARE NTUSER.DAT   # Run/RunOnce/Winlogon/IFEO/AppInit
+python admin/win_admin.py tasks Windows/System32/Tasks   # задачи + раскодирование -enc
+python admin/admin_triage.py fs_dump/               # всё админское: конфиги, логи, кусты, ВМ
+python admin/admin_triage.py etc/sudoers            # один конфиг (sudoers/shadow/crontab/...)
+python admin/admin_triage.py suid.txt               # find / -perm -4000 / getcap -r / → GTFOBins
+python admin/admin_triage.py fs_dump/ --no-dispatch # только конфиги, без vm/logs/winadm
+```
+
 ## Артефакты и текстовые выгрузки
 
 ```bash

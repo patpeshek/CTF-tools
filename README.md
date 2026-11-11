@@ -29,6 +29,7 @@ toolbox/
 ├─ network/ ...
 ├─ crypto/ ...
 ├─ linux/ ...
+├─ admin/               # образы ВМ, логи, реестр/службы Windows, конфиги
 ├─ web/ ...
 ├─ pwn/ ...
 ├─ reverse/               # строки, XOR, упаковщики
@@ -79,6 +80,8 @@ python tests/selftest.py
 | «много скобок», повторы символов | `stego/runs.py` |
 | ZIP/архив, «пароль», «комментарий» | `forensic/zipmeta.py` |
 | образ диска, «удалённые файлы» | `forensic/disk_triage.sh` |
+| образ ВМ: OVA/VMDK/QCOW2/VDI/VHD | `admin/vm_image.py` (`--raw` → raw-диск) |
+| логи auth/nginx/journald/auditd, history, «кто вошёл / что сделал» | `admin/log_analyze.py` (`--timeline`) |
 | фото, «где снято / когда» | `forensic/exif.py`, `misc/timeconv.py` |
 | PCAP, «кто атаковал / что украли» | `network/pcap_report.py` |
 | классический шифр | `crypto/classical.py` |
@@ -99,6 +102,7 @@ python tests/selftest.py
 | координаты/пиксель-арт из пакетов | `network/mc_blocks.py` + `stego/bitmap_font.py` |
 | UDP и самодельный протокол `SIG/.../...` | `network/udp_payloads.py` |
 | Linux: sudo/SUID/cron/writable | `linux/privesc.sh`, `linux/gtfobins.py` |
+| дамп ФС/конфигов: sudoers, SUID-список, cron, shadow, секреты | `admin/admin_triage.py` |
 | надо запустить ELF/посмотреть поведение | `linux/wsl.py run .\chall --dir` (Arch WSL) |
 | скрипт от root что-то source-ит | `linux/script_audit.py` |
 | текстовые выгрузки Volatility | `forensic/volatility_text.py` |
@@ -130,6 +134,7 @@ python tests/selftest.py
 | git-репозиторий / `.git` | `forensic/git_hunt.py` |
 | профиль браузера | `forensic/browser_artifacts.py` |
 | Windows dump (hives/EVTX/lnk) | `forensic/windows_triage.py` |
+| куст реестра, службы, Run-ключи, задачи, PS-история | `admin/win_admin.py` |
 | Office/PDF: макросы, JS | `forensic/office_docs.py` |
 | облачные ключи | `forensic/cloud_creds.py` |
 | Kubernetes под | `linux/k8s_audit.sh`, `network/k8s_api.py` |

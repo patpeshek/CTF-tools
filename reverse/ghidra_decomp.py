@@ -6,7 +6,8 @@ ghidra_decomp.py — headless-декомпиляция через Ghidra (без
   python ghidra_decomp.py bin               # все функции в C-подобном виде
   python ghidra_decomp.py bin --grep main   # только строки/функции с main
   python ghidra_decomp.py bin --out out.c
-  python ghidra_decomp.py bin --timeout 300
+  python ghidra_decomp.py bin --timeout 300   # по таймауту гасится всё дерево процессов
+  python ghidra_decomp.py bin --keep-project  # не удалять проект, путь печатается
 
 Ghidra ищется: $GHIDRA_HOME, F:\\dev\\ghidra_*, C:\\Users\\...\\tools\\ghidra_*.
 Нужна Java (Ghidra 12.x требует JDK 21; 11.x — 17).
@@ -26,6 +27,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -150,13 +152,58 @@ def main():
         print("[i] JDK 25 не найден — Ghidra может отказаться запускаться")
     print("[+] анализ идёт (может занять минуту-две)…", flush=True)
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=args.timeout, env=env,
-                           text=True, encoding="utf-8", errors="replace")
+        out, timed_out = run_headless(cmd, args.timeout, env)
+        if timed_out:
+            print(f"[-] таймаут Ghidra ({args.timeout:g} с): процесс и его потомки остановлены")
+        else:
+            show(out, args)
+    finally:
+        if args.keep_project:
+            print(f"[+] проект Ghidra сохранён: {proj}")
+        else:
+            shutil.rmtree(proj, ignore_errors=True)
+
+
+def kill_tree(proc):
+    """Убить процесс вместе с потомками: .bat -> cmd.exe -> java держат pipe открытым."""
+    if os.name == "nt":
+        taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                "System32", "taskkill.exe")
+        try:
+            subprocess.run([taskkill, "/T", "/F", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, AttributeError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def run_headless(cmd, timeout, env):
+    """(вывод, был_ли_таймаут). По таймауту гасится всё дерево процессов, а не
+    только cmd.exe: иначе java держит stdout и communicate() ждёт её до конца."""
+    kw = {} if os.name == "nt" else {"start_new_session": True}
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                            text=True, encoding="utf-8", errors="replace", **kw)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return (out or "") + (err or ""), False
     except subprocess.TimeoutExpired:
-        print("[-] таймаут Ghidra")
-        shutil.rmtree(proj, ignore_errors=True)
-        return
-    out = (r.stdout or "") + (r.stderr or "")
+        kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
+        return (out or "") + (err or ""), True
+
+
+def show(out, args):
     # убрать служебный шум GhidraScript
     out = re.sub(r"(?m)^\(GhidraScript\)\s*$\n?", "", out)
     out = re.sub(r"(?m)^INFO\s+DumpDecomp\.java>\s?", "", out)
@@ -170,7 +217,6 @@ def main():
         print("[-] декомпиляция не дала функций")
         for line in out.splitlines()[-10:]:
             print("   ", line[-200:])
-        shutil.rmtree(proj, ignore_errors=True)
         return
 
     if args.out:
@@ -195,7 +241,6 @@ def main():
             break
     if printed == 0:
         print("[-] под фильтр ничего не попало; смотри без --grep или в --out")
-    shutil.rmtree(proj, ignore_errors=True)
 
 
 if __name__ == "__main__":

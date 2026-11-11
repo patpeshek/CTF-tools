@@ -100,6 +100,7 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
 
 def checks_reverse(tmp):
     """Регрессии reverse/*: ghidra_decomp, disasm, megarev, lang_info, py_pack, xor_scan."""
+    import time
     # #51 ghidra_decomp: имя файла не попадает в cmd.exe (поддельный analyzeHeadless.bat)
     if os.name == "nt":
         fake = os.path.join(tmp, "fake_ghidra")
@@ -117,6 +118,30 @@ def checks_reverse(tmp):
               "fake_func" in r.stdout and "INJMARK51" not in lines
               and "input_" in args_line and "a&" not in args_line,
               r.stdout[-800:] + r.stderr)
+
+        # #79 --keep-project оставляет проект и печатает путь
+        okbin = os.path.join(inj_dir, "ok.bin")
+        open(okbin, "wb").write(b"MZ" + b"\x00" * 62)
+        r = run("reverse/ghidra_decomp.py", okbin, "--keep-project", env={"GHIDRA_HOME": fake})
+        kept = [ln.rsplit(": ", 1)[-1].strip() for ln in r.stdout.splitlines()
+                if ln.startswith("[+]") and "ghidra_proj_" in ln]
+        check("ghidra_decomp --keep-project",
+              bool(kept) and os.path.isdir(kept[0]), r.stdout[-800:] + r.stderr)
+        for d in kept:
+            if "ghidra_proj_" in os.path.basename(d):
+                shutil.rmtree(d, True)
+
+        # #79 --timeout гасит всё дерево (bat -> ping), а не ждёт его конца
+        slow = os.path.join(tmp, "fake_ghidra_slow")
+        os.makedirs(slow, exist_ok=True)
+        with open(os.path.join(slow, "analyzeHeadless.bat"), "w", newline="\r\n") as f:
+            f.write("@echo off\necho started\nping -n 20 127.0.0.1 >nul\n"
+                    "echo /* ==== late @ 0 */\n")
+        t0 = time.time()
+        r = run("reverse/ghidra_decomp.py", okbin, "--timeout", "2", env={"GHIDRA_HOME": slow})
+        took = time.time() - t0
+        check("ghidra_decomp --timeout kills tree",
+              took < 10 and "late" not in r.stdout, f"{took:.1f}s\n" + r.stdout[-600:] + r.stderr)
     else:
         print("[SKIP] ghidra_decomp cmd.exe: только Windows")
 

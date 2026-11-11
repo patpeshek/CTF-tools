@@ -189,6 +189,22 @@ def checks_forensics(tmp):
           and not os.path.exists(os.path.join(fsout, "wh.rootflag.txt")),
           r.stdout[-600:] + r.stderr)
 
+    # #70 exif без exiftool (PATH без него): Exif sub-IFD, GPS, COM, XP*
+    jpg = os.path.join(base, "meta.jpg")
+    _ex = Image.Exif()
+    _ex[0x010E] = "CTF{exif_description}"
+    _ex[0x9C9C] = "CTF{exif_xpcomment}".encode("utf-16-le") + b"\x00\x00"
+    _ex.get_ifd(0x8769)[0x9286] = b"ASCII\x00\x00\x00CTF{exif_usercomment}"
+    _gps = _ex.get_ifd(0x8825)
+    _gps[1], _gps[2] = "N", (55.0, 45.0, 0.0)
+    _gps[3], _gps[4] = "E", (37.0, 37.0, 0.0)
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(jpg, exif=_ex, comment=b"CTF{exif_jpeg_com}")
+    r = run("forensic/exif.py", jpg, env={"PATH": base})
+    check("exif without exiftool (#70)",
+          all(x in r.stdout for x in ("CTF{exif_description}", "CTF{exif_xpcomment}",
+                                      "CTF{exif_usercomment}", "CTF{exif_jpeg_com}",
+                                      "55.75")), r.stdout[-800:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

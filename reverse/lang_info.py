@@ -30,6 +30,9 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common  # noqa: E402
 
+GO_MARKERS = (b"\xff Go buildinf:", b".go.buildinfo", b"Go build ID: \"", b"go:buildid",
+              b"runtime.gopanic", b"runtime.morestack", b"runtime.goexit")
+
 
 def analyse(path):
     data = open(path, "rb").read(50_000_000)
@@ -67,7 +70,11 @@ def analyse(path):
         except Exception:
             pass
 
-    if b".go.buildinfo" in data or b"go1." in data:
+    # Go — только исполняемый файл с маркерами Go: «go1.» встречается где угодно
+    # (logo1.png в метаданных картинки), runtime/buildinfo — только в Go-бинаре
+    is_exec = (data[:4] == b"\x7fELF" or data[:2] == b"MZ" or data[:4] in (
+        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"))
+    if is_exec and any(m in data for m in GO_MARKERS):
         info["language"] = "Go"
         m = re.search(rb"go1\.[0-9]+(?:\.[0-9]+)?", data)
         if m:

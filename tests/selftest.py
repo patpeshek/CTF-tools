@@ -825,6 +825,200 @@ def checks_stego_audio(tmp):
     marks = ("hidden_part_text", "subject_part_text", "binary_part_text")
     check("stego/ooxml.py --strings", all(m in r.stdout for m in marks),
           r.stdout[-800:] + r.stderr)
+def checks_reverse(tmp):
+    """Регрессии reverse/*: ghidra_decomp, disasm, megarev, lang_info, py_pack, xor_scan."""
+    import time
+    # #51 ghidra_decomp: имя файла не попадает в cmd.exe (поддельный analyzeHeadless.bat)
+    if os.name == "nt":
+        fake = os.path.join(tmp, "fake_ghidra")
+        os.makedirs(fake, exist_ok=True)
+        with open(os.path.join(fake, "analyzeHeadless.bat"), "w", newline="\r\n") as f:
+            f.write("@echo off\necho /* ==== fake_func @ 0 */\necho ARGS: %*\n")
+        inj_dir = os.path.join(tmp, "inj51")
+        os.makedirs(inj_dir, exist_ok=True)
+        inj = os.path.join(inj_dir, "a&echo.INJMARK51&.bin")  # без пробелов: не в кавычках
+        open(inj, "wb").write(b"MZ" + b"\x00" * 62)
+        r = run("reverse/ghidra_decomp.py", inj, env={"GHIDRA_HOME": fake})
+        lines = [ln.strip() for ln in r.stdout.splitlines()]
+        args_line = next((ln for ln in lines if ln.startswith("ARGS:")), "")
+        check("ghidra_decomp: имя файла не уходит в cmd.exe",
+              "fake_func" in r.stdout and "INJMARK51" not in lines
+              and "input_" in args_line and "a&" not in args_line,
+              r.stdout[-800:] + r.stderr)
+
+        # #79 --keep-project оставляет проект и печатает путь
+        okbin = os.path.join(inj_dir, "ok.bin")
+        open(okbin, "wb").write(b"MZ" + b"\x00" * 62)
+        r = run("reverse/ghidra_decomp.py", okbin, "--keep-project", env={"GHIDRA_HOME": fake})
+        kept = [ln.rsplit(": ", 1)[-1].strip() for ln in r.stdout.splitlines()
+                if ln.startswith("[+]") and "ghidra_proj_" in ln]
+        check("ghidra_decomp --keep-project",
+              bool(kept) and os.path.isdir(kept[0]), r.stdout[-800:] + r.stderr)
+        for d in kept:
+            if "ghidra_proj_" in os.path.basename(d):
+                shutil.rmtree(d, True)
+
+        # #79 --timeout гасит всё дерево (bat -> ping), а не ждёт его конца
+        slow = os.path.join(tmp, "fake_ghidra_slow")
+        os.makedirs(slow, exist_ok=True)
+        with open(os.path.join(slow, "analyzeHeadless.bat"), "w", newline="\r\n") as f:
+            f.write("@echo off\necho started\nping -n 20 127.0.0.1 >nul\n"
+                    "echo /* ==== late @ 0 */\n")
+        t0 = time.time()
+        r = run("reverse/ghidra_decomp.py", okbin, "--timeout", "2", env={"GHIDRA_HOME": slow})
+        took = time.time() - t0
+        check("ghidra_decomp --timeout kills tree",
+              took < 10 and "late" not in r.stdout, f"{took:.1f}s\n" + r.stdout[-600:] + r.stderr)
+    else:
+        print("[SKIP] ghidra_decomp cmd.exe: только Windows")
+
+    # #75 disasm: ELF32 (i386) — секции читаются по 32-битной раскладке
+    def elf32_i386(code, addr=0x08049000):
+        shstr = b"\x00.text\x00.shstrtab\x00"
+        code_off = 0x60
+        shstr_off = code_off + len(code)
+        shoff = (shstr_off + len(shstr) + 3) & ~3
+        ehdr = struct.pack("<16sHHIIIIIHHHHHH", b"\x7fELF\x01\x01\x01" + b"\x00" * 9,
+                           2, 3, 1, addr, 0, shoff, 0, 52, 0, 0, 40, 3, 2)
+        shdrs = (struct.pack("<10I", *([0] * 10))
+                 + struct.pack("<10I", 1, 1, 6, addr, code_off, len(code), 0, 0, 16, 0)
+                 + struct.pack("<10I", 7, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0))
+        blob = ehdr.ljust(code_off, b"\x00") + code + shstr
+        return blob.ljust(shoff, b"\x00") + shdrs
+
+    try:
+        import capstone  # noqa: F401
+        have_cs = True
+    except Exception:
+        have_cs = False
+    # mov eax,0x41; cmp eax,0x42; (ff ff — не инструкция); mov ecx,0x1337; ret;
+    # push ebp; mov ebp,esp; xor eax,eax; ret
+    i386_code = (bytes.fromhex("b841000000" "83f842") + b"\xff\xff"
+                 + bytes.fromhex("b937130000" "c3" "5589e5" "31c0" "c3"))
+    elf32 = os.path.join(tmp, "i386.elf")
+    open(elf32, "wb").write(elf32_i386(i386_code))
+    if have_cs:
+        r = run("reverse/disasm.py", elf32, "--all")
+        check("disasm ELF32 i386", "0x08049000" in r.stdout and "eax, 0x41" in r.stdout,
+              r.stdout[-600:] + r.stderr)
+        # #76 imm-операнд подписан, мусорный байт не обрывает листинг, --func работает
+        check("disasm imm + skipdata",
+              "eax, 0x41 ; 'A'" in r.stdout and "ecx, 0x1337" in r.stdout,
+              r.stdout[-600:] + r.stderr)
+        r = run("reverse/disasm.py", elf32, "--func", "0x08049010")
+        check("disasm --func",
+              "push ebp" in r.stdout and "xor eax, eax" in r.stdout
+              and "eax, 0x41" not in r.stdout and r.returncode == 0,
+              r.stdout[-600:] + r.stderr)
+    else:
+        print("[SKIP] disasm ELF32/--func: нет capstone")
+
+    # #77 megarev: pyc чужой версии — по magic (без расширения), строки из кортежей
+    import importlib.util
+    import py_compile
+    src77 = os.path.join(tmp, "m77.py")
+    open(src77, "w").write("T = ('tup_alpha_77', 'tup_beta_77')\n")
+    pyc77 = os.path.join(tmp, "m77.pyc")
+    py_compile.compile(src77, cfile=pyc77, doraise=True)
+    blob = open(pyc77, "rb").read()
+    noext = os.path.join(tmp, "m77_noext")
+    open(noext, "wb").write(struct.pack("<H", 3413) + b"\r\n" + blob[4:])  # magic 3.8
+    r = run("reverse/megarev.py", noext, "--no-crypto")
+    check("megarev pyc foreign magic, no ext, tuple",
+          "const: tup_alpha_77" in r.stdout and "const: tup_beta_77" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+
+    # pyc старого формата (code-объекты 3.8 и 2.7) собирается здесь же, байтами
+    def m_str(s):
+        b = s.encode()
+        return b"\xfa" + bytes([len(b)]) + b  # 'z' | FLAG_REF
+
+    def m_bytes(b):
+        return b"s" + struct.pack("<I", len(b)) + b
+
+    def m_tuple(items):
+        return b")" + bytes([len(items)]) + b"".join(items)
+
+    code38 = (b"\xe3" + struct.pack("<6i", 0, 0, 0, 0, 1, 64)
+              + m_bytes(b"d\x00S\x00")
+              + m_tuple([b"N", m_tuple([m_str("old38_tuple_str"), b"i" + struct.pack("<i", 77)])])
+              + m_tuple([m_str("old38_name")]) + m_tuple([]) + m_tuple([]) + m_tuple([])
+              + m_str("x.py") + m_str("<module>") + struct.pack("<i", 1) + m_bytes(b""))
+    pyc38 = os.path.join(tmp, "old38.pyc")
+    open(pyc38, "wb").write(struct.pack("<H", 3413) + b"\r\n" + b"\x00" * 12 + code38)
+    code27 = (b"c" + struct.pack("<4i", 0, 1, 1, 64) + m_bytes(b"d\x00\x00S")
+              + b"(" + struct.pack("<I", 1) + m_bytes(b"py2_const_str")
+              + m_tuple([]) + m_tuple([]) + m_tuple([]) + m_tuple([])
+              + m_bytes(b"y.py") + b"t" + struct.pack("<I", 8) + b"<module>"
+              + struct.pack("<i", 1) + m_bytes(b""))
+    pyc27 = os.path.join(tmp, "old27.pyc")
+    open(pyc27, "wb").write(struct.pack("<H", 62211) + b"\r\n" + b"\x00" * 4 + code27)
+    r = run("reverse/megarev.py", pyc38, pyc27, "--no-crypto")
+    check("megarev pyc 3.8/2.7 without marshal.loads",
+          "const: old38_tuple_str" in r.stdout and "const: py2_const_str" in r.stdout
+          and importlib.util.MAGIC_NUMBER != open(pyc38, "rb").read(4),
+          r.stdout[-800:] + r.stderr)
+
+    # #78 megarev: случайные 00 00 01 00 не считаются ICO и не вытесняют
+    # настоящие вложения; настоящий ICO находится; --time соблюдается
+    import random
+    rnd = random.Random(78)
+    png_buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (9, 9, 9)).save(png_buf, "PNG")
+    ico_buf = io.BytesIO()
+    Image.new("RGB", (16, 16), (200, 10, 10)).save(ico_buf, "ICO", sizes=[(16, 16)])
+    ico_body = (b"MZ" + rnd.randbytes(200) + struct.pack("<20I", *([0x10000] * 20))
+                + rnd.randbytes(3000) + png_buf.getvalue() + rnd.randbytes(100)
+                + make_zip_bytes("inner.txt", b"hello") + rnd.randbytes(64)
+                + ico_buf.getvalue())
+    ico_noise = os.path.join(tmp, "ico_noise.bin")
+    open(ico_noise, "wb").write(ico_body)
+    r = run("reverse/megarev.py", ico_noise, "--no-crypto")
+    check("megarev ICO false positives",
+          "PNG @0x" in r.stdout and "ZIP @0x" in r.stdout and r.stdout.count("ICO @0x") == 1,
+          r.stdout[-800:] + r.stderr)
+    words = b" ".join(b"word%03dkey" % i for i in range(300))
+    slow_bin = os.path.join(tmp, "slow_rev.bin")
+    open(slow_bin, "wb").write(b"\x7fELF" + rnd.randbytes(150_000) + words + rnd.randbytes(20_000))
+    t0 = time.time()
+    r = run("reverse/megarev.py", slow_bin, "--time", "2")
+    took = time.time() - t0
+    check("megarev --time respected", took < 6 and r.returncode == 0,
+          f"{took:.1f}s\n" + r.stdout[-400:] + r.stderr)
+
+    # #80 lang_info: PNG с «logo1.png» в метаданных — не Go
+    from PIL import PngImagePlugin
+    logo = os.path.join(tmp, "logo1.png")
+    meta = PngImagePlugin.PngInfo()
+    meta.add_text("Title", "logo1.png")
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(logo, pnginfo=meta)
+    r = run("reverse/lang_info.py", logo)
+    lang_line = next((ln for ln in r.stdout.splitlines() if "language:" in ln), "")
+    check("lang_info: PNG is not Go", lang_line and "Go" not in lang_line,
+          r.stdout[-400:] + r.stderr)
+
+    # #80 py_pack: zipapp со строкой #! перед zip
+    import zipapp
+    za_src = os.path.join(tmp, "za_src")
+    os.makedirs(za_src, exist_ok=True)
+    open(os.path.join(za_src, "__main__.py"), "w").write("print('hi')\n")
+    pyz = os.path.join(tmp, "app.pyz")
+    zipapp.create_archive(za_src, pyz, interpreter="/usr/bin/env python3")
+    r = run("reverse/py_pack.py", pyz)
+    check("py_pack zipapp with shebang",
+          open(pyz, "rb").read(2) == b"#!" and "zipapp" in r.stdout and "__main__.py" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    # #80 xor_scan: 3-байтовый ключ по префиксу флага, флаг не в начале файла
+    xflag = b"CTF{three_byte_key_xor}"
+    xplain = b"header text before the flag: " + xflag + b" tail"
+    xk = b"KEY"
+    xbin = os.path.join(tmp, "xor3.bin")
+    open(xbin, "wb").write(bytes(c ^ xk[i % 3] for i, c in enumerate(xplain)))
+    outs = [run("reverse/xor_scan.py", xbin, *a).stdout
+            for a in (("--known", "CTF{"), ("--keylen", "3"), ())]
+    check("xor_scan 3-byte key from flag prefix",
+          all("key=b'KEY'" in o and xflag.decode() in o for o in outs), "\n".join(outs)[-900:])
 
 
 def main():
@@ -1813,7 +2007,8 @@ def main():
 
     # 84. lang info (Go)
     gop = os.path.join(tmp, "go.bin")
-    open(gop, "wb").write(b"junk .go.buildinfo go1.22.0 path\tmain")
+    open(gop, "wb").write(b"\x7fELF\x02\x01\x01" + b"\x00" * 9
+                          + b"junk .go.buildinfo go1.22.0 path\tmain")
     r = run("reverse/lang_info.py", gop)
     check("reverse/lang_info.py", "Go" in r.stdout, r.stdout + r.stderr)
 
@@ -2711,6 +2906,7 @@ def main():
     checks_prng(tmp)
     checks_forensics(tmp)
     checks_stego_audio(tmp)
+    checks_reverse(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

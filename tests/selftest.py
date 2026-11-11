@@ -285,6 +285,158 @@ def checks_zip_tricks(tmp):
           r.stdout + r.stderr)
     r = run("forensic/zip_tricks.py", "known-plaintext", pz, "--magic", "png")
     check("forensic/zip_tricks.py known-plaintext", "bkcrack" in r.stdout, r.stdout + r.stderr)
+def _mk_fat16(flag_live, flag_del):
+    """FAT16 ~2 МБ: normal.txt (живой) и gone.txt (удалён, цепочка FAT обнулена)."""
+    bps, spc, rsv, nf, fsz, rootn = 512, 1, 1, 2, 17, 512
+    ncl = 4100
+    root_secs = rootn * 32 // bps
+    total = rsv + nf * fsz + root_secs + ncl
+    img = bytearray(total * bps)
+    bs = bytearray(512)
+    bs[0:3] = b"\xeb\x3c\x90"
+    bs[3:11] = b"MSDOS5.0"
+    struct.pack_into("<HBHBHHBHHHII", bs, 11, bps, spc, rsv, nf, rootn, total, 0xF8, fsz, 32, 2, 0, 0)
+    bs[54:62] = b"FAT16   "
+    bs[510:512] = b"\x55\xaa"
+    img[0:512] = bs
+    fat0 = rsv * bps
+    struct.pack_into("<HHHH", img, fat0, 0xFFF8, 0xFFFF, 0xFFFF, 0xFFFF)  # кластеры 2 (live)
+    root = (rsv + nf * fsz) * bps
+    data0 = (rsv + nf * fsz + root_secs) * bps
+
+    def ent(name, ext, clu, size, first=None):
+        e = bytearray(32)
+        e[0:8], e[8:11] = name.ljust(8).encode(), ext.ljust(3).encode()
+        e[11] = 0x20
+        struct.pack_into("<H", e, 26, clu)
+        struct.pack_into("<I", e, 28, size)
+        if first is not None:
+            e[0] = first
+        return bytes(e)
+    img[root:root + 32] = ent("NORMAL", "TXT", 2, len(flag_live))
+    img[root + 32:root + 64] = ent("GONE", "TXT", 3, len(flag_del), first=0xE5)
+    img[data0:data0 + len(flag_live)] = flag_live
+    img[data0 + bps:data0 + bps + len(flag_del)] = flag_del  # кластер 3, в FAT не занят
+    return bytes(img)
+
+
+def _mk_mft(flag, ads_flag):
+    """$MFT из 2 записей по 1024: #0 пропускается, #1 — файл с resident $DATA + ADS."""
+    def attr(atype, content, name=""):
+        nm = name.encode("utf-16-le")
+        hdr = 24 + len(nm)
+        hdr += -hdr % 8
+        body = content + b"\0" * (-len(content) % 8)
+        a = bytearray(hdr + len(body))
+        struct.pack_into("<IIBBHHH", a, 0, atype, len(a), 0, len(name), 24, 0, 0)
+        struct.pack_into("<IH", a, 16, len(content), hdr)
+        a[24:24 + len(nm)] = nm
+        a[hdr:hdr + len(body)] = body
+        return bytes(a)
+
+    def record(fname, streams, inuse):
+        r = bytearray(1024)
+        r[0:4] = b"FILE"
+        struct.pack_into("<HH", r, 4, 0x30, 3)
+        struct.pack_into("<H", r, 0x14, 0x38)
+        struct.pack_into("<H", r, 0x16, 1 if inuse else 0)
+        fn = bytearray(0x42) + fname.encode("utf-16-le")
+        struct.pack_into("<Q", fn, 0, 5)
+        fn[0x40], fn[0x41] = len(fname), 1
+        body = attr(0x30, bytes(fn))
+        for nm, d in streams:
+            body += attr(0x80, d, nm)
+        body += b"\xff\xff\xff\xff"
+        r[0x38:0x38 + len(body)] = body
+        r[0x30:0x32] = b"\x01\x00"  # USN
+        for i in (1, 2):  # fixup: хвосты секторов заменены на USN
+            r[0x32 + (i - 1) * 2:0x34 + (i - 1) * 2] = bytes(r[i * 512 - 2:i * 512])
+            r[i * 512 - 2:i * 512] = b"\x01\x00"
+        return bytes(r)
+    return (record("$MFT", [("", b"")], True)
+            + record("secret.txt", [("", b"plain\n"), ("hidden", ads_flag)], False)
+            + record("note.txt", [("", flag)], True))
+
+
+def _mk_ext(flag):
+    """Минимальный ext2 (1 КБ блок): superblock + 1 группа + корень с файлом."""
+    img = bytearray(64 * 1024)
+    sb = 1024
+    struct.pack_into("<IIIII", img, sb, 32, 64, 3, 40, 20)  # inodes, blocks, rsv, free blk, free ino
+    struct.pack_into("<IIII", img, sb + 0x14, 1, 0, 8192, 8192)
+    struct.pack_into("<I", img, sb + 0x28, 32)
+    struct.pack_into("<H", img, sb + 0x38, 0xEF53)
+    struct.pack_into("<HH", img, sb + 0x3A, 1, 1)
+    struct.pack_into("<I", img, sb + 0x4C, 1)
+    struct.pack_into("<H", img, sb + 0x58, 128)
+    img[sb + 0x78:sb + 0x80] = b"CTFEXT\0\0"
+    struct.pack_into("<I", img, 2048 + 8, 5)  # дескриптор группы: inode table в блоке 5
+    it = 5 * 1024
+
+    def put_inode(n, mode, size, blk):
+        o = it + (n - 1) * 128
+        struct.pack_into("<HH", img, o, mode, 0)
+        struct.pack_into("<I", img, o + 4, size)
+        struct.pack_into("<H", img, o + 0x1A, 1)
+        struct.pack_into("<I", img, o + 0x28, blk)
+    put_inode(2, 0x41ED, 1024, 20)
+    put_inode(12, 0x81A4, len(flag), 21)
+    d = bytearray(1024)
+    off = 0
+    for ino, nm in ((2, b"."), (2, b".."), (12, b"flag.txt")):
+        rl = 1024 - off if nm == b"flag.txt" else 12
+        struct.pack_into("<IHBB", d, off, ino, rl, len(nm), 0)
+        d[off + 8:off + 8 + len(nm)] = nm
+        off += rl
+    img[20 * 1024:21 * 1024] = d
+    img[21 * 1024:21 * 1024 + len(flag)] = flag
+    return bytes(img)
+
+
+def checks_disk_image(tmp):
+    d = os.path.join(tmp, "diskimg")
+    os.makedirs(d, exist_ok=True)
+    gone = b"CTF{deleted_fat16_file}"
+    fat = os.path.join(d, "fat16.img")
+    open(fat, "wb").write(_mk_fat16(b"hello world\n", gone))
+    r = run("forensic/disk_image.py", "fat", fat, "--find-flags", "--out", os.path.join(d, "fatout"))
+    check("disk_image fat: удалённый файл и флаг",
+          "FAT16" in r.stdout and "DEL" in r.stdout and "_ONE.TXT" in r.stdout
+          and gone.decode() in r.stdout, r.stdout[-600:] + r.stderr)
+    dd = os.path.join(d, "fatout", "[deleted]")
+    check("disk_image fat: --out", os.path.isdir(dd) and any(
+        open(os.path.join(dd, n), "rb").read().startswith(b"CTF{deleted") for n in os.listdir(dd)))
+
+    mf = os.path.join(d, "mft.bin")
+    mflag, aflag = b"CTF{mft_resident_data}", b"CTF{ads_stream_hidden}"
+    open(mf, "wb").write(_mk_mft(mflag, aflag))
+    r = run("forensic/disk_image.py", "mft", mf, "--find-flags")
+    check("disk_image mft: ADS + resident + deleted",
+          "[ADS]" in r.stdout and "secret.txt:hidden" in r.stdout and "DELETED" in r.stdout
+          and mflag.decode() in r.stdout and aflag.decode() in r.stdout, r.stdout[-600:] + r.stderr)
+
+    ex = os.path.join(d, "ext.img")
+    eflag = b"CTF{ext_file_content}"
+    open(ex, "wb").write(_mk_ext(eflag))
+    r = run("forensic/disk_image.py", "ext", ex, "--find-flags")
+    check("disk_image ext: суперблок и файл",
+          "0xEF53" in r.stdout and "inodes 32" in r.stdout and "blocks 64" in r.stdout
+          and "ext2" in r.stdout and "flag.txt" in r.stdout and eflag.decode() in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # MBR с одним FAT-разделом + scan
+    disk = os.path.join(d, "disk.img")
+    fb = _mk_fat16(b"x", b"CTF{scan_via_mbr_part}")
+    mbr = bytearray(512)
+    mbr[446:462] = bytes([0x80, 0, 2, 0, 0x0E, 0xFF, 0xFF, 0xFF]) + struct.pack("<II", 63, len(fb) // 512)
+    mbr[510:512] = b"\x55\xaa"
+    open(disk, "wb").write(bytes(mbr) + b"\0" * (62 * 512) + fb)
+    r = run("forensic/disk_image.py", "parts", disk)
+    check("disk_image parts: MBR FAT16 LBA", "FAT16 LBA" in r.stdout and " 63 " in r.stdout
+          and "MBR" in r.stdout, r.stdout + r.stderr)
+    r = run("forensic/disk_image.py", "scan", disk, "--find-flags")
+    check("disk_image scan: раздел -> FAT -> флаг", "CTF{scan_via_mbr_part}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
 
 
 def main():
@@ -2167,6 +2319,7 @@ def main():
 
     checks_ctb(tmp)
     checks_zip_tricks(tmp)
+    checks_disk_image(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

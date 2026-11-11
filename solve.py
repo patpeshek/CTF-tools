@@ -303,6 +303,30 @@ def hint_params(path):
     return out
 
 
+def _is_disk_image(path):
+    """Образ диска по сигнатурам: MBR 55AA+раздел, GPT, FAT/NTFS boot, ext magic."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(0x440)
+    except OSError:
+        return False
+    if len(h) < 0x43A:
+        return False
+    if h[0x200:0x208] == b"EFI PART" or h[3:11] == b"NTFS    ":
+        return True
+    if h[0x438:0x43A] == b"\x53\xef":
+        return True
+    if h[510:512] == b"\x55\xaa":
+        if h[54:58] == b"FAT1" or h[82:87] == b"FAT32":
+            return True
+        for i in range(4):  # plausible partition entry: известный тип, LBA>0, размер>0
+            e = h[446 + 16 * i:462 + 16 * i]
+            if e[0] in (0, 0x80) and e[4] in (1, 4, 5, 6, 7, 0xB, 0xC, 0xE, 0xF, 0x82, 0x83, 0xEE) \
+                    and int.from_bytes(e[8:12], "little") > 0 and int.from_bytes(e[12:16], "little") > 0:
+                return True
+    return False
+
+
 def carve_dir(path):
     return os.path.join(tempfile.gettempdir(), "solve_carve", os.path.basename(path) or "target")
 
@@ -547,6 +571,10 @@ def steps_for(path, deep=False, depth=0):
         add(("gif_frames", [path], "кадры/палитра", 30))
         add(("video", [path, "--every", "1", "--max", "80"],
              "кадры + OCR", 90))
+
+    if _is_disk_image(path):
+        add(("disk_image", ["scan", path, "--out", os.path.join(carve_dir(path), "disk"),
+                            "--find-flags"], "образ диска: разделы/ФС/удалённые файлы", 120))
 
     if kind in ("MP4", "AVI", "MKV", "MOV", "WEBM") or ext in (
             ".mp4", ".mkv", ".avi", ".mov", ".webm"):

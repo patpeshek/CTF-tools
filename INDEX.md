@@ -59,6 +59,7 @@
 | `office` | Office/PDF: макросы, JS, вложенное | `python toolbox.py office doc.docx --out out` |
 | `cloud` | AWS/GCP/Azure ключи и metadata | `python toolbox.py cloud dump --metadata` |
 | `flaghunt` | файлы-флаги по имени/содержимому | `python toolbox.py flaghunt dump` |
+| `disk_image` | образы: MBR/GPT, FAT/NTFS $MFT/ext, удалённые, ADS, журнал ext | `python toolbox.py disk_image scan disk.img --out out --find-flags` |
 
 ## Network
 

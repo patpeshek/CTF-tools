@@ -142,7 +142,7 @@
 | `ret2win` | паттерн/оффсет/payload | `python toolbox.py ret2win payload --offset 80 --addr 0x4011a2` |
 | `fmtstr` | format string helper: payload'ы + `scan` по живому сервису | `python toolbox.py fmtstr auto --connect h:p` |
 | `oracle` | TCP-сервис: вопрос → формула → ответ, N раундов | `python toolbox.py oracle --connect h:1 --auto` (или `--preset coprime`) |
-| `ppc` | разбор PPC-вопроса: какие стратегии и ответы видит движок | `python toolbox.py ppc "2+2*2"` |
+| `ppc` | разбор PPC-вопроса: какие стратегии и ответы видит движок (арифметика, хеши md5/sha/crc32, модулярка — обратный/CRT/`n! mod m`/`Fib mod m`/`C(n,k) mod p`, простота по Miller–Rabin, графы — путь/компоненты/топосорт, матрицы, скобки, k-й/медиана) | `python toolbox.py ppc "md5 of 'hello'"` |
 
 ## Reverse
 

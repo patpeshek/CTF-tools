@@ -125,6 +125,11 @@ python misc/wordle_bot.py play --connect h:p --words F:\dev\wordlists\russian5.t
 python misc/game_bot.py --connect h:p --auto --explore   # какие клавиши реагируют
 python misc/formats.py --list                        # кэш разметок
 python toolbox.py ppc "12 ? 5 = 17"                     # что движок понял
+python toolbox.py ppc "md5 of 'hello'"                  # хеши md5/sha1/sha256/sha512/crc32
+python toolbox.py ppc "Find the modular inverse of 7 mod 11"   # обратный / CRT / n! mod m / Fib mod m / C(n,k) mod p
+python toolbox.py ppc "Is 1000000007 prime? YES or NO"  # простота большого числа (Miller-Rabin)
+python toolbox.py ppc "Unweighted graph edges: 1-2 2-3 3-4. Shortest path length from 1 to 4?"  # графы: путь/компоненты/топосорт
+python toolbox.py ppc "Determinant of [[2,3],[1,4]] mod 7"     # матрицы: умножение/определитель mod p
 python tests/ppc_bench.py --only arith,captcha       # локальный стенд PPC
 python misc/formats.py --set "ГЖС" --green Г --yellow Ж --gray С
 python misc/ocr.py pic.png --variants                  # текст с картинки

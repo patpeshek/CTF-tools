@@ -134,6 +134,9 @@ python crypto/rsa_tool.py common-modulus --n ... --e1 3 --c1 ... --e2 65537 --c2
 python crypto/rsa_tool.py small-e --n ... --e 3 --c ...
 python crypto/rsa_tool.py factor --n ... --p ...
 
+python crypto/prng_state.py mt outs.txt --n 5 --prev 3 --cipher <hex>
+python crypto/prng_state.py lcg outs.txt --n 5            # неизвестные m,a,c
+python crypto/prng_state.py lcg-trunc outs.txt --m <m> --a <a> --c <c> --shift 16
 python crypto/stream_sha256.py --cipher <hex> --key <...> --nonce <...>
 python crypto/stream_sha256.py --cipher <hex> --key <...> --nonce <...> --brute
 python crypto/otp_reuse.py --c1 <hex> --c2 <hex> --crib "the "

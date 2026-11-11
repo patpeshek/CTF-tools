@@ -34,6 +34,7 @@ UTF16 = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
 URL = re.compile(rb"(?:https?|ftp)://[^\s\"'<>]{4,200}")
 
 INTEREST = ("password", "secret", "token", "api", "key", "firebase", "http")
+MAX_READ = 64 * 1024 * 1024
 
 
 def main():
@@ -79,26 +80,43 @@ def main():
                 for p in perms[:20]:
                     print("      ", p)
 
-        # dex и прочие файлы — интересные строки
+        # dex, resources.arsc, assets/, res/raw/ и прочие — интересные строки
         found_flags = set()
         urls = set()
         keys = []
+        too_big = []
         for i in infos:
             low = i.filename.lower()
-            if not low.endswith((".dex", ".xml", ".json", ".properties", ".so")):
+            if not (low.endswith((".dex", ".xml", ".json", ".properties", ".so", ".arsc"))
+                    or low.startswith(("assets/", "res/raw/"))):
+                continue
+            if i.file_size > MAX_READ:
+                too_big.append(i.filename)
                 continue
             try:
                 data = z.read(i)
             except Exception:
                 continue
-            for f in common.find_flags(data):
+            # пул строк resources.arsc и бинарный XML часто в UTF-16LE: флаги
+            # ищем везде, URL/ключи — только в arsc/assets (в AXML-разметке
+            # это сплошь schemas.android.com)
+            wide = b"\n".join(m.group().decode("utf-16-le").encode("ascii")
+                              for m in UTF16.finditer(data))
+            for f in common.find_flags(wide):
                 found_flags.add(f)
-            for m in URL.finditer(data):
-                urls.add(m.group().decode("latin-1"))
-            for m in ASCII.finditer(data):
-                s = m.group().decode("latin-1")
-                if any(w in s.lower() for w in INTEREST):
-                    keys.append((i.filename, s))
+            rich = low.endswith(".arsc") or low.startswith(("assets/", "res/raw/"))
+            for blob in ((data, wide) if rich else (data,)):
+                for f in common.find_flags(blob):
+                    found_flags.add(f)
+                for m in URL.finditer(blob):
+                    urls.add(m.group().decode("latin-1"))
+                for m in ASCII.finditer(blob):
+                    s = m.group().decode("latin-1")
+                    if any(w in s.lower() for w in INTEREST):
+                        keys.append((i.filename, s))
+        if too_big:
+            print(f"\n[!] пропущено больших файлов (>{MAX_READ >> 20} MB): {len(too_big)},"
+                  f" например {too_big[0]}")
 
         if found_flags:
             print("\n[!!!] флаги:", " | ".join(sorted(found_flags)))

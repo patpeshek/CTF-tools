@@ -24,6 +24,7 @@ except Exception:
     pass
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -37,6 +38,17 @@ import common  # noqa: E402
 NAME_RE = re.compile(r"(?i)(^|[_\-.])flag([_\-.]|$)|flag|user\.txt|root\.txt")
 
 
+def name_matcher(pattern: str):
+    """--pattern: glob (`*.key`, `secret*`) — по всему имени; иначе regex,
+    а невалидный regex — как подстрока."""
+    if any(ch in pattern for ch in "*?["):
+        return re.compile(fnmatch.translate(pattern), re.I).match
+    try:
+        return re.compile(pattern, re.I).search
+    except re.error:
+        return re.compile(re.escape(pattern), re.I).search
+
+
 def looks_like_flag_name(name: str):
     low = name.lower()
     return ("flag" in low) or low in ("user.txt", "root.txt")
@@ -48,13 +60,14 @@ def main():
     ap.add_argument("--all", action="store_true", help="не ограничивать глубину/размеры")
     ap.add_argument("--max-size", type=int, default=2, help="МБ на файл для чтения")
     ap.add_argument("--depth", type=int, default=8)
-    ap.add_argument("--pattern", action="append", default=[])
+    ap.add_argument("--pattern", action="append", default=[],
+                    help="имя файла: glob (*.key, secret*) или regex")
     ap.add_argument("--json", action="store_true")
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
 
-    patterns = [re.compile(p, re.I) for p in args.pattern]
+    patterns = [name_matcher(p) for p in args.pattern]
     root = os.path.abspath(args.path)
     found = []
     base_depth = root.rstrip(os.sep).count(os.sep)
@@ -71,7 +84,7 @@ def main():
                 st = os.stat(path)
             except OSError:
                 continue
-            hit_name = looks_like_flag_name(name) or any(p.search(name) for p in patterns)
+            hit_name = looks_like_flag_name(name) or any(p(name) for p in patterns)
             size = st.st_size
             content_flags = []
             snippet = ""

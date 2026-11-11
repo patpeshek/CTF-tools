@@ -8,7 +8,10 @@ git_hunt.py — что спрятано в git-репозитории.
   python git_hunt.py repo --all-objects
 
 Ищет: флаги/секреты в истории и во всех объектах, удалённые файлы, dangling
-коммиты, stash, remotes с кредами, reflog.
+коммиты, stash, remotes с кредами, reflog. Содержимое недостижимых
+(dangling/unreachable) объектов проверяется всегда; --all-objects — все
+объекты базы (loose + pack). Репозиторий задачи не меняется (fsck без
+--lost-found, чтение через cat-file).
 """
 from __future__ import annotations
 
@@ -40,6 +43,65 @@ def git(repo, *args, timeout=30):
     return subprocess.run(["git", "-C", repo, *args], capture_output=True,
                           text=True, encoding="utf-8", errors="replace",
                           timeout=timeout)
+
+
+# Чтение объектов — только read-only plumbing (fsck без --lost-found,
+# cat-file): репозиторий задачи не меняется. Для этих вызовов глушим то,
+# что может запустить команду из чужого конфига (fsmonitor, hooks,
+# системный конфиг), и игнорируем refs/replace.
+SAFE_CFG = ["--no-replace-objects", "-c", "core.fsmonitor=",
+            "-c", "core.hooksPath=" + os.devnull]
+SAFE_ENV = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+UNREACH_RE = re.compile(r"^(dangling|unreachable) (\w+) ([0-9a-f]{40,64})\b")
+
+
+def git_ro(repo, *args, data=None, timeout=120):
+    """git для чтения объектов: bytes на выходе, None при таймауте/ошибке."""
+    try:
+        return subprocess.run(["git", *SAFE_CFG, "-C", repo, *args], input=data,
+                              capture_output=True, env=SAFE_ENV, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def batch_check(repo, shas=None):
+    """[(sha, type, size)] — для списка sha или для всех объектов базы
+    (loose + pack, включая недостижимые)."""
+    if shas is None:
+        r = git_ro(repo, "cat-file", "--batch-all-objects", "--batch-check")
+    else:
+        if not shas:
+            return []
+        r = git_ro(repo, "cat-file", "--batch-check",
+                   data=("\n".join(shas) + "\n").encode())
+    out = []
+    for line in (r.stdout.decode("utf-8", "replace").splitlines() if r else []):
+        p = line.split()
+        if len(p) == 3 and p[2].isdigit():
+            out.append((p[0], p[1], int(p[2])))
+    return out
+
+
+def read_objects(repo, shas):
+    """[(sha, type, bytes)] одним вызовом cat-file --batch."""
+    if not shas:
+        return []
+    r = git_ro(repo, "cat-file", "--batch",
+               data=("\n".join(shas) + "\n").encode(), timeout=300)
+    buf = r.stdout if r else b""
+    out, pos = [], 0
+    while pos < len(buf):
+        nl = buf.find(b"\n", pos)
+        if nl < 0:
+            break
+        head = buf[pos:nl].decode("ascii", "replace").split()
+        pos = nl + 1
+        if len(head) != 3 or not head[2].isdigit():
+            continue          # "<sha> missing"
+        size = int(head[2])
+        out.append((head[0], head[1], buf[pos:pos + size]))
+        pos += size + 1
+    return out
 
 
 def find_repo(path):
@@ -110,38 +172,63 @@ def main():
             for x in report["deleted"][:20]:
                 print("  -", x)
 
-    # dangling / stash / reflog
-    r = git(repo, "fsck", "--lost-found", "--no-reflogs")
-    if r.returncode == 0 and r.stdout.strip():
-        report["dangling"] = r.stdout.splitlines()[:50]
-        print(f"[+] dangling: {len(report['dangling'])}")
-        for x in report["dangling"][:10]:
+    # dangling / unreachable: без --lost-found (он пишет в .git задачи);
+    # --no-reflogs — коммиты, живые только в reflog, тоже считаем потерянными.
+    # fsck может вернуть != 0 на битых объектах — строки всё равно разбираем.
+    unreachable = []
+    r = git_ro(repo, "fsck", "--unreachable", "--dangling", "--no-reflogs",
+               "--no-progress")
+    fsck_lines = r.stdout.decode("utf-8", "replace").splitlines() if r else []
+    lost, unreach_set = [], set()
+    for line in fsck_lines:
+        m = UNREACH_RE.match(line)
+        if m and m.group(3) not in unreach_set:
+            unreach_set.add(m.group(3))
+            unreachable.append(m.group(3))
+            lost.append(line)
+    if lost:
+        report["dangling"] = lost[:50]
+        print(f"[+] dangling/unreachable: {len(lost)}")
+        for x in lost[:10]:
             print("  ", x)
     r = git(repo, "stash", "list")
     if r.returncode == 0 and r.stdout.strip():
         print("[+] stash:")
         print(r.stdout[:1000])
 
-    # все объекты (если попросили)
+    # содержимое объектов: недостижимые всегда, все — по --all-objects
+    # (cat-file --batch-all-objects видит loose + pack, включая dangling)
+    objs = batch_check(repo, unreachable)
     if args.all_objects:
-        r = git(repo, "rev-list", "--objects", "--all")
-        total = 0
-        for line in (r.stdout.splitlines() if r.returncode == 0 else [])[:args.max_objects]:
-            sha = line.split()[0]
-            r2 = git(repo, "cat-file", "-p", sha)
-            if r2.returncode != 0:
-                continue
-            data = r2.stdout.encode("utf-8", "replace")[:2_000_000]
-            total += len(data)
-            for f in common.find_flags(data):
-                if f not in report["flags"]:
-                    report["flags"].append(f)
-            for m in SECRET_RE.finditer(r2.stdout):
-                report["secrets"].append({"source": f"object:{sha[:10]}",
-                                          "kind": m.group(1), "value": m.group(2)[:200]})
-            if total > args.max_bytes:
-                break
-        print(f"[+] объектов проверено: до {args.max_objects}, {total//1024} KB")
+        objs += batch_check(repo)
+    picked, seen_sha, budget = [], set(), 0
+    for sha, kind, size in objs:
+        if sha in seen_sha or len(picked) >= args.max_objects:
+            continue
+        if budget + size > args.max_bytes:
+            continue
+        seen_sha.add(sha)
+        picked.append(sha)
+        budget += size
+    total = 0
+    for sha, kind, data in read_objects(repo, picked):
+        total += len(data)
+        src = f"{'unreachable ' if sha in unreach_set else ''}{kind}:{sha[:10]}"
+        for f in common.find_flags(data):
+            if f not in report["flags"]:
+                report["flags"].append(f)
+                print(f"[!] флаг в объекте {src}")
+        text = data.decode("utf-8", "replace")
+        for m in SECRET_RE.finditer(text):
+            report["secrets"].append({"source": f"object:{src}",
+                                      "kind": m.group(1), "value": m.group(2)[:200]})
+    n_all = len({o[0] for o in objs})
+    if objs:
+        print(f"[+] объектов проверено: {len(picked)} из {n_all}"
+              f" (недостижимых: {len(unreachable)}), {total//1024} KB")
+        if len(picked) < n_all:
+            print(f"[i] пропущено {n_all - len(picked)}: подними --max-objects"
+                  f" / --max-bytes")
 
     report["secrets"] = report["secrets"][:100]
     if report["flags"]:

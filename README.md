@@ -197,14 +197,14 @@ python tests/selftest.py
 - `docker_api.py`: `--host`, `--list`, `--inspect`, `--logs`, `--exec --yes`.
 - `git_hunt.py`: `--all-objects`, `--json`, `--max-objects`.
 - `browser_artifacts.py`: `--json`, `--limit`.
-- `windows_triage.py`: `--json`, `--limit`.
+- `windows_triage.py`: `--json`, `--limit` (0 = все файлы).
 - `office_docs.py`: `--out`, `--json`.
 - `cloud_creds.py`: `--metadata`, `--json`.
 - `k8s_api.py`: `--host`, `--token`, `--ca`, `--insecure`, `--list`, `--secrets`.
 - `audio_tools.py`: `--mode auto|dtmf|morse`.
 - `lang_info.py`: `--json`.
 - `rsa_tool.py`: `wiener --n --e --cipher`, `broadcast --e --pairs "n:c"`.
-- `flag_hunt.py` / `flag_hunt.sh`: `--all`, `--pattern`, `--json`; имена `flag*` и содержимое.
+- `flag_hunt.py` / `flag_hunt.sh`: `--all`, `--pattern` (glob `*.key` или regex), `--json`; имена `flag*` и содержимое.
 - `serve.py`: `--dir`, `--port`, `--bind`, `--upload`, `--token`.
 - `aes_file.py`: `--key`, `--key-xor 42`, `--keylen 32`, `--iv`, `--ivlen 16`.
 - `ret2win.py`: `--offset`, `--addr`, `--align`, `--remote host:port`.

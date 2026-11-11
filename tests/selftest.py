@@ -482,6 +482,216 @@ def checks_prng(tmp):
             "--shift", 16, "--n", "3")
     check("prngstate lcg-trunc: состояние и следующие",
           str([v >> 16 for v in full[8:11]]) in r.stdout, r.stdout[-500:] + r.stderr)
+def checks_forensics(tmp):
+    """Регрессии forensic/* (#67-#74): каждый артефакт строится здесь же."""
+    base = os.path.join(tmp, "forensics_regress")
+    os.makedirs(base, exist_ok=True)
+
+    # #67 git_hunt: dangling-объекты (loose и в pack) читаются, а .git
+    # задачи не меняется (раньше fsck --lost-found писал в .git/lost-found)
+    repo = os.path.join(base, "gitrepo")
+    os.makedirs(repo)
+
+    def _g(*a, data=None):
+        return subprocess.run(["git", "-C", repo, *a], input=data,
+                              capture_output=True, check=True)
+    _g("init", "-q")
+    _g("config", "user.email", "a@b.c")
+    _g("config", "user.name", "a")
+    open(os.path.join(repo, "readme.txt"), "w").write("nothing here\n")
+    _g("add", ".")
+    _g("commit", "-qm", "init")
+    _g("hash-object", "-w", "--stdin", data=b"CTF{git_packed_dangling}\n")
+    _g("repack", "-a", "-d", "-k", "-q")
+    _g("hash-object", "-w", "--stdin", data=b"CTF{git_loose_dangling}\n")
+
+    def _tree(root):
+        return sorted(os.path.relpath(os.path.join(dp, f), root)
+                      for dp, dn, fn in os.walk(root) for f in fn + dn)
+    before = _tree(os.path.join(repo, ".git"))
+    r = run("forensic/git_hunt.py", repo)
+    after = _tree(os.path.join(repo, ".git"))
+    check("git_hunt dangling blobs (#67)",
+          "CTF{git_packed_dangling}" in r.stdout
+          and "CTF{git_loose_dangling}" in r.stdout, r.stdout[-800:] + r.stderr)
+    check("git_hunt read-only (#67)", before == after,
+          str(sorted(set(after) ^ set(before)))[:400])
+
+    # #68 windows_triage: флаг в UTF-16LE и отчёт о файлах сверх --limit
+    hive = os.path.join(base, "SOFTWARE")
+    open(hive, "wb").write(b"regf\x00\x01" + "CTF{utf16_hive}".encode("utf-16-le")
+                           + b"\x00\x00\xff")
+    r = run("forensic/windows_triage.py", hive)
+    check("windows_triage utf16 flag (#68)", "CTF{utf16_hive}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    many = os.path.join(base, "evtx_dump")
+    os.makedirs(many)
+    for i in range(105):
+        open(os.path.join(many, f"log{i:03d}.txt"), "w").write("nothing\n")
+    open(os.path.join(many, "log104.txt"), "w").write("CTF{after_limit}\n")
+    r = run("forensic/windows_triage.py", many)
+    check("windows_triage reports skipped (#68)",
+          "пропущено файлов: 5 " in r.stdout and "--limit" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    r = run("forensic/windows_triage.py", many, "--limit", "0")
+    check("windows_triage --limit 0 (#68)", "CTF{after_limit}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # #69 docker_image: относительный --out и whiteout в корне слоя
+    def _layer(files):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as t:
+            for n, d in files.items():
+                ti = tarfile.TarInfo(n)
+                ti.size = len(d)
+                t.addfile(ti, io.BytesIO(d))
+        return buf.getvalue()
+    dimg = os.path.join(base, "img.tar")
+    with tarfile.open(dimg, "w") as t:
+        for n, d in (
+                ("manifest.json", json.dumps([{"Config": "c.json",
+                                               "Layers": ["a/layer.tar", "b/layer.tar"]}]).encode()),
+                ("c.json", b'{"config": {}}'),
+                ("a/layer.tar", _layer({"rootflag.txt": b"CTF{docker_root_wh}\n",
+                                        "app/data.txt": b"keep\n",
+                                        ".env": b"MODE=test\n"})),
+                ("b/layer.tar", _layer({".wh.rootflag.txt": b""}))):
+            ti = tarfile.TarInfo(n)
+            ti.size = len(d)
+            t.addfile(ti, io.BytesIO(d))
+    r = subprocess.run([PY, os.path.join(KIT, "forensic", "docker_image.py"), dimg,
+                        "--out", "fsout"], cwd=base, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=ENV)
+    fsout = os.path.join(base, "fsout")
+    check("docker_image relative --out (#69)",
+          os.path.isfile(os.path.join(fsout, "app", "data.txt"))
+          and os.path.isfile(os.path.join(fsout, ".env")),
+          r.stdout[-600:] + r.stderr)
+    check("docker_image root whiteout (#69)",
+          "- rootflag.txt" in r.stdout and "CTF{docker_root_wh}" in r.stdout
+          and not os.path.exists(os.path.join(fsout, "rootflag.txt"))
+          and not os.path.exists(os.path.join(fsout, "wh.rootflag.txt")),
+          r.stdout[-600:] + r.stderr)
+
+    # #70 exif без exiftool (PATH без него): Exif sub-IFD, GPS, COM, XP*
+    jpg = os.path.join(base, "meta.jpg")
+    _ex = Image.Exif()
+    _ex[0x010E] = "CTF{exif_description}"
+    _ex[0x9C9C] = "CTF{exif_xpcomment}".encode("utf-16-le") + b"\x00\x00"
+    _ex.get_ifd(0x8769)[0x9286] = b"ASCII\x00\x00\x00CTF{exif_usercomment}"
+    _gps = _ex.get_ifd(0x8825)
+    _gps[1], _gps[2] = "N", (55.0, 45.0, 0.0)
+    _gps[3], _gps[4] = "E", (37.0, 37.0, 0.0)
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(jpg, exif=_ex, comment=b"CTF{exif_jpeg_com}")
+    r = run("forensic/exif.py", jpg, env={"PATH": base})
+    check("exif without exiftool (#70)",
+          all(x in r.stdout for x in ("CTF{exif_description}", "CTF{exif_xpcomment}",
+                                      "CTF{exif_usercomment}", "CTF{exif_jpeg_com}",
+                                      "55.75")), r.stdout[-800:] + r.stderr)
+
+    # #71 office_docs: сырой поиск по PDF без pypdf (импорт блокируется
+    # через sitecustomize на PYTHONPATH, даже если pypdf установлен)
+    nopypdf = os.path.join(base, "nopypdf")
+    os.makedirs(nopypdf)
+    open(os.path.join(nopypdf, "sitecustomize.py"), "w").write(
+        "import sys\n"
+        "class _NoPypdf:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'pypdf' or name.startswith('pypdf.'):\n"
+        "            raise ImportError('pypdf blocked by selftest')\n"
+        "sys.meta_path.insert(0, _NoPypdf())\n")
+    import zlib as _zlib
+    _flate = _zlib.compress(b"BT /F1 12 Tf (CTF{pdf_flate_search}) Tj ET")
+    pdfp = os.path.join(base, "doc.pdf")
+    open(pdfp, "wb").write(
+        b"%PDF-1.4\n1 0 obj << /Type /Catalog /OpenAction 3 0 R >> endobj\n"
+        b"2 0 obj << /Length 32 >> stream\nBT (CTF{pdf_raw_search}) Tj ET\nendstream endobj\n"
+        b"3 0 obj << /S /JavaScript /JS (app.alert(1)) >> endobj\n"
+        b"4 0 obj << /Filter /FlateDecode >> stream\n" + _flate
+        + b"\nendstream endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n")
+    r = run("forensic/office_docs.py", pdfp, env={"PYTHONPATH": nopypdf})
+    check("office_docs pdf without pypdf (#71)",
+          "CTF{pdf_raw_search}" in r.stdout and "CTF{pdf_flate_search}" in r.stdout
+          and "/JavaScript" in r.stdout, r.stdout[-800:] + r.stderr)
+
+    # #72 cloud_creds: печатается значение, а не имя ключа
+    credp = os.path.join(base, "app.conf")
+    open(credp, "w").write("token = FAKE-test-token-0001\n")
+    r = run("forensic/cloud_creds.py", credp)
+    check("cloud_creds prints value (#72)", "FAKE-test-token-0001" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # #73 android_backup: флаг в shared_prefs XML и SQLite без расширения
+    adump = os.path.join(base, "com.example.app")
+    os.makedirs(os.path.join(adump, "shared_prefs"))
+    os.makedirs(os.path.join(adump, "databases"))
+    open(os.path.join(adump, "shared_prefs", "prefs.xml"), "w").write(
+        "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n"
+        "    <string name=\"note\">CTF{prefs_xml_flag}</string>\n</map>\n")
+    import sqlite3 as _sqlite3
+    _con = _sqlite3.connect(os.path.join(adump, "databases", "appdata"))
+    _con.execute("create table notes(body text)")
+    _con.execute("insert into notes values('CTF{sqlite_noext_flag}')")
+    _con.commit()
+    _con.close()
+    r = run("forensic/android_backup.py", adump)
+    check("android_backup xml/sqlite flags (#73)",
+          "CTF{prefs_xml_flag}" in r.stdout and "CTF{sqlite_noext_flag}" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+    # #73 apk_info: resources.arsc (UTF-16 пул строк) и assets/
+    apkp = os.path.join(base, "res.apk")
+    with zipfile.ZipFile(apkp, "w") as z:
+        z.writestr("AndroidManifest.xml",
+                   b"\x03\x00\x08\x00" + "com.example.res".encode("utf-16-le"))
+        z.writestr("resources.arsc", b"\x02\x00\x0c\x00"
+                   + "CTF{arsc_string_flag}".encode("utf-16-le") + b"\x00\x00")
+        z.writestr("assets/blob.bin", b"\x00\x01CTF{apk_asset_flag}\x00")
+    r = run("forensic/apk_info.py", apkp)
+    check("apk_info resources.arsc/assets (#73)",
+          "CTF{arsc_string_flag}" in r.stdout and "CTF{apk_asset_flag}" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+
+    # #74 flag_hunt --pattern glob, artifact_hunt --context и скорость,
+    # volatility_text --keys (API_KEY) и --grep
+    hunt = os.path.join(base, "hunt")
+    os.makedirs(hunt)
+    open(os.path.join(hunt, "server.key"), "w").write("-----BEGIN TEST KEY-----\n")
+    r = run("forensic/flag_hunt.py", hunt, "--pattern", "*.key")
+    check("flag_hunt --pattern glob (#74)",
+          "server.key" in r.stdout and "Traceback" not in r.stderr,
+          r.stdout[-600:] + r.stderr[-600:])
+    ctxf = os.path.join(base, "ctx.log")
+    open(ctxf, "w").write("ctxbefore" + " ." * 40 + "\n"
+                          "secret: fake-test-value-01\n"
+                          + " ." * 40 + " ctxafter\n")
+    r = run("forensic/artifact_hunt.py", ctxf, "--context", "1")
+    check("artifact_hunt --context (#74)",
+          "fake-test-value-01" in r.stdout and "ctxbefore" in r.stdout
+          and "ctxafter" in r.stdout, r.stdout[-600:] + r.stderr)
+    nlf = os.path.join(base, "newlines.txt")
+    open(nlf, "wb").write(b"\n" * 100_000)
+    try:
+        r = subprocess.run([PY, os.path.join(KIT, "forensic", "artifact_hunt.py"), nlf],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=ENV, timeout=30)
+        ok, detail = r.returncode == 0, r.stderr[-400:]
+    except subprocess.TimeoutExpired:
+        ok, detail = False, "timeout 30s: квадратичный разбор"
+    check("artifact_hunt 100KB newlines fast (#74)", ok, detail)
+    envf = os.path.join(base, "windows.envars.txt")
+    open(envf, "w").write(
+        "PID\tProcess\tBlock\tVariable\tValue\n"
+        "1234\tagent.exe\t0x1\tPATH\tC:\\Windows\n"
+        "1234\tagent.exe\t0x1\tAPI_KEY\tzz-test-0001\n"
+        "1234\tagent.exe\t0x1\tLAB_HOST\tlab-host-01\n"
+        "5678\tother.exe\t0x2\tPATH\tC:\\Other\n")
+    r = run("forensic/volatility_text.py", envf, "--keys")
+    check("volatility_text --keys API_KEY (#74)", "zz-test-0001" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    r = run("forensic/volatility_text.py", envf, "--grep", "lab-host")
+    check("volatility_text --grep (#74)",
+          "lab-host-01" in r.stdout and "other.exe" not in r.stdout
+          and "C:\\Windows" not in r.stdout, r.stdout[-600:] + r.stderr)
 
 
 def main():
@@ -2366,6 +2576,7 @@ def main():
     checks_zip_tricks(tmp)
     checks_disk_image(tmp)
     checks_prng(tmp)
+    checks_forensics(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

@@ -24,6 +24,7 @@ import argparse
 import glob
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -73,6 +74,42 @@ def find_jdk(min_major=25):
     return best[1] if best else None
 
 
+# analyzeHeadless.bat получает аргументы через cmd.exe: имя файла вида
+# «a&ver&.bin» выполнило бы команду. Поэтому имя пользователя в командную
+# строку не попадает вообще (анализируется копия со случайным именем), а все
+# остальные аргументы проверяются на метасимволы cmd.
+CMD_META = set('&|<>^%!"()\r\n')
+
+
+def cmd_safe(arg: str) -> bool:
+    return not any(c in CMD_META for c in arg)
+
+
+def stage_input(src: str, work: str) -> str:
+    """Копия входного файла в work под именем input_<hex><ext>."""
+    ext = os.path.splitext(src)[1]
+    if not re.fullmatch(r"\.[A-Za-z0-9]{1,8}", ext):
+        ext = ".bin"
+    dst = os.path.join(work, f"input_{secrets.token_hex(8)}{ext}")
+    shutil.copyfile(src, dst)
+    return dst
+
+
+def build_cmd(headless: str, proj: str, name: str, binary: str,
+              keep_project: bool = False) -> list[str]:
+    """Командная строка analyzeHeadless; ValueError, если аргумент опасен для cmd."""
+    cmd = [headless, proj, name, "-import", binary,
+           "-postScript", "DumpDecomp.java",
+           "-scriptPath", SCRIPTS,
+           "-analysisTimeoutPerFile", "180"]
+    if not keep_project:
+        cmd.append("-deleteProject")
+    for arg in cmd:
+        if not cmd_safe(arg):
+            raise ValueError("метасимволы cmd.exe (&|<>^%!\"()) в аргументе: " + arg)
+    return cmd
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file")
@@ -90,14 +127,18 @@ def main():
         print("    и/или задать GHIDRA_HOME. Нужна Java 21 для 12.x.")
         return
 
+    src = os.path.abspath(args.file)
+    if not os.path.isfile(src):
+        print(f"[-] не могу открыть: {args.file}")
+        return
     proj = tempfile.mkdtemp(prefix="ghidra_proj_")
-    name = "ctf"
-    cmd = [headless, proj, name, "-import", os.path.abspath(args.file),
-           "-postScript", "DumpDecomp.java",
-           "-scriptPath", SCRIPTS,
-           "-analysisTimeoutPerFile", "180"]
-    if not args.keep_project:
-        cmd.append("-deleteProject")
+    try:
+        cmd = build_cmd(headless, proj, "ctf", stage_input(src, proj), args.keep_project)
+    except (OSError, ValueError) as e:
+        print(f"[-] {e}")
+        print("    TEMP/TMP и путь к Ghidra/репозиторию должны быть без &|<>^%!\"()")
+        shutil.rmtree(proj, ignore_errors=True)
+        return
     print("[+] ghidra:", headless)
     jdk = find_jdk(25)
     env = dict(os.environ)
@@ -158,4 +199,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (FileNotFoundError, IsADirectoryError, PermissionError) as e:
+        print(f"[-] не могу открыть: {getattr(e, 'filename', None) or e}")
+    except KeyboardInterrupt:
+        print("\n[-] прервано")

@@ -98,6 +98,29 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_reverse(tmp):
+    """Регрессии reverse/*: ghidra_decomp, disasm, megarev, lang_info, py_pack, xor_scan."""
+    # #51 ghidra_decomp: имя файла не попадает в cmd.exe (поддельный analyzeHeadless.bat)
+    if os.name == "nt":
+        fake = os.path.join(tmp, "fake_ghidra")
+        os.makedirs(fake, exist_ok=True)
+        with open(os.path.join(fake, "analyzeHeadless.bat"), "w", newline="\r\n") as f:
+            f.write("@echo off\necho /* ==== fake_func @ 0 */\necho ARGS: %*\n")
+        inj_dir = os.path.join(tmp, "inj51")
+        os.makedirs(inj_dir, exist_ok=True)
+        inj = os.path.join(inj_dir, "a&echo.INJMARK51&.bin")  # без пробелов: не в кавычках
+        open(inj, "wb").write(b"MZ" + b"\x00" * 62)
+        r = run("reverse/ghidra_decomp.py", inj, env={"GHIDRA_HOME": fake})
+        lines = [ln.strip() for ln in r.stdout.splitlines()]
+        args_line = next((ln for ln in lines if ln.startswith("ARGS:")), "")
+        check("ghidra_decomp: имя файла не уходит в cmd.exe",
+              "fake_func" in r.stdout and "INJMARK51" not in lines
+              and "input_" in args_line and "a&" not in args_line,
+              r.stdout[-800:] + r.stderr)
+    else:
+        print("[SKIP] ghidra_decomp cmd.exe: только Windows")
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
@@ -1975,6 +1998,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_reverse(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

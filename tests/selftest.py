@@ -693,6 +693,139 @@ def checks_forensics(tmp):
           "lab-host-01" in r.stdout and "other.exe" not in r.stdout
           and "C:\\Windows" not in r.stdout, r.stdout[-600:] + r.stderr)
 
+def checks_stego_audio(tmp):
+    # audio_spectrum: низкие частоты внизу картинки (#60)
+    low_wav = os.path.join(tmp, "spec_low.wav")
+    with wave.open(low_wav, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+        w.writeframes(b"".join(
+            struct.pack("<h", int(8000 * math.sin(2 * math.pi * 300 * i / 8000)))
+            for i in range(8000)))
+    low_png = os.path.join(tmp, "spec_low.png")
+    r = run("stego/audio_spectrum.py", low_wav, "--out", low_png,
+            "--width", "100", "--height", "100")
+    row = -1
+    if os.path.exists(low_png):
+        _im = Image.open(low_png).convert("L")
+        _rows = [sum(_im.getpixel((x, y)) for x in range(_im.width))
+                 for y in range(_im.height)]
+        row = _rows.index(max(_rows))
+    check("stego/audio_spectrum.py low freq at bottom", row >= 80,
+          f"brightest row={row}\n" + r.stdout + r.stderr)
+
+    keys = {"1": (697, 1209), "2": (697, 1336), "3": (697, 1477), "A": (697, 1633),
+            "4": (770, 1209), "5": (770, 1336), "6": (770, 1477), "B": (770, 1633),
+            "7": (852, 1209), "8": (852, 1336), "9": (852, 1477), "C": (852, 1633),
+            "*": (941, 1209), "0": (941, 1336), "#": (941, 1477), "D": (941, 1633)}
+
+    def _dtmf(digits, rate, tone_s, gap_s, amp):
+        out = []
+        for d in digits:
+            f1, f2 = keys[d]
+            out += [amp * (math.sin(2 * math.pi * f1 * i / rate) +
+                           math.sin(2 * math.pi * f2 * i / rate))
+                    for i in range(int(rate * tone_s))]
+            out += [0.0] * int(rate * gap_s)
+        return out
+
+    def _wav(path, samples, rate, width):
+        lim = (1 << (8 * width - 1)) - 1
+        with wave.open(path, "w") as w:
+            w.setnchannels(1); w.setsampwidth(width); w.setframerate(rate)
+            w.writeframes(b"".join(
+                max(-lim, min(lim, int(v))).to_bytes(width, "little", signed=True)
+                for v in samples))
+
+    # audio_tools: 24-битный WAV (3 байта на сэмпл) (#61)
+    p24 = os.path.join(tmp, "dtmf24.wav")
+    _wav(p24, _dtmf("1234", 8000, 0.2, 0.1, 2_000_000), 8000, 3)
+    r = run("stego/audio_tools.py", p24, "--mode", "dtmf")
+    check("stego/audio_tools.py dtmf 24-bit", "DTMF: 1234" in r.stdout,
+          r.stdout + r.stderr)
+
+    # audio_tools: быстрый DTMF 50 мс тон / 50 мс пауза в белом шуме,
+    # с повторами цифр (#62)
+    import random
+    _rnd = random.Random(62)
+    fast = "1123581321345589"
+    pfast = os.path.join(tmp, "dtmf_fast.wav")
+    _wav(pfast, [v + _rnd.gauss(0, 4000) for v in _dtmf(fast, 8000, 0.05, 0.05, 8000)],
+         8000, 2)
+    r = run("stego/audio_tools.py", pfast, "--mode", "dtmf")
+    check("stego/audio_tools.py dtmf fast+noise", f"DTMF: {fast}\n" in r.stdout,
+          r.stdout + r.stderr)
+
+    # audio_tools: морзе только из тире — точку нельзя брать из длины тонов (#63)
+    def _morse(text, rate=22050, dot_s=0.08):
+        table = {"M": "--", "O": "---", "T": "-"}
+        dot = int(rate * dot_s)
+        out = []
+        for ch in text:
+            for sym in table[ch]:
+                out += [6000 * math.sin(2 * math.pi * 700 * i / rate)
+                        for i in range(dot if sym == "." else dot * 3)]
+                out += [0.0] * dot
+            out += [0.0] * (dot * 2)
+        return out
+
+    for word in ("MOO", "TTT"):
+        pm = os.path.join(tmp, f"morse_{word}.wav")
+        _wav(pm, _morse(word), 22050, 2)
+        r = run("stego/audio_tools.py", pm, "--mode", "morse", "--raw")
+        check(f"stego/audio_tools.py morse dashes {word}", f"MORSE: {word}\n" in r.stdout,
+              r.stdout + r.stderr)
+
+    # qr_scan: два QR на одной картинке и прозрачный фон (#64)
+    try:
+        import cv2
+        import numpy as np
+
+        def _qr(text):
+            q = cv2.QRCodeEncoder_create().encode(text)
+            if isinstance(q, tuple):
+                q = q[0]
+            return cv2.resize(q, None, fx=6, fy=6, interpolation=cv2.INTER_NEAREST)
+
+        qa, qb, qc = _qr("CTF{qr_left}"), _qr("CTF{qr_right}"), _qr("CTF{qr_alpha}")
+    except Exception as e:
+        qa = None
+        print(f"[SKIP] stego/qr_scan.py multi/alpha: нет генератора QR в cv2 ({e})")
+    if qa is not None:
+        two = np.full((max(qa.shape[0], qb.shape[0]) + 40,
+                       qa.shape[1] + qb.shape[1] + 80), 255, np.uint8)
+        two[20:20 + qa.shape[0], 20:20 + qa.shape[1]] = qa
+        two[20:20 + qb.shape[0], 60 + qa.shape[1]:60 + qa.shape[1] + qb.shape[1]] = qb
+        p_two = os.path.join(tmp, "qr_two.png")
+        Image.fromarray(two).save(p_two)
+        r = run("stego/qr_scan.py", p_two)
+        check("stego/qr_scan.py two codes",
+              "CTF{qr_left}" in r.stdout and "CTF{qr_right}" in r.stdout,
+              r.stdout + r.stderr)
+        # тёмные модули непрозрачные, фон прозрачный (RGB под ним = 0)
+        rgba = np.zeros((qc.shape[0], qc.shape[1], 4), np.uint8)
+        rgba[:, :, 3] = np.where(qc < 128, 255, 0)
+        p_alpha = os.path.join(tmp, "qr_alpha.png")
+        Image.fromarray(rgba, "RGBA").save(p_alpha)
+        r = run("stego/qr_scan.py", p_alpha)
+        check("stego/qr_scan.py transparent bg", "CTF{qr_alpha}" in r.stdout,
+              r.stdout + r.stderr)
+
+    # ooxml: --strings печатает строки из всех частей, не только media (#66)
+    p_docx = os.path.join(tmp, "strings.docx")
+    with zipfile.ZipFile(p_docx, "w") as z:
+        z.writestr("word/document.xml",
+                   '<?xml version="1.0" encoding="UTF-8"?><w:document><w:body><w:p>'
+                   '<w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden_part_text</w:t></w:r>'
+                   '</w:p></w:body></w:document>')
+        z.writestr("docProps/core.xml",
+                   "<cp:coreProperties><dc:subject>subject_part_text</dc:subject>"
+                   "</cp:coreProperties>")
+        z.writestr("customXml/item1.bin", b"\x00\x01binary_part_text\x02")
+    r = run("stego/ooxml.py", p_docx, "--strings")
+    marks = ("hidden_part_text", "subject_part_text", "binary_part_text")
+    check("stego/ooxml.py --strings", all(m in r.stdout for m in marks),
+          r.stdout[-800:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
@@ -2577,6 +2710,7 @@ def main():
     checks_disk_image(tmp)
     checks_prng(tmp)
     checks_forensics(tmp)
+    checks_stego_audio(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

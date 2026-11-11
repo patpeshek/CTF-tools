@@ -205,6 +205,31 @@ def checks_forensics(tmp):
                                       "CTF{exif_usercomment}", "CTF{exif_jpeg_com}",
                                       "55.75")), r.stdout[-800:] + r.stderr)
 
+    # #71 office_docs: сырой поиск по PDF без pypdf (импорт блокируется
+    # через sitecustomize на PYTHONPATH, даже если pypdf установлен)
+    nopypdf = os.path.join(base, "nopypdf")
+    os.makedirs(nopypdf)
+    open(os.path.join(nopypdf, "sitecustomize.py"), "w").write(
+        "import sys\n"
+        "class _NoPypdf:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'pypdf' or name.startswith('pypdf.'):\n"
+        "            raise ImportError('pypdf blocked by selftest')\n"
+        "sys.meta_path.insert(0, _NoPypdf())\n")
+    import zlib as _zlib
+    _flate = _zlib.compress(b"BT /F1 12 Tf (CTF{pdf_flate_search}) Tj ET")
+    pdfp = os.path.join(base, "doc.pdf")
+    open(pdfp, "wb").write(
+        b"%PDF-1.4\n1 0 obj << /Type /Catalog /OpenAction 3 0 R >> endobj\n"
+        b"2 0 obj << /Length 32 >> stream\nBT (CTF{pdf_raw_search}) Tj ET\nendstream endobj\n"
+        b"3 0 obj << /S /JavaScript /JS (app.alert(1)) >> endobj\n"
+        b"4 0 obj << /Filter /FlateDecode >> stream\n" + _flate
+        + b"\nendstream endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n")
+    r = run("forensic/office_docs.py", pdfp, env={"PYTHONPATH": nopypdf})
+    check("office_docs pdf without pypdf (#71)",
+          "CTF{pdf_raw_search}" in r.stdout and "CTF{pdf_flate_search}" in r.stdout
+          and "/JavaScript" in r.stdout, r.stdout[-800:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import zipfile
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common  # noqa: E402
@@ -62,11 +63,52 @@ def ooxml(path, out):
     return info
 
 
+def pdf_raw(raw, info):
+    """Сырой поиск по байтам PDF — работает без pypdf. FlateDecode-потоки
+    распаковываем zlib-ом: текст страниц почти всегда сжат."""
+    if b"/JavaScript" in raw or b"/JS" in raw:
+        info["js"].append("найден /JavaScript или /JS")
+    if b"/EmbeddedFiles" in raw:
+        info["embedded"].append("найден /EmbeddedFiles")
+    for key in (b"/OpenAction", b"/Launch"):
+        if key in raw:
+            info["open_action"].append(f"найден {key.decode()}")
+    blobs, pos = [raw], 0
+    while len(blobs) <= 5000:
+        s = raw.find(b"stream", pos)
+        e = raw.find(b"endstream", s + 6) if s >= 0 else -1
+        if e < 0:
+            break
+        body, pos = raw[s + 6:e], e + 9
+        body = body[2:] if body[:2] == b"\r\n" else body[1:] if body[:1] in b"\r\n" else body
+        try:
+            blobs.append(zlib.decompressobj().decompress(body, 20_000_000))
+        except zlib.error:
+            pass
+    for b in blobs:
+        info["urls"] += [m.group().decode("latin-1") for m in URL.finditer(b)]
+        info["flags"] += common.find_flags(b)
+
+
 def pdf_info(path, out):
     info = {"file": path, "type": "pdf", "js": [], "open_action": [], "embedded": [],
             "urls": [], "flags": []}
     try:
+        raw = open(path, "rb").read(50_000_000)
+    except OSError as e:
+        info["error"] = str(e)
+        return info
+    pdf_raw(raw, info)
+    info["urls"] = sorted(set(info["urls"]))[:30]
+    if out:
+        os.makedirs(out, exist_ok=True)
+        open(os.path.join(out, "raw.pdf"), "wb").write(raw)
+    try:
         from pypdf import PdfReader
+    except ImportError:
+        info["note"] = "нет pypdf — только сырой поиск (pip install pypdf)"
+        return info
+    try:
         r = PdfReader(path)
         info["pages"] = len(r.pages)
         root = r.trailer.get("/Root", {})
@@ -87,19 +129,7 @@ def pdf_info(path, out):
             text = page.extract_text() or ""
             for f in common.find_flags(text.encode("utf-8", "replace")):
                 info["flags"].append(f)
-        # сырой поиск JS/embedded
-        raw = open(path, "rb").read(50_000_000)
-        if b"/JavaScript" in raw or b"/JS" in raw:
-            info["js"].append("найден /JavaScript или /JS")
-        if b"/EmbeddedFiles" in raw:
-            info["embedded"].append("найден /EmbeddedFiles")
-        info["urls"] += [m.group().decode("latin-1") for m in URL.finditer(raw)]
         info["urls"] = sorted(set(info["urls"]))[:30]
-        for f in common.find_flags(raw):
-            info["flags"].append(f)
-        if out:
-            os.makedirs(out, exist_ok=True)
-            open(os.path.join(out, "raw.pdf"), "wb").write(raw)
     except Exception as e:
         info["error"] = str(e)
     return info

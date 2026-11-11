@@ -1128,6 +1128,278 @@ def checks_admin(tmp):
           r.stdout[-700:] + r.stderr[-300:])
     r = run("solve.py", dump, "--plan")
     check("solve.py admin dir plan", "admin " in r.stdout, r.stdout[-700:] + r.stderr[-300:])
+def checks_stego_img(tmp):
+    """Регрессии stego: LSB-каналы, эзотерика, carve/jpeg_tail, png_chunks,
+    враждебный ввод (Deadfish, bitmap_font)."""
+
+    # lsb: классический R,G,B,R,G,B… (без альфы) находится без опций
+    def _rgb_lsb_png(path, msg, mode):
+        im = Image.new(mode, (64, 16), (100, 150, 200, 255)[:len(mode)])
+        px = im.load()
+        bits = [(b >> (7 - i)) & 1 for b in msg for i in range(8)]
+        k = 0
+        for y in range(im.height):
+            for x in range(im.width):
+                p = list(px[x, y])
+                for c in range(3):
+                    if k < len(bits):
+                        p[c] = (p[c] & 0xFE) | bits[k]
+                        k += 1
+                px[x, y] = tuple(p)
+        im.save(path)
+
+    for mode in ("RGB", "RGBA"):
+        want = "CTF{rgb_lsb_" + mode.lower() + "}"
+        p = os.path.join(tmp, f"rgb_lsb_{mode}.png")
+        _rgb_lsb_png(p, want.encode(), mode)
+        r = run("stego/lsb.py", p)
+        check(f"lsb rgb sequence {mode}", want in r.stdout, r.stdout[:500] + r.stderr)
+
+    # esolang: Hello World на Ook! и COW — переводим Brainfuck по спецификациям
+    bf_hello = ("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---."
+                "+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.")
+    ook_of = {">": "Ook. Ook?", "<": "Ook? Ook.", "+": "Ook. Ook.", "-": "Ook! Ook!",
+              ".": "Ook! Ook.", ",": "Ook. Ook!", "[": "Ook! Ook?", "]": "Ook? Ook!"}
+    cow_of = {">": "moO", "<": "mOo", "+": "MoO", "-": "MOo",
+              ".": "Moo", "[": "MOO", "]": "moo"}
+    for lang, table in (("ook", ook_of), ("cow", cow_of)):
+        p = os.path.join(tmp, f"hello.{lang}")
+        with open(p, "w") as f:
+            f.write("\n".join(table[c] for c in bf_hello))
+        r = run("stego/esolang.py", p)
+        check(f"esolang {lang} hello world",
+              f"похоже на: {lang}" in r.stdout and "Hello World!" in r.stdout,
+              r.stdout[-400:] + r.stderr)
+    # COW без аналогов в BF: MMM (регистр), OOM/oom (числа), OOO (обнуление)
+    p = os.path.join(tmp, "ops.cow")
+    with open(p, "w") as f:
+        f.write("MoO " * 5 + "MMM moO MMM OOM OOO OOM oom OOM")
+    r = run("stego/esolang.py", p, "--input", "-42\n")
+    check("esolang cow MMM/OOM/oom", "'5\\n0\\n-42\\n'" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    # whitespace: куча, цикл, call/ret, арифметика и ввод — по спецификации
+    S, T, L = " ", "\t", "\n"
+
+    def _num(v):
+        return (S if v >= 0 else T) + "".join(T if b == "1" else S
+                                              for b in bin(abs(v))[2:]) + L
+
+    def _lab(s):
+        return "".join(T if b == "1" else S for b in s) + L
+
+    def push(v):
+        return S + S + _num(v)
+
+    dup, discard, swap = S + L + S, S + L + L, S + L + T
+    add, sub, mod = T + S + S + S, T + S + S + T, T + S + T + T
+    store, retrieve = T + T + S, T + T + T
+    outc, outn, readc = T + L + S + S, T + L + S + T, T + L + T + S
+
+    def mark(lb):
+        return L + S + S + _lab(lb)
+
+    def call(lb):
+        return L + S + T + _lab(lb)
+
+    def jump(lb):
+        return L + S + L + _lab(lb)
+
+    def jz(lb):
+        return L + T + S + _lab(lb)
+
+    ws_text = "CTF{ws_heap_loop}"
+    prog = ""
+    for k, ch in enumerate(ws_text + "\0"):          # строка в куче с адреса 100
+        prog += push(100 + k) + push(ord(ch)) + store
+    prog += push(100) + call("1") + push(7) + push(-3) + swap + sub + outn
+    prog += push(17) + push(5) + mod + outn + push(0) + readc
+    prog += push(0) + retrieve + outc + L + L + L
+    # подпрограмма: печатать кучу с адреса на стеке до нуля
+    prog += mark("1") + mark("10") + dup + retrieve + dup + jz("11")
+    prog += outc + push(1) + add + jump("10") + mark("11") + discard + discard + L + T + L
+    wsp = os.path.join(tmp, "heap_loop.ws")
+    with open(wsp, "w", newline="") as f:
+        f.write(prog)
+    r = run("stego/whitespace.py", wsp, "--input", "!")       # без --mode: auto
+    check("whitespace heap/loop/call", ws_text + "-102!" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # carve: PCAP режется по записям, голые сигнатуры не плодят гигабайты
+    def _dir_size(d):
+        return sum(os.path.getsize(os.path.join(d, f)) for f in os.listdir(d)) \
+            if os.path.isdir(d) else 0
+
+    spam = os.path.join(tmp, "pcap_spam.bin")
+    with open(spam, "wb") as f:
+        f.write(b"HEAD" + b"\xd4\xc3\xb2\xa1" * 5000 + b"\x0a\x0d\x0d\x0a" * 500)
+    out = os.path.join(tmp, "carve_spam")
+    r = run("stego/carve.py", spam, "--out", out)
+    check("carve pcap signature spam bounded",
+          _dir_size(out) <= 2 * os.path.getsize(spam),
+          f"carved {_dir_size(out)} bytes\n" + r.stdout[-300:] + r.stderr)
+
+    pcap = struct.pack("<IHHiIII", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1)
+    for k, payload in enumerate([b"A" * 60, b"CTF{pcap_records}" + b"B" * 30]):
+        pcap += struct.pack("<IIII", 1000 + k, 0, len(payload), len(payload)) + payload
+    host = os.path.join(tmp, "host_pcap.bin")
+    with open(host, "wb") as f:
+        f.write(b"JUNK" * 10 + pcap + b"\xff" * 5000)
+    out = os.path.join(tmp, "carve_pcap")
+    r = run("stego/carve.py", host, "--out", out)
+    got = [f for f in os.listdir(out) if f.endswith(".pcap")] if os.path.isdir(out) else []
+    check("carve pcap by records",
+          len(got) == 1 and open(os.path.join(out, got[0]), "rb").read() == pcap,
+          r.stdout[-400:] + r.stderr)
+
+    # jpeg_tail: конец JPEG по маркерам, а не последнее FF D9
+    def _jpg(color, size=(16, 16)):
+        b = io.BytesIO()
+        Image.new("RGB", size, color).save(b, "JPEG")
+        return b.getvalue()
+
+    zb = io.BytesIO()
+    with zipfile.ZipFile(zb, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("ffd9.bin", b"AA\xff\xd9BB" + b"CTF{jpeg_tail_zip}")
+    zip_ffd9 = zb.getvalue()
+    first = _jpg((1, 2, 3))
+    p = os.path.join(tmp, "jpeg_jpeg.jpg")
+    with open(p, "wb") as f:
+        f.write(first + _jpg((200, 9, 9)))
+    r = run("stego/jpeg_tail.py", p)
+    check("jpeg_tail jpeg+jpeg",
+          f"на смещении: {len(first)}" in r.stdout and ".jpg" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+    p = os.path.join(tmp, "jpeg_zip_ffd9.jpg")
+    with open(p, "wb") as f:
+        f.write(first + zip_ffd9)
+    out = os.path.join(tmp, "jpeg_zip_out")
+    r = run("stego/jpeg_tail.py", p, "--extract", out)
+    check("jpeg_tail zip with ffd9", os.path.exists(os.path.join(out, "ffd9.bin")),
+          r.stdout[-400:] + r.stderr)
+    # два скана, FF00/RST/FF-заполнитель в данных, COM с FFD9 между сканами
+    sos = b"\xff\xda" + (8).to_bytes(2, "big") + b"\x01\x01\x00\x00\x3f\x00"
+    com = b"\xff\xfe" + (6).to_bytes(2, "big") + b"\xff\xd9\xff\xd9"
+    scans = (b"\xff\xd8" + sos + b"\x12\xff\x00\x34\xff\xd0\x56\xff\xff\x00"
+             + com + sos + b"\x77\xff\x00" + b"\xff\xd9")
+    p = os.path.join(tmp, "jpeg_scans.jpg")
+    with open(p, "wb") as f:
+        f.write(scans + zip_ffd9)
+    r = run("stego/jpeg_tail.py", p)
+    check("jpeg_tail scans/RST/FF00",
+          f"на смещении: {len(scans)}" in r.stdout and ".zip" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    # png_chunks --fix: высоту уменьшили, CRC IHDR оставили — размер из CRC
+    im = Image.new("RGB", (37, 23), (0, 0, 0))
+    for x in range(37):
+        im.putpixel((x, 22), (255, 255, 255))
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    raw = bytearray(b.getvalue())
+    raw[20:24] = struct.pack(">I", 10)            # IHDR height, CRC прежний
+    p = os.path.join(tmp, "ihdr_short.png")
+    with open(p, "wb") as f:
+        f.write(raw)
+    fixed = os.path.join(tmp, "ihdr_fixed.png")
+    r = run("stego/png_chunks.py", p, "--fix", fixed)
+    try:
+        with Image.open(fixed) as im2:
+            im2.load()
+            size = im2.size
+    except Exception as e:
+        size = repr(e)
+    check("png_chunks --fix dims from crc", size == (37, 23),
+          f"size={size}\n" + r.stdout[-400:] + r.stderr)
+
+    # png_chunks: zTXt-бомба распаковывается с пределом, короткий IHDR не падает
+    import contextlib
+    import importlib.util
+    import tracemalloc
+    import zlib
+
+    def _chunk(t, d):
+        return (struct.pack(">I", len(d)) + t + d
+                + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF))
+
+    png_sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    comp = zlib.compressobj(9)                    # 150 МБ нулей -> ~150 КБ
+    bomb = comp.compress(b"CTF{ztxt_bomb}")
+    zeros = b"\x00" * (1 << 20)
+    for _ in range(150):
+        bomb += comp.compress(zeros)
+    bomb += comp.flush()
+    p = os.path.join(tmp, "ztxt_bomb.png")
+    with open(p, "wb") as f:
+        f.write(png_sig + _chunk(b"IHDR", ihdr) + _chunk(b"zTXt", b"k\x00\x00" + bomb)
+                + _chunk(b"IDAT", zlib.compress(b"\x00" * 4)) + _chunk(b"IEND", b""))
+    spec = importlib.util.spec_from_file_location(
+        "png_chunks_selftest", os.path.join(KIT, "stego", "png_chunks.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    buf = io.StringIO()
+    old_argv = sys.argv
+    sys.argv = ["png_chunks.py", p]
+    tracemalloc.start()
+    try:
+        with contextlib.redirect_stdout(buf):
+            mod.main()
+        peak = tracemalloc.get_traced_memory()[1]
+    except Exception as e:
+        peak = None
+        buf.write(repr(e))
+    finally:
+        tracemalloc.stop()
+        sys.argv = old_argv
+    check("png_chunks ztxt bomb limited",
+          peak is not None and peak < 64 << 20 and "CTF{ztxt_bomb}" in buf.getvalue(),
+          f"peak={peak}\n" + buf.getvalue()[-300:])
+    bad = []
+    for n in (8, 9, 12):
+        p = os.path.join(tmp, f"ihdr_{n}.png")
+        with open(p, "wb") as f:
+            f.write(png_sig + _chunk(b"IHDR", ihdr[:n]) + _chunk(b"IEND", b""))
+        r = run("stego/png_chunks.py", p)
+        if "Traceback" in r.stderr or r.returncode != 0:
+            bad.append(f"{n}: {r.stderr[-200:]}")
+    check("png_chunks short IHDR", not bad, "\n".join(bad))
+
+    # враждебный ввод: время работы ограничено (без предела — зависание)
+    def _run_limited(rel, *args, timeout=60):
+        try:
+            return subprocess.run([PY, os.path.join(KIT, rel), *map(str, args)],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", env=ENV, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+
+    p = os.path.join(tmp, "deadfish_huge.txt")
+    with open(p, "w") as f:
+        f.write("iiisdo" + "s" * 40 + "o")          # 8, затем 8^(2^40)
+    r = _run_limited("stego/esolang.py", p, "--lang", "deadfish", timeout=20)
+    check("esolang deadfish huge numbers bounded",
+          r is not None and "out: '8" in r.stdout,
+          "timeout" if r is None else r.stdout[-300:] + r.stderr[-300:])
+
+    rows = [".####", "#....", "#....", "#....", ".####"]
+    glyph_c = "".join(f"{x},{y}\n" for y, row in enumerate(rows)
+                      for x, ch in enumerate(row) if ch == "#")
+    bad = []
+    # далёкая точка (раньше холст 20000001x5 — сотни МБ и секунды) и
+    # совсем огромные/inf координаты (раньше OverflowError)
+    for tag, extra in (("far", "20000000,2\n"),
+                       ("huge", f"{10 ** 30},0\n1e400,0\n0,1e300\n")):
+        p = os.path.join(tmp, f"bitmap_{tag}.csv")
+        with open(p, "w") as f:
+            f.write("x,y\n" + glyph_c + extra)
+        r = _run_limited("stego/bitmap_font.py", p, "--decode", timeout=60)
+        if r is None:
+            bad.append(f"{tag}: timeout")
+        elif not ("холст: 9x" in r.stdout and "decode: C" in r.stdout
+                  and "Traceback" not in r.stderr):
+            bad.append(f"{tag}: " + r.stdout[-300:] + r.stderr[-300:])
+    check("bitmap_font huge coordinates", not bad, "\n".join(bad))
 
 
 def main():
@@ -1861,7 +2133,7 @@ def main():
         return "  " + sign + "".join("\t" if b == "1" else " " for b in bits) + "\n"
 
     def ws_out():
-        return "\t\t  "
+        return "\t\n  "     # IMP [Tab][LF] (I/O) + [Space][Space] = outchar
 
     ws_flag = "CTF{ws}"
     wsp = os.path.join(tmp, "w.ws")
@@ -3017,6 +3289,7 @@ def main():
     checks_stego_audio(tmp)
     checks_reverse(tmp)
     checks_admin(tmp)
+    checks_stego_img(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

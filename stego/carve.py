@@ -18,6 +18,11 @@ except Exception:
 
 import argparse
 import os
+import struct
+
+# предохранители: сигнатуры легко размножить, а solve зовёт carve сам
+MAX_FILES = 1000                    # вырезанных файлов за запуск
+MAX_TOTAL_MIN = 16 << 20            # всего на диск: max(16 МБ, 4 x размер входа)
 
 SIGS = [
     (b"\x89PNG\r\n\x1a\n", ".png", "PNG"),
@@ -115,9 +120,28 @@ def gif_end(data: bytes, pos: int) -> int:
     return -1
 
 
+def _jpeg_entropy_end(data: bytes, i: int) -> int:
+    """Энтропийные данные после заголовка SOS идут до первого настоящего
+    маркера: FF00 — байт-стаффинг, FFD0..FFD7 — RSTn, FFFF — заполнитель.
+    Возвращает смещение FF этого маркера (EOI, DHT/SOS прогрессивного JPEG…)."""
+    n = len(data)
+    while True:
+        j = data.find(b"\xff", i)
+        if j == -1 or j + 1 >= n:
+            return -1
+        nxt = data[j + 1]
+        if nxt == 0x00 or 0xD0 <= nxt <= 0xD7:
+            i = j + 2
+        elif nxt == 0xFF:
+            i = j + 1
+        else:
+            return j
+
+
 def jpeg_end(data: bytes, pos: int) -> int:
-    """Конец JPEG по сегментам: EXIF-миниатюра внутри APP1 содержит свой
-    FFD9, поэтому поиск «первого FFD9» обрезает картинку."""
+    """Конец JPEG по маркерам: сегменты по длинам (EXIF-миниатюра в APP1
+    со своим FFD9 пропускается), после SOS — энтропийные данные до
+    настоящего маркера; сканов может быть несколько (progressive)."""
     n = len(data)
     if data[pos:pos + 2] != b"\xff\xd8":
         return -1
@@ -144,11 +168,70 @@ def jpeg_end(data: bytes, pos: int) -> int:
         if seg_len < 2:
             return -1
         if marker == 0xDA:                  # SOS: дальше энтропийные данные
-            start = i + seg_len
-            eoi = data.find(b"\xff\xd9", start)
-            return eoi + 2 if eoi != -1 else -1
+            i = _jpeg_entropy_end(data, i + seg_len)
+            if i == -1:
+                return -1
+            continue                        # стоим на FF следующего маркера
         i += seg_len
     return -1
+
+
+def pcap_end(data: bytes, pos: int) -> int:
+    """Конец PCAP по записям: 24 байта заголовка, затем записи 16 + incl_len.
+
+    -1 — заголовок не похож на pcap (4 байта magic сами по себе ничего не
+    значат). Записи читаются, пока длина правдоподобна и влезает в файл.
+    """
+    n = len(data)
+    if pos + 24 > n:
+        return -1
+    magic = data[pos:pos + 4]
+    if magic == b"\xd4\xc3\xb2\xa1":
+        e = "<"
+    elif magic == b"\xa1\xb2\xc3\xd4":
+        e = ">"
+    else:
+        return -1
+    major, minor, _zone, _sigfigs, snaplen, _link = struct.unpack(
+        e + "HHiIII", data[pos + 4:pos + 24])
+    if major != 2 or minor > 4:
+        return -1
+    limit = max(snaplen, 262144)
+    i = pos + 24
+    while i + 16 <= n:
+        incl = struct.unpack(e + "I", data[i + 8:i + 12])[0]
+        if incl > limit or i + 16 + incl > n:
+            break
+        i += 16 + incl
+    return i
+
+
+def pcapng_end(data: bytes, pos: int) -> int:
+    """Конец PCAPNG по блокам: тип, длина, тело, та же длина в конце.
+
+    Первый блок обязан быть Section Header с magic порядка байт, иначе -1.
+    """
+    n = len(data)
+    i = pos
+    e = None
+    while i + 12 <= n:
+        if data[i:i + 4] == b"\x0a\x0d\x0d\x0a":         # Section Header Block
+            bom = data[i + 8:i + 12]
+            if bom == b"\x4d\x3c\x2b\x1a":
+                e = "<"
+            elif bom == b"\x1a\x2b\x3c\x4d":
+                e = ">"
+            else:
+                break
+        elif e is None:
+            break
+        blen = struct.unpack(e + "I", data[i + 4:i + 8])[0]
+        if blen < 12 or blen % 4 or i + blen > n:
+            break
+        if data[i + blen - 4:i + blen] != data[i + 4:i + 8]:
+            break
+        i += blen
+    return i if i > pos else -1
 
 
 def _tar_checksum_ok(data: bytes, start: int) -> bool:
@@ -203,8 +286,11 @@ def extent(data: bytes, found, i: int) -> int:
         print(f"[!] ZIP на {pos}: не нашёл EOCD, режу по следующей сигнатуре")
     if ext in (".pcapng", ".pcap"):
         # pcap — внешний контейнер: внутри него свои сигнатуры (картинки,
-        # exe в HTTP-трафике), резать по ним нельзя.
-        return len(data)
+        # exe в HTTP-трафике), резать по ним нельзя. Конец — по записям,
+        # а не «до конца файла»: иначе каждая сигнатура тянет весь хвост.
+        end = (pcap_end if ext == ".pcap" else pcapng_end)(data, pos)
+        if end != -1:
+            return end
     if ext == ".png":
         iend = data.find(b"IEND", pos)
         if iend != -1 and iend + 8 <= len(data):
@@ -253,6 +339,11 @@ def main():
                     start = sigpos + 1
                     continue
                 pos = begin
+            elif ext in (".pcap", ".pcapng") and sigpos > 0 and \
+                    (pcap_end if ext == ".pcap" else pcapng_end)(data, sigpos) == -1:
+                # голые 4 байта magic / "\n\r\r\n" без заголовка — не вложение
+                start = sigpos + 1
+                continue
             found.append((pos, ext, name, sig))
             start = sigpos + 1
 
@@ -263,18 +354,28 @@ def main():
         print("[-] сигнатур не найдено")
         return
 
+    ends = [extent(data, found, i) for i in range(len(found))]
     print(f"[+] найдено вложений: {len(found)}")
     for i, (pos, ext, name, sig) in enumerate(found):
-        end = extent(data, found, i)
-        print(f"  {i:2d}. {name:16s} offset={pos:<10d} len={end - pos:<10d} -> *{ext}")
+        print(f"  {i:2d}. {name:16s} offset={pos:<10d} len={ends[i] - pos:<10d} -> *{ext}")
 
     if args.out:
         os.makedirs(args.out, exist_ok=True)
+        budget = max(MAX_TOTAL_MIN, 4 * len(data))
+        written = files = skipped = 0
         for i, (pos, ext, name, sig) in enumerate(found):
-            end = extent(data, found, i)
+            end = ends[i]
+            if files >= MAX_FILES or written + (end - pos) > budget:
+                skipped += 1
+                continue
             path = os.path.join(args.out, f"{i:02d}_{name.replace(' ', '_').replace('/', '_')}{ext}")
             open(path, "wb").write(data[pos:end])
+            written += end - pos
+            files += 1
             print(f"[+] {path}")
+        if skipped:
+            print(f"[!] лимит (до {MAX_FILES} файлов, до {budget} байт): "
+                  f"не записано вложений: {skipped} (см. список выше)")
 
         # если это ZIP — покажем содержимое и попробуем открыть
         import zipfile

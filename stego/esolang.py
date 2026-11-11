@@ -81,16 +81,23 @@ OOK = {
     ("Ook.", "Ook?"): ">",
     ("Ook?", "Ook."): "<",
     ("Ook.", "Ook."): "+",
-    ("Ook?", "Ook?"): "-",
-    ("Ook!", "Ook!"): ".",
+    ("Ook!", "Ook!"): "-",
+    ("Ook!", "Ook."): ".",
     ("Ook.", "Ook!"): ",",
-    ("Ook!", "Ook."): "[",
+    ("Ook!", "Ook?"): "[",
     ("Ook?", "Ook!"): "]",
 }
 
+# COW: код инструкции = индекс в списке (спецификация языка)
+COW_OPS = ["moo", "mOo", "moO", "mOO", "Moo", "MOo",
+           "MoO", "MOO", "OOO", "MMM", "OOM", "oom"]
+COW_RE = re.compile("|".join(COW_OPS))
+
+# только то, что выражается в Brainfuck (для быстрых проверок вроде megaall);
+# полноценное исполнение — run_cow()
 COW = {
-    "MoO": ">", "MOo": "<", "moO": "+", "mOo": "-",
-    "Moo": ".", "moo": ",", "OOO": "[", "MMM": "]",
+    "moO": ">", "mOo": "<", "MoO": "+", "MOo": "-",
+    "Moo": ".", "MOO": "[", "moo": "]", "OOO": "[-]",
 }
 
 
@@ -103,8 +110,106 @@ def ook_to_bf(text: str) -> str:
 
 
 def cow_to_bf(text: str) -> str:
-    toks = re.findall(r"MoO|MOo|moO|mOo|Moo|moo|OOO|MMM", text)
-    return "".join(COW.get(t, "") for t in toks)
+    return "".join(COW.get(t, "") for t in COW_RE.findall(text))
+
+
+def run_cow(code: str, inp: str = "", max_steps=5_000_000):
+    """Интерпретатор COW по спецификации:
+    0 moo  — конец цикла (назад к парному MOO)
+    1 mOo  — ptr--          2 moO — ptr++
+    3 mOO  — выполнить значение ячейки как инструкцию (3 = выход)
+    4 Moo  — ячейка 0: прочитать символ, иначе напечатать символ
+    5 MOo  — ячейка--       6 MoO — ячейка++
+    7 MOO  — начало цикла: ячейка 0 → за парный moo
+    8 OOO  — ячейка = 0     9 MMM — регистр: взять/положить
+    10 OOM — напечатать число   11 oom — прочитать число
+    """
+    prog = [COW_OPS.index(t) for t in COW_RE.findall(code)]
+    n = len(prog)
+    jump = {}
+    st = []
+    for i, op in enumerate(prog):
+        if op == 7:
+            st.append(i)
+        elif op == 0:
+            if not st:
+                raise ValueError("moo без парного MOO")
+            j = st.pop()
+            jump[i], jump[j] = j, i
+    if st:
+        raise ValueError("MOO без парного moo")
+
+    def match(pc, op):
+        # для MOO/moo, вызванных через mOO, — парная скобка ищется на месте
+        if pc in jump and prog[pc] == op:
+            return jump[pc]
+        step, open_, close = (1, 7, 0) if op == 7 else (-1, 0, 7)
+        depth, k = 0, pc + step
+        while 0 <= k < n:
+            if prog[k] == close:
+                if depth == 0:
+                    return k
+                depth -= 1
+            elif prog[k] == open_:
+                depth += 1
+            k += step
+        return n if op == 7 else -1
+
+    mem = [0]
+    ptr = pc = steps = ipos = 0
+    reg = None
+    out = []
+    while pc < n and steps < max_steps:
+        steps += 1
+        op = prog[pc]
+        if op == 3:                      # mOO: выполнить ячейку как инструкцию
+            op = mem[ptr]
+            if op == 3 or not 0 <= op < len(COW_OPS):
+                break
+        if op == 0:                      # moo
+            if mem[ptr] != 0:
+                j = match(pc, 0)
+                if j < 0:
+                    break
+                pc = j
+        elif op == 1:
+            if ptr == 0:
+                break
+            ptr -= 1
+        elif op == 2:
+            ptr += 1
+            if ptr == len(mem):
+                mem.append(0)
+        elif op == 4:
+            if mem[ptr] != 0:
+                out.append(chr(mem[ptr] & 0xFF))
+            else:
+                mem[ptr] = ord(inp[ipos]) if ipos < len(inp) else 0
+                ipos += 1
+        elif op == 5:
+            mem[ptr] -= 1
+        elif op == 6:
+            mem[ptr] += 1
+        elif op == 7:                    # MOO
+            if mem[ptr] == 0:
+                pc = match(pc, 7)
+        elif op == 8:
+            mem[ptr] = 0
+        elif op == 9:
+            if reg is None:
+                reg = mem[ptr]
+            else:
+                mem[ptr], reg = reg, None
+        elif op == 10:
+            out.append(f"{mem[ptr]}\n")
+        elif op == 11:
+            end = inp.find("\n", ipos)
+            end = len(inp) if end == -1 else end
+            m = re.match(r"\s*([+-]?\d+)", inp[ipos:end])
+            mem[ptr] = int(m.group(1)) if m else 0
+            ipos = end + 1
+        pc += 1
+    return "".join(out), steps
 
 
 # ---------------- Befunge-93 ----------------
@@ -207,21 +312,39 @@ def run_befunge(code: str, inp: str = "", max_steps=2_000_000):
 
 # ---------------- Deadfish ----------------
 
-def run_deadfish(code: str, max_steps=1_000_000):
+DEADFISH_MAX_BITS = 4096    # ~1233 цифры; дальше каждое s удваивает длину числа
+
+
+def run_deadfish(code: str, max_steps=1_000_000, max_bits=DEADFISH_MAX_BITS):
+    """Deadfish: i/d/s/o, 256 и -1 сбрасываются в 0.
+
+    Ограничены и шаги, и размер числа: без предела десяток-другой s подряд
+    растит число как 2^(2^k), и одно умножение длится дольше любого таймаута.
+    """
     acc = 0
     out = []
+    steps = 0
     for c in code:
+        if c not in "idso":
+            continue
+        if steps >= max_steps:
+            break
+        steps += 1
         if c == "i":
             acc += 1
         elif c == "d":
             acc -= 1
         elif c == "s":
             acc *= acc
-        elif c == "o":
+        else:
             out.append(str(acc))
         if acc == 256 or acc == -1:
             acc = 0
-    return " ".join(out), len(code)
+        if acc.bit_length() > max_bits:
+            print(f"[!] deadfish: число больше 2^{max_bits} — дальше не считаю "
+                  f"(шаг {steps})", file=sys.stderr)
+            break
+    return " ".join(out), steps
 
 
 # ---------------- автодетект ----------------
@@ -275,7 +398,7 @@ def main():
         elif lang == "ook":
             out, steps = run_bf(ook_to_bf(text), args.input, args.max_steps)
         elif lang == "cow":
-            out, steps = run_bf(cow_to_bf(text), args.input, args.max_steps)
+            out, steps = run_cow(text, args.input, args.max_steps)
         elif lang == "befunge":
             out, steps = run_befunge(text, args.input, args.max_steps)
         elif lang == "deadfish":

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-lsb.py — LSB-стеганография: один канал, несколько бит, разница двух картинок.
+lsb.py — LSB-стеганография: каналы R,G,B подряд, один канал, несколько бит,
+разница двух картинок.
 
 Примеры:
-  python lsb.py pic.png
+  python lsb.py pic.png                  # R,G,B,R,G,B… + RGBA/BGR/каналы по одному
+  python lsb.py pic.png --channel rgba
   python lsb.py pic.png --channel r --bits 2
   python lsb.py two.png --diff one.png --channel r
   python lsb.py pic.png --order msb --offset 100
@@ -29,23 +31,37 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common  # noqa: E402
 
 
+# порядок каналов внутри пикселя (индексы в RGBA)
+SEQS = {"rgb": (0, 1, 2), "rgba": (0, 1, 2, 3), "bgr": (2, 1, 0),
+        "r": (0,), "g": (1,), "b": (2,), "a": (3,)}
+
+
+def load_rgba(path) -> bytes:
+    return Image.open(path).convert("RGBA").tobytes()
+
+
 def bits_from_image(path, channel="all", nbits=1, order="lsb", offset=0):
-    im = Image.open(path).convert("RGBA")
-    px = im.load()
-    ch = {"r": 0, "g": 1, "b": 2, "a": 3}
-    order_idx = [0, 1, 2, 3] if channel == "all" else [ch[channel]]
-    bits = []
-    for y in range(im.height):
-        for x in range(im.width):
-            if offset > 0:
-                offset -= 1
-                continue
-            p = px[x, y]
-            for i in order_idx:
-                v = p[i]
-                for b in range(nbits):
-                    bits.append((v >> (b if order == "lsb" else nbits - 1 - b)) & 1)
-    return bits
+    """Биты по пикселям (row-major), внутри пикселя — каналы в порядке SEQS.
+
+    "all" = классика R,G,B,R,G,B… (альфа не подмешивается); RGBA, BGR и
+    каналы по одному main() пробует отдельно. path — файл или RGBA-байты.
+    Возвращает bytes из 0/1.
+    """
+    raw = path if isinstance(path, (bytes, bytearray)) else load_rgba(path)
+    seq = SEQS["rgb" if channel == "all" else channel]
+    raw = raw[max(0, offset) * 4:]
+    k = len(seq)
+    if k == 4:
+        data = raw
+    elif k == 1:
+        data = raw[seq[0]::4]
+    else:
+        data = bytearray(len(raw) // 4 * k)
+        for j, c in enumerate(seq):
+            data[j::k] = raw[c::4]
+    shifts = range(nbits) if order == "lsb" else range(nbits - 1, -1, -1)
+    table = [bytes((v >> s) & 1 for s in shifts) for v in range(256)]
+    return b"".join(map(table.__getitem__, data))
 
 
 def bits_diff(img_a, img_b, channel="r", nbits=1, order="lsb"):
@@ -66,14 +82,14 @@ def bits_diff(img_a, img_b, channel="r", nbits=1, order="lsb"):
     return bits
 
 
+_TO_ASCII01 = bytes.maketrans(b"\x00\x01", b"01")
+
+
 def bits_to_bytes(bits):
-    out = bytearray()
-    for i in range(0, len(bits) - 7, 8):
-        val = 0
-        for b in bits[i:i + 8]:
-            val = (val << 1) | b
-        out.append(val)
-    return bytes(out)
+    n = len(bits) // 8 * 8
+    if not n:
+        return b""
+    return int(bytes(bits[:n]).translate(_TO_ASCII01), 2).to_bytes(n // 8, "big")
 
 
 def show(data: bytes):
@@ -93,34 +109,41 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
     ap.add_argument("--diff", help="вторая картинка: читать биты там, где канал отличается")
-    ap.add_argument("--channel", default="all", choices=["r", "g", "b", "a", "all"])
+    ap.add_argument("--channel", default="all",
+                    choices=["all", "rgb", "rgba", "bgr", "r", "g", "b", "a"],
+                    help="all = R,G,B подряд + перебор rgba/bgr/r/g/b/a")
     ap.add_argument("--bits", type=int, default=1)
     ap.add_argument("--order", default="lsb", choices=["lsb", "msb"])
     ap.add_argument("--offset", type=int, default=0)
     args = ap.parse_args()
 
+    raw = None
     if args.diff:
-        bits = bits_diff(args.image, args.diff, args.channel if args.channel != "all" else "r",
+        bits = bits_diff(args.image, args.diff,
+                         args.channel if args.channel in ("r", "g", "b", "a") else "r",
                          args.bits, args.order)
     else:
-        bits = bits_from_image(args.image, args.channel, args.bits, args.order, args.offset)
+        raw = load_rgba(args.image)
+        bits = bits_from_image(raw, args.channel, args.bits, args.order, args.offset)
+        if args.channel == "all":
+            print("[i] каналы: R,G,B подряд (rgb)")
 
     data = bits_to_bytes(bits)
     show(data)
 
-    # «все каналы» может размазать данные, если писали в один канал —
-    # пробуем каждый отдельно и показываем только то, что похоже на текст/флаг
-    if args.channel == "all" and not args.diff:
-        for ch in ("r", "g", "b", "a"):
+    # rgb может не совпасть со способом записи (с альфой, BGR, один канал) —
+    # пробуем остальные и показываем только то, что похоже на текст/флаг
+    if args.channel == "all" and raw is not None:
+        for ch in ("rgba", "bgr", "r", "g", "b", "a"):
             try:
-                d = bits_to_bytes(bits_from_image(args.image, ch, args.bits,
+                d = bits_to_bytes(bits_from_image(raw, ch, args.bits,
                                                   args.order, args.offset))
             except Exception:
                 continue
             if not d or d == data:
                 continue
             if common.find_flags(d) or common.printable_ratio(d) > 0.92:
-                print(f"\n[+] канал {ch} даёт читаемый результат:")
+                print(f"\n[+] каналы {ch} дают читаемый результат:")
                 show(d)
 
 

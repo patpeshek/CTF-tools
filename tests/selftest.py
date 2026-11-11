@@ -180,6 +180,41 @@ def checks_stego_audio(tmp):
         check(f"stego/audio_tools.py morse dashes {word}", f"MORSE: {word}\n" in r.stdout,
               r.stdout + r.stderr)
 
+    # qr_scan: два QR на одной картинке и прозрачный фон (#64)
+    try:
+        import cv2
+        import numpy as np
+
+        def _qr(text):
+            q = cv2.QRCodeEncoder_create().encode(text)
+            if isinstance(q, tuple):
+                q = q[0]
+            return cv2.resize(q, None, fx=6, fy=6, interpolation=cv2.INTER_NEAREST)
+
+        qa, qb, qc = _qr("CTF{qr_left}"), _qr("CTF{qr_right}"), _qr("CTF{qr_alpha}")
+    except Exception as e:
+        qa = None
+        print(f"[SKIP] stego/qr_scan.py multi/alpha: нет генератора QR в cv2 ({e})")
+    if qa is not None:
+        two = np.full((max(qa.shape[0], qb.shape[0]) + 40,
+                       qa.shape[1] + qb.shape[1] + 80), 255, np.uint8)
+        two[20:20 + qa.shape[0], 20:20 + qa.shape[1]] = qa
+        two[20:20 + qb.shape[0], 60 + qa.shape[1]:60 + qa.shape[1] + qb.shape[1]] = qb
+        p_two = os.path.join(tmp, "qr_two.png")
+        Image.fromarray(two).save(p_two)
+        r = run("stego/qr_scan.py", p_two)
+        check("stego/qr_scan.py two codes",
+              "CTF{qr_left}" in r.stdout and "CTF{qr_right}" in r.stdout,
+              r.stdout + r.stderr)
+        # тёмные модули непрозрачные, фон прозрачный (RGB под ним = 0)
+        rgba = np.zeros((qc.shape[0], qc.shape[1], 4), np.uint8)
+        rgba[:, :, 3] = np.where(qc < 128, 255, 0)
+        p_alpha = os.path.join(tmp, "qr_alpha.png")
+        Image.fromarray(rgba, "RGBA").save(p_alpha)
+        r = run("stego/qr_scan.py", p_alpha)
+        check("stego/qr_scan.py transparent bg", "CTF{qr_alpha}" in r.stdout,
+              r.stdout + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

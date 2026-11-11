@@ -230,6 +230,13 @@ def checks_forensics(tmp):
           "CTF{pdf_raw_search}" in r.stdout and "CTF{pdf_flate_search}" in r.stdout
           and "/JavaScript" in r.stdout, r.stdout[-800:] + r.stderr)
 
+    # #72 cloud_creds: печатается значение, а не имя ключа
+    credp = os.path.join(base, "app.conf")
+    open(credp, "w").write("token = FAKE-test-token-0001\n")
+    r = run("forensic/cloud_creds.py", credp)
+    check("cloud_creds prints value (#72)", "FAKE-test-token-0001" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

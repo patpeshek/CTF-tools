@@ -118,6 +118,36 @@ def checks_stego_audio(tmp):
     check("stego/audio_spectrum.py low freq at bottom", row >= 80,
           f"brightest row={row}\n" + r.stdout + r.stderr)
 
+    keys = {"1": (697, 1209), "2": (697, 1336), "3": (697, 1477), "A": (697, 1633),
+            "4": (770, 1209), "5": (770, 1336), "6": (770, 1477), "B": (770, 1633),
+            "7": (852, 1209), "8": (852, 1336), "9": (852, 1477), "C": (852, 1633),
+            "*": (941, 1209), "0": (941, 1336), "#": (941, 1477), "D": (941, 1633)}
+
+    def _dtmf(digits, rate, tone_s, gap_s, amp):
+        out = []
+        for d in digits:
+            f1, f2 = keys[d]
+            out += [amp * (math.sin(2 * math.pi * f1 * i / rate) +
+                           math.sin(2 * math.pi * f2 * i / rate))
+                    for i in range(int(rate * tone_s))]
+            out += [0.0] * int(rate * gap_s)
+        return out
+
+    def _wav(path, samples, rate, width):
+        lim = (1 << (8 * width - 1)) - 1
+        with wave.open(path, "w") as w:
+            w.setnchannels(1); w.setsampwidth(width); w.setframerate(rate)
+            w.writeframes(b"".join(
+                max(-lim, min(lim, int(v))).to_bytes(width, "little", signed=True)
+                for v in samples))
+
+    # audio_tools: 24-битный WAV (3 байта на сэмпл) (#61)
+    p24 = os.path.join(tmp, "dtmf24.wav")
+    _wav(p24, _dtmf("1234", 8000, 0.2, 0.1, 2_000_000), 8000, 3)
+    r = run("stego/audio_tools.py", p24, "--mode", "dtmf")
+    check("stego/audio_tools.py dtmf 24-bit", "DTMF: 1234" in r.stdout,
+          r.stdout + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

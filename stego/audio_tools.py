@@ -66,6 +66,12 @@ def read_wav(path):
         data = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128
     elif width == 2:
         data = np.frombuffer(raw, dtype="<i2").astype(np.float32)
+    elif width == 3:
+        # 24 бита: 3 байта little-endian, знак из старшего бита
+        b = np.frombuffer(raw[:len(raw) - len(raw) % 3], dtype=np.uint8)
+        b = b.reshape(-1, 3).astype(np.int32)
+        v = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
+        data = np.where(v >= 1 << 23, v - (1 << 24), v).astype(np.float32)
     else:
         data = np.frombuffer(raw, dtype="<i4").astype(np.float32)
     if ch > 1:

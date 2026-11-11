@@ -35,31 +35,17 @@ WINPATH = re.compile(rb"[A-Za-z]:\\(?:[^\\/:*?\"<>|\r\n]{1,80}\\){0,8}[^\\/:*?\"
 EMAIL = re.compile(rb"[\w.+-]{2,40}@[\w.-]{2,40}\.[A-Za-z]{2,10}")
 IP = re.compile(rb"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 RUN = re.compile(rb"(?i)(Run|RunOnce|ImagePath|ServiceDll|UserInit)\b.{0,120}", re.S)
+WIDE = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
 
 
-def utf16_strings(data: bytes, minlen=4, limit=200):
+def utf16_strings(data: bytes, minlen=4, limit=None):
+    """ASCII-строки в UTF-16LE (реестр, EVTX, .lnk хранят текст так)."""
     out = []
-    i = 0
-    while i + 1 < len(data):
-        start = None
-        chars = []
-        j = i
-        while j + 1 < len(data):
-            c = data[j]
-            if 32 <= c < 127 and data[j + 1] == 0:
-                if start is None:
-                    start = j
-                chars.append(chr(c))
-                j += 2
-            else:
+    for m in WIDE.finditer(data):
+        if len(m.group()) // 2 >= minlen:
+            out.append(m.group().decode("utf-16-le"))
+            if limit and len(out) >= limit:
                 break
-        if start is not None and len(chars) >= minlen:
-            out.append("".join(chars))
-            i = j
-            if len(out) >= limit:
-                break
-        else:
-            i += 1
     return out
 
 
@@ -67,18 +53,22 @@ def analyze(path, max_bytes=50_000_000):
     data = open(path, "rb").read(max_bytes)
     info = {"file": path, "size": len(data), "flags": [], "urls": [], "paths": [],
             "run": [], "emails": [], "ips": [], "strings": 0}
-    for f in common.find_flags(data):
-        info["flags"].append(f)
-    info["urls"] = sorted({m.group().decode("latin-1") for m in URL.finditer(data)})[:30]
-    info["paths"] = sorted({m.group().decode("latin-1") for m in WINPATH.finditer(data)})[:30]
-    info["emails"] = sorted({m.group().decode("latin-1") for m in EMAIL.finditer(data)})[:20]
-    info["ips"] = sorted({m.group().decode("latin-1") for m in IP.finditer(data)})[:20]
-    info["run"] = [m.group().decode("latin-1", "replace")[:140] for m in RUN.finditer(data)][:10]
     a = [m.group().decode("latin-1") for m in ASCII.finditer(data)]
     u = utf16_strings(data)
     info["strings"] = len(a) + len(u)
-    if not (info["urls"] or info["paths"] or info["run"] or info["flags"]):
-        info["strings"] = info["strings"]  # уже посчитано
+    # UTF-16-строки разбираем теми же регулярками, что и сырые байты
+    wide = "\n".join(u).encode("latin-1", "replace")
+    for src in (data, wide):
+        for f in common.find_flags(src):
+            if f not in info["flags"]:
+                info["flags"].append(f)
+    both = (data, wide)
+    info["urls"] = sorted({m.group().decode("latin-1") for d in both for m in URL.finditer(d)})[:30]
+    info["paths"] = sorted({m.group().decode("latin-1") for d in both for m in WINPATH.finditer(d)})[:30]
+    info["emails"] = sorted({m.group().decode("latin-1") for d in both for m in EMAIL.finditer(d)})[:20]
+    info["ips"] = sorted({m.group().decode("latin-1") for d in both for m in IP.finditer(d)})[:20]
+    info["run"] = [m.group().decode("latin-1", "replace")[:140]
+                   for d in both for m in RUN.finditer(d)][:10]
     return info
 
 
@@ -86,7 +76,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--limit", type=int, default=100)
+    ap.add_argument("--limit", type=int, default=100,
+                    help="сколько файлов проверить (0 = все)")
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
@@ -94,15 +85,20 @@ def main():
     targets = []
     if os.path.isdir(args.path):
         for root, _, files in os.walk(args.path):
-            for f in files[:args.limit]:
+            for f in sorted(files):
                 targets.append(os.path.join(root, f))
     else:
         targets = [args.path]
 
+    over_limit = max(0, len(targets) - args.limit) if args.limit > 0 else 0
+    if over_limit:
+        targets = targets[:args.limit]
+    too_big = []
     reports = []
-    for p in targets[:args.limit]:
+    for p in targets:
         try:
             if os.path.getsize(p) > 50_000_000:
+                too_big.append(p)
                 continue
             info = analyze(p)
         except OSError:
@@ -125,6 +121,13 @@ def main():
             print("  emails:", ", ".join(info["emails"][:5]))
         if info["ips"]:
             print("  ips:", ", ".join(info["ips"][:5]))
+
+    if over_limit:
+        print(f"\n[!] пропущено файлов: {over_limit} (проверено {len(targets)},"
+              f" лимит --limit {args.limit}); все: --limit 0")
+    if too_big:
+        print(f"[!] пропущено больших файлов (>50 MB): {len(too_big)},"
+              f" например {too_big[0]}")
 
     flags = sorted({f for r in reports for f in r["flags"]})
     if flags:

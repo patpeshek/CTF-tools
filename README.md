@@ -197,7 +197,7 @@ python tests/selftest.py
 - `docker_api.py`: `--host`, `--list`, `--inspect`, `--logs`, `--exec --yes`.
 - `git_hunt.py`: `--all-objects`, `--json`, `--max-objects`.
 - `browser_artifacts.py`: `--json`, `--limit`.
-- `windows_triage.py`: `--json`, `--limit`.
+- `windows_triage.py`: `--json`, `--limit` (0 = все файлы).
 - `office_docs.py`: `--out`, `--json`.
 - `cloud_creds.py`: `--metadata`, `--json`.
 - `k8s_api.py`: `--host`, `--token`, `--ca`, `--insecure`, `--list`, `--secrets`.

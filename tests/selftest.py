@@ -133,6 +133,26 @@ def checks_forensics(tmp):
     check("git_hunt read-only (#67)", before == after,
           str(sorted(set(after) ^ set(before)))[:400])
 
+    # #68 windows_triage: флаг в UTF-16LE и отчёт о файлах сверх --limit
+    hive = os.path.join(base, "SOFTWARE")
+    open(hive, "wb").write(b"regf\x00\x01" + "CTF{utf16_hive}".encode("utf-16-le")
+                           + b"\x00\x00\xff")
+    r = run("forensic/windows_triage.py", hive)
+    check("windows_triage utf16 flag (#68)", "CTF{utf16_hive}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    many = os.path.join(base, "evtx_dump")
+    os.makedirs(many)
+    for i in range(105):
+        open(os.path.join(many, f"log{i:03d}.txt"), "w").write("nothing\n")
+    open(os.path.join(many, "log104.txt"), "w").write("CTF{after_limit}\n")
+    r = run("forensic/windows_triage.py", many)
+    check("windows_triage reports skipped (#68)",
+          "пропущено файлов: 5 " in r.stdout and "--limit" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    r = run("forensic/windows_triage.py", many, "--limit", "0")
+    check("windows_triage --limit 0 (#68)", "CTF{after_limit}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

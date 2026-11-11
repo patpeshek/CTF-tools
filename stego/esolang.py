@@ -312,21 +312,39 @@ def run_befunge(code: str, inp: str = "", max_steps=2_000_000):
 
 # ---------------- Deadfish ----------------
 
-def run_deadfish(code: str, max_steps=1_000_000):
+DEADFISH_MAX_BITS = 4096    # ~1233 цифры; дальше каждое s удваивает длину числа
+
+
+def run_deadfish(code: str, max_steps=1_000_000, max_bits=DEADFISH_MAX_BITS):
+    """Deadfish: i/d/s/o, 256 и -1 сбрасываются в 0.
+
+    Ограничены и шаги, и размер числа: без предела десяток-другой s подряд
+    растит число как 2^(2^k), и одно умножение длится дольше любого таймаута.
+    """
     acc = 0
     out = []
+    steps = 0
     for c in code:
+        if c not in "idso":
+            continue
+        if steps >= max_steps:
+            break
+        steps += 1
         if c == "i":
             acc += 1
         elif c == "d":
             acc -= 1
         elif c == "s":
             acc *= acc
-        elif c == "o":
+        else:
             out.append(str(acc))
         if acc == 256 or acc == -1:
             acc = 0
-    return " ".join(out), len(code)
+        if acc.bit_length() > max_bits:
+            print(f"[!] deadfish: число больше 2^{max_bits} — дальше не считаю "
+                  f"(шаг {steps})", file=sys.stderr)
+            break
+    return " ".join(out), steps
 
 
 # ---------------- автодетект ----------------

@@ -99,7 +99,8 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
 
 
 def checks_stego_img(tmp):
-    """Регрессии stego: LSB-каналы, эзотерика, carve/jpeg_tail, png_chunks."""
+    """Регрессии stego: LSB-каналы, эзотерика, carve/jpeg_tail, png_chunks,
+    враждебный ввод (Deadfish, bitmap_font)."""
 
     # lsb: классический R,G,B,R,G,B… (без альфы) находится без опций
     def _rgb_lsb_png(path, msg, mode):
@@ -333,6 +334,42 @@ def checks_stego_img(tmp):
         if "Traceback" in r.stderr or r.returncode != 0:
             bad.append(f"{n}: {r.stderr[-200:]}")
     check("png_chunks short IHDR", not bad, "\n".join(bad))
+
+    # враждебный ввод: время работы ограничено (без предела — зависание)
+    def _run_limited(rel, *args, timeout=60):
+        try:
+            return subprocess.run([PY, os.path.join(KIT, rel), *map(str, args)],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", env=ENV, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+
+    p = os.path.join(tmp, "deadfish_huge.txt")
+    with open(p, "w") as f:
+        f.write("iiisdo" + "s" * 40 + "o")          # 8, затем 8^(2^40)
+    r = _run_limited("stego/esolang.py", p, "--lang", "deadfish", timeout=20)
+    check("esolang deadfish huge numbers bounded",
+          r is not None and "out: '8" in r.stdout,
+          "timeout" if r is None else r.stdout[-300:] + r.stderr[-300:])
+
+    rows = [".####", "#....", "#....", "#....", ".####"]
+    glyph_c = "".join(f"{x},{y}\n" for y, row in enumerate(rows)
+                      for x, ch in enumerate(row) if ch == "#")
+    bad = []
+    # далёкая точка (раньше холст 20000001x5 — сотни МБ и секунды) и
+    # совсем огромные/inf координаты (раньше OverflowError)
+    for tag, extra in (("far", "20000000,2\n"),
+                       ("huge", f"{10 ** 30},0\n1e400,0\n0,1e300\n")):
+        p = os.path.join(tmp, f"bitmap_{tag}.csv")
+        with open(p, "w") as f:
+            f.write("x,y\n" + glyph_c + extra)
+        r = _run_limited("stego/bitmap_font.py", p, "--decode", timeout=60)
+        if r is None:
+            bad.append(f"{tag}: timeout")
+        elif not ("холст: 9x" in r.stdout and "decode: C" in r.stdout
+                  and "Traceback" not in r.stderr):
+            bad.append(f"{tag}: " + r.stdout[-300:] + r.stderr[-300:])
+    check("bitmap_font huge coordinates", not bad, "\n".join(bad))
 
 
 def main():

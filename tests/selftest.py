@@ -148,6 +148,18 @@ def checks_stego_audio(tmp):
     check("stego/audio_tools.py dtmf 24-bit", "DTMF: 1234" in r.stdout,
           r.stdout + r.stderr)
 
+    # audio_tools: быстрый DTMF 50 мс тон / 50 мс пауза в белом шуме,
+    # с повторами цифр (#62)
+    import random
+    _rnd = random.Random(62)
+    fast = "1123581321345589"
+    pfast = os.path.join(tmp, "dtmf_fast.wav")
+    _wav(pfast, [v + _rnd.gauss(0, 4000) for v in _dtmf(fast, 8000, 0.05, 0.05, 8000)],
+         8000, 2)
+    r = run("stego/audio_tools.py", pfast, "--mode", "dtmf")
+    check("stego/audio_tools.py dtmf fast+noise", f"DTMF: {fast}\n" in r.stdout,
+          r.stdout + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

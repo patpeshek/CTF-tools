@@ -79,48 +79,75 @@ def read_wav(path):
     return data, rate
 
 
-def nearest(freq, table, tol=0.04):
-    for i, f in enumerate(table):
-        if abs(freq - f) / f <= tol:
-            return i
-    return None
+def dtmf_frames(data, rate, frame_ms=25, hop_ms=10):
+    """Цифра (или None) для каждого окна frame_ms с шагом hop_ms.
 
-
-def decode_dtmf(data, rate, frame_ms=40):
-    n = int(rate * frame_ms / 1000)
-    out = []
-    last = None
-    for start in range(0, len(data) - n, n):
-        seg = data[start:start + n] * np.hanning(n)
-        spec = np.abs(np.fft.rfft(seg))
-        freqs = np.fft.rfftfreq(n, 1 / rate)
-        mag = spec.max()
-        if mag <= 0:
-            last = None
+    Мощность считается ровно на 8 частотах DTMF (как Гёрцель) и
+    сравнивается с мощностью полосы DTMF в этом же окне, а не с максимумом
+    спектра: в паузе максимум — это сам шум, и порог от него ловит шум
+    как цифру.
+    """
+    data = np.asarray(data)
+    n = max(32, int(rate * frame_ms / 1000))
+    hop = max(1, int(rate * hop_ms / 1000))
+    if len(data) < n:
+        return []
+    win = np.hanning(n)
+    freqs = np.array(ROWS + COLS, dtype=np.float64)
+    basis = np.exp(-2j * np.pi * np.outer(np.arange(n) / rate, freqs))
+    norm = 2.0 / win.sum() ** 2               # |X|^2 -> мощность синусоиды
+    bins = np.fft.rfftfreq(n, 1 / rate)
+    band = (bins >= ROWS[0] - 100) & (bins <= COLS[-1] + 100)
+    bnorm = 2.0 / (n * (win ** 2).sum())      # сумма |X_k|^2 -> мощность полосы
+    count = 1 + (len(data) - n) // hop
+    tone = np.empty((count, 8))
+    total = np.empty(count)
+    offs = np.arange(n)
+    for a in range(0, count, 2048):
+        starts = np.arange(a, min(count, a + 2048)) * hop
+        fr = data[starts[:, None] + offs].astype(np.float64) * win
+        tone[a:a + len(starts)] = np.abs(fr @ basis) ** 2 * norm
+        spec = np.abs(np.fft.rfft(fr, axis=1)[:, band]) ** 2
+        total[a:a + len(starts)] = spec.sum(axis=1) * bnorm
+    floor = total.max() * 1e-6
+    labels = []
+    for k in range(count):
+        if total[k] <= floor or total[k] <= 0:
+            labels.append(None)
             continue
-        thr = mag * 0.25
-        peaks = []
-        for table in (ROWS, COLS):
-            best = None
-            for f in table:
-                idx = np.argmin(np.abs(freqs - f))
-                val = spec[max(0, idx - 2):idx + 3].max()
-                if best is None or val > best[1]:
-                    best = (f, val)
-            peaks.append(best)
+        row, col = tone[k, :4], tone[k, 4:]
+        r, c = int(row.argmax()), int(col.argmax())
+        pr, pc = row[r], col[c]
         # нужны ОБА тона: одиночный пик (речь, шум) — не DTMF
-        if peaks[0][1] < thr or peaks[1][1] < thr:
-            last = None
+        ok = (
+            pr + pc >= 0.4 * total[k]                  # тоны — основная мощность полосы
+            and max(pr, pc) <= 10 * min(pr, pc)        # перекос (twist) <= 10 дБ
+            and np.sort(row)[-2] * 4 <= pr             # второй тон группы слабее
+            and np.sort(col)[-2] * 4 <= pc
+        )
+        labels.append(DIGITS[r][c] if ok else None)
+    return labels
+
+
+def decode_dtmf(data, rate, frame_ms=25, hop_ms=10, min_on=2, min_off=2):
+    """Цифра засчитывается после min_on окон подряд; та же цифра снова —
+    только после паузы min_off окон (50 мс тон / 50 мс пауза — ок)."""
+    out = []
+    last = None          # последняя выданная цифра (None — была пауза)
+    cur, cur_len, gap = None, 0, min_off
+    for lab in dtmf_frames(data, rate, frame_ms, hop_ms):
+        if lab is None:
+            cur, cur_len = None, 0
+            gap += 1
+            if gap >= min_off:
+                last = None
             continue
-        r = nearest(peaks[0][0], ROWS)
-        c = nearest(peaks[1][0], COLS)
-        if r is None or c is None:
-            last = None
-            continue
-        d = DIGITS[r][c]
-        if d != last:
-            out.append(d)
-            last = d
+        gap = 0
+        cur_len = cur_len + 1 if lab == cur else 1
+        cur = lab
+        if cur_len >= min_on and lab != last:
+            out.append(lab)
+            last = lab
     return "".join(out)
 
 

@@ -124,6 +124,29 @@ def checks_stego_img(tmp):
         r = run("stego/lsb.py", p)
         check(f"lsb rgb sequence {mode}", want in r.stdout, r.stdout[:500] + r.stderr)
 
+    # esolang: Hello World на Ook! и COW — переводим Brainfuck по спецификациям
+    bf_hello = ("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---."
+                "+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.")
+    ook_of = {">": "Ook. Ook?", "<": "Ook? Ook.", "+": "Ook. Ook.", "-": "Ook! Ook!",
+              ".": "Ook! Ook.", ",": "Ook. Ook!", "[": "Ook! Ook?", "]": "Ook? Ook!"}
+    cow_of = {">": "moO", "<": "mOo", "+": "MoO", "-": "MOo",
+              ".": "Moo", "[": "MOO", "]": "moo"}
+    for lang, table in (("ook", ook_of), ("cow", cow_of)):
+        p = os.path.join(tmp, f"hello.{lang}")
+        with open(p, "w") as f:
+            f.write("\n".join(table[c] for c in bf_hello))
+        r = run("stego/esolang.py", p)
+        check(f"esolang {lang} hello world",
+              f"похоже на: {lang}" in r.stdout and "Hello World!" in r.stdout,
+              r.stdout[-400:] + r.stderr)
+    # COW без аналогов в BF: MMM (регистр), OOM/oom (числа), OOO (обнуление)
+    p = os.path.join(tmp, "ops.cow")
+    with open(p, "w") as f:
+        f.write("MoO " * 5 + "MMM moO MMM OOM OOO OOM oom OOM")
+    r = run("stego/esolang.py", p, "--input", "-42\n")
+    check("esolang cow MMM/OOM/oom", "'5\\n0\\n-42\\n'" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

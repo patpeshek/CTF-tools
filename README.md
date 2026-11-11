@@ -149,7 +149,7 @@ python tests/selftest.py
 
 Почти у всех скриптов есть `--help`. Самое частое:
 
-- `lsb.py`: `--channel r|g|b|a|all`, `--bits 1..8`, `--order msb`, `--diff ВТОРАЯ_КАРТИНКА`.
+- `lsb.py`: `--channel all|rgb|rgba|bgr|r|g|b|a` (all = R,G,B подряд + перебор остальных), `--bits 1..8`, `--order msb`, `--diff ВТОРАЯ_КАРТИНКА`.
 - `alpha.py`: `--channel a`, `--only-nonzero`, `--raw` (числа вместо символов).
 - `jpeg_tail.py`: `--extract out` (распакует ZIP-хвост), `--dump tail.bin`.
 - `carve.py`: `--out dir` (вырежет всё, что найдёт).

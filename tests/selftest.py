@@ -98,6 +98,33 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_stego_img(tmp):
+    """Регрессии stego: LSB-каналы, эзотерика, carve/jpeg_tail, png_chunks."""
+
+    # lsb: классический R,G,B,R,G,B… (без альфы) находится без опций
+    def _rgb_lsb_png(path, msg, mode):
+        im = Image.new(mode, (64, 16), (100, 150, 200, 255)[:len(mode)])
+        px = im.load()
+        bits = [(b >> (7 - i)) & 1 for b in msg for i in range(8)]
+        k = 0
+        for y in range(im.height):
+            for x in range(im.width):
+                p = list(px[x, y])
+                for c in range(3):
+                    if k < len(bits):
+                        p[c] = (p[c] & 0xFE) | bits[k]
+                        k += 1
+                px[x, y] = tuple(p)
+        im.save(path)
+
+    for mode in ("RGB", "RGBA"):
+        want = "CTF{rgb_lsb_" + mode.lower() + "}"
+        p = os.path.join(tmp, f"rgb_lsb_{mode}.png")
+        _rgb_lsb_png(p, want.encode(), mode)
+        r = run("stego/lsb.py", p)
+        check(f"lsb rgb sequence {mode}", want in r.stdout, r.stdout[:500] + r.stderr)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
@@ -1975,6 +2002,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_stego_img(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

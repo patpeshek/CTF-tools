@@ -141,6 +141,15 @@ python crypto/classical.py vigenere-crack --text "<шифротекст>"
 python crypto/rsa_tool.py fermat --n <n> --e 65537 --cipher <c>
 python crypto/rsa_tool.py batch --moduli moduli.txt
 python crypto/rsa_tool.py dp-leak --n ... --e 65537 --dp <d mod p-1> --cipher ...
+python crypto/rsa_tool.py coppersmith --n ... --e 3 --c ... --known-high ... --unknown-bits 40
+python crypto/rsa_tool.py partial-p --n ... --p-high ... --unknown-bits 40 --e 65537 --cipher ...
+python crypto/rsa_tool.py boneh-durfee --n ... --e ... --m 3 --t 1
+python crypto/rsa_tool.py lsb-oracle --n ... --e 65537 --c ... --oracle-cmd "python parity.py"
+python crypto/block_oracles.py ecb-recover --oracle-cmd "python o.py" --secret-len 32
+python crypto/block_oracles.py padding-oracle --oracle-cmd "python p.py" --iv ... --ct ...
+python crypto/block_oracles.py cbc-flip --iv ... --known-text "user=guest" --target-text "user=admin"
+python crypto/hash_ext.py length-extend --alg sha256 --sig ... --key-len 16 --append "&admin=1"
+python crypto/hash_ext.py gcm-nonce-reuse --ct1 ... --tag1 ... --ct2 ... --tag2 ... --pt1 ...
 python crypto/rsa_tool.py auto public.pem --cipher cipher.bin
 python crypto/rsa_tool.py auto task.txt          # n/e/c, dp, d, p,q — что найдёт
 python crypto/autocrack.py --text "..."

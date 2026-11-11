@@ -26,10 +26,12 @@ import atexit
 import base64
 import hashlib
 import hmac
+import importlib.util
 import io
 import json
 import math
 import plistlib
+import random
 import tarfile
 import wave
 
@@ -41,14 +43,31 @@ ENV = dict(os.environ, PYTHONIOENCODING="utf-8")
 
 passed, failed = 0, 0
 
+# настройки прогона (переопределяются аргументами командной строки)
+SEED = 1234
+FUZZ = 10
+QUICK = False
+TIMEOUT = 180
 
-def run(rel_script, *args, env=None):
+
+class _Result:
+    def __init__(self, rc, out="", err=""):
+        self.returncode = rc
+        self.stdout = out
+        self.stderr = err
+
+
+def run(rel_script, *args, env=None, timeout=None):
     path = os.path.join(KIT, rel_script)
     e = dict(ENV)
     if env:
         e.update(env)
-    return subprocess.run([PY, path, *map(str, args)], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env=e)
+    try:
+        return subprocess.run([PY, path, *map(str, args)], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              env=e, timeout=timeout or TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _Result(124, "", f"[timeout {timeout or TIMEOUT}s] {rel_script}")
 
 
 def check(name, cond, detail=""):
@@ -61,6 +80,141 @@ def check(name, cond, detail=""):
         print(f"[FAIL] {name}")
         if detail:
             print("       " + detail.replace("\n", "\n       ")[:1200])
+
+
+HASH_INIT = {
+    "md5": [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476],
+    "sha1": [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0],
+    "sha256": [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+               0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19],
+}
+
+
+def _load_kit_module(rel):
+    path = os.path.join(KIT, rel)
+    name = "kit_" + os.path.basename(rel).replace(".", "_")
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _our_hash(mod, alg, data):
+    compress = mod.ALGS[alg][0]
+    st = mod.run_state(compress, list(HASH_INIT[alg]),
+                       data + mod.merkle_pad(len(data), alg == "md5"))
+    return mod.digest_from_state(alg, st).hex()
+
+
+def property_and_meta_checks(tmp):
+    """Свойства и дифференциальные проверки, а не только заученные ответы."""
+    rng = random.Random(SEED)
+    steps = 3 if QUICK else FUZZ
+
+    # 139. дифференциал: наши MD5/SHA1/SHA256 против hashlib
+    hash_mod = _load_kit_module("crypto/hash_ext.py")
+    bad = []
+    for length in (0, 1, 3, 55, 56, 63, 64, 65, 119, 120, 200):
+        data = bytes(rng.randrange(256) for _ in range(length))
+        for alg, ref in (("md5", hashlib.md5), ("sha1", hashlib.sha1),
+                         ("sha256", hashlib.sha256)):
+            if _our_hash(hash_mod, alg, data) != ref(data).hexdigest():
+                bad.append(f"{alg}/{length}")
+    check("property: hash compress == hashlib", not bad,
+          "рассинхрон: " + ", ".join(bad))
+
+    # 140. length extension против hashlib на случайных данных
+    fails = []
+    cases = [
+        (b"k", b"a", b"b"),
+        (b"secretkey", b"user=guest", b"&admin=1"),
+        (bytes(rng.randrange(256) for _ in range(7)),
+         bytes(rng.randrange(256) for _ in range(13)),
+         bytes(rng.randrange(256) for _ in range(9))),
+    ][:steps]
+    for key, data, append in cases:
+        for alg, ref in (("md5", hashlib.md5), ("sha1", hashlib.sha1),
+                         ("sha256", hashlib.sha256)):
+            r = run("crypto/hash_ext.py", "length-extend", "--alg", alg,
+                    "--sig", ref(key + data).hexdigest(),
+                    "--data", data.hex(), "--data-hex",
+                    "--append", append.hex(), "--append-hex",
+                    "--key-len", len(key), "--key-hex", key.hex())
+            glue = None
+            for line in r.stdout.splitlines():
+                if "padding (hex)" in line:
+                    glue = bytes.fromhex(line.split(":", 1)[1].strip())
+            real = ref(key + data + (glue or b"") + append).hexdigest()
+            if real not in r.stdout or "самопроверка: ok" not in r.stdout:
+                fails.append(f"{alg}/{len(data)}")
+    check("property: length extension", not fails,
+          "провалы: " + ", ".join(fails))
+
+    # 141. GCM: случайные ключ/nonce/сообщения, сверка с pycryptodome
+    from Crypto.Cipher import AES as _AES
+    gfail = []
+    for case in range(steps):
+        key = bytes(rng.randrange(256) for _ in range(16))
+        nonce = bytes(rng.randrange(256) for _ in range(12))
+        msgs = [bytes(rng.randrange(32, 127) for _ in range(rng.randrange(4, 28)))
+                for _ in range(3)]
+        pairs = []
+        for m in msgs:
+            cipher = _AES.new(key, _AES.MODE_GCM, nonce=nonce)
+            pairs.append(cipher.encrypt_and_digest(m))
+        true_h = int.from_bytes(
+            _AES.new(key, _AES.MODE_ECB).encrypt(b"\x00" * 16), "big")
+        args = ["gcm-nonce-reuse"]
+        for i, (ct, tag) in enumerate(pairs, 1):
+            args += [f"--ct{i}", ct.hex(), f"--tag{i}", tag.hex()]
+        args += ["--pt1", msgs[0].hex(), "--pt1-hex"]
+        r = run("crypto/hash_ext.py", *args)
+        prefix = min(len(msgs[0]), len(msgs[1]))
+        if (f"{true_h:032x}" not in r.stdout
+                or msgs[1][:prefix].hex() not in r.stdout):
+            gfail.append(f"case{case}")
+    check("property: GCM nonce reuse", not gfail, "провалы: " + ", ".join(gfail))
+
+    # 142. CBC flip: iv ^ known ^ target
+    flip_bad = []
+    for _ in range(steps):
+        iv = bytes(rng.randrange(256) for _ in range(16))
+        known = bytes(rng.randrange(256) for _ in range(16))
+        target = bytes(rng.randrange(256) for _ in range(16))
+        r = run("crypto/block_oracles.py", "cbc-flip", "--iv", iv.hex(),
+                "--known", known.hex(), "--target", target.hex())
+        expect = bytes(a ^ b ^ c for a, b, c in zip(iv, known, target)).hex()
+        if expect not in r.stdout:
+            flip_bad.append(iv.hex()[:8])
+    check("property: cbc-flip", not flip_bad, "провалы: " + ", ".join(flip_bad))
+
+    # 143. фаззинг: carve не падает и не висит на обрезанных файлах
+    src = os.path.join(tmp, "fuzz_carve.png")
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(src)
+    raw = open(src, "rb").read()
+    crash = []
+    for i in range(min(steps, 8)):
+        cut = rng.randrange(1, len(raw))
+        p = os.path.join(tmp, f"fuzz_{i}.png")
+        open(p, "wb").write(raw[:cut])
+        r = run("stego/carve.py", p, "--out", os.path.join(tmp, f"carve_{i}"))
+        if "Traceback" in (r.stderr or "") or r.returncode not in (0, 1, 2):
+            crash.append(f"{cut}:{r.returncode}")
+    check("fuzz: carve truncation", not crash, "падения: " + ", ".join(crash))
+
+    # 144. мета: реестр согласован с файлами
+    tb = _load_kit_module("toolbox.py")
+    missing = []
+    for _sec, name, rel, _desc in tb.REGISTRY:
+        if rel and not os.path.exists(os.path.join(KIT, rel)):
+            missing.append(f"{name}->{rel}")
+    check("meta: REGISTRY files exist", not missing, ", ".join(missing))
+
+    # 145. мета: новые инструменты описаны в INDEX
+    idx = open(os.path.join(KIT, "INDEX.md"), encoding="utf-8").read()
+    absent = [n for n in ("oracles", "hashext") if f"`{n}`" not in idx]
+    check("meta: INDEX описывает новые инструменты", not absent,
+          ", ".join(absent))
 
 
 def write_png_with_lsb(path, message: bytes):
@@ -99,6 +253,16 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
 
 
 def main():
+    global SEED, FUZZ, QUICK, TIMEOUT
+    argv = sys.argv[1:]
+    QUICK = "--quick" in argv
+    for i, a in enumerate(argv):
+        if a == "--seed" and i + 1 < len(argv):
+            SEED = int(argv[i + 1])
+        elif a == "--fuzz" and i + 1 < len(argv):
+            FUZZ = max(0, int(argv[i + 1]))
+        elif a == "--timeout" and i + 1 < len(argv):
+            TIMEOUT = int(argv[i + 1])
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
     print("temp:", tmp)
@@ -1975,6 +2139,146 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    # 131. rsa coppersmith: часть m известна, e=3
+    from Crypto.Util.number import getPrime as _get_prime
+    _p, _q = _get_prime(256), _get_prime(256)
+    _n = _p * _q
+    _m = int.from_bytes(b"CTF{coppersmith}", "big")
+    _hi = _m >> 40
+    _c = pow(_m, 3, _n)
+    r = run("crypto/rsa_tool.py", "coppersmith", "--n", _n, "--e", 3,
+            "--c", _c, "--known-high", _hi, "--unknown-bits", 40)
+    check("rsa coppersmith", "CTF{coppersmith}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # 132. rsa partial-p: 24 младших бита p неизвестны
+    _p2, _q2 = _get_prime(128), _get_prime(128)
+    _n2 = _p2 * _q2
+    _bits = 24
+    _ph = _p2 >> _bits
+    _msg = int.from_bytes(b"CTF{partial_p}", "big")
+    _c2 = pow(_msg, 65537, _n2)
+    r = run("crypto/rsa_tool.py", "partial-p", "--n", _n2, "--p-high", _ph,
+            "--unknown-bits", _bits, "--m", 3, "--t", 3,
+            "--e", 65537, "--cipher", _c2)
+    check("rsa partial-p", "CTF{partial_p}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # 133. rsa lsb-oracle: готовые биты чётности
+    _p3, _q3 = _get_prime(128), _get_prime(128)
+    _n3 = _p3 * _q3
+    _e3 = 65537
+    _d3 = pow(_e3, -1, (_p3 - 1) * (_q3 - 1))
+    _m3 = int.from_bytes(b"CTF{lsb}", "big")
+    _c3 = pow(_m3, _e3, _n3)
+    _cc = _c3
+    _par = []
+    for _ in range(_n3.bit_length()):
+        _cc = _cc * pow(2, _e3, _n3) % _n3
+        _par.append(str(pow(_cc, _d3, _n3) & 1))
+    r = run("crypto/rsa_tool.py", "lsb-oracle", "--n", _n3, "--e", _e3,
+            "--c", _c3, "--bits", ",".join(_par))
+    check("rsa lsb-oracle", "CTF{lsb}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # 134. block_oracles: ECB byte-at-a-time
+    _ecb_oracle = os.path.join(tmp, "oracle_ecb.py")
+    open(_ecb_oracle, "w", encoding="utf-8").write(
+        "import sys\n"
+        "from Crypto.Cipher import AES\n"
+        "KEY=b'0123456789abcdef'\n"
+        "SECRET=b'flag{oracle_ecb}'\n"
+        "a=AES.new(KEY, AES.MODE_ECB)\n"
+        "for line in sys.stdin:\n"
+        "    line=line.strip()\n"
+        "    if not line: continue\n"
+        "    pt=bytes.fromhex(line)+SECRET\n"
+        "    pt+=b'\\x00'*((16-len(pt)%16)%16)\n"
+        "    print(a.encrypt(pt).hex(), flush=True)\n"
+    )
+    r = run("crypto/block_oracles.py", "ecb-recover",
+            "--oracle-cmd", f'{sys.executable} "{_ecb_oracle}"',
+            "--secret-len", 16)
+    check("oracles ecb-recover", "flag{oracle_ecb}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # 135. block_oracles: padding oracle
+    _pad_oracle = os.path.join(tmp, "oracle_pad.py")
+    open(_pad_oracle, "w", encoding="utf-8").write(
+        "import sys\n"
+        "from Crypto.Cipher import AES\n"
+        "KEY=b'0123456789abcdef'\n"
+        "a=AES.new(KEY, AES.MODE_CBC, b'\\x00'*16)\n"
+        "for line in sys.stdin:\n"
+        "    line=line.strip()\n"
+        "    if not line: continue\n"
+        "    ct=bytes.fromhex(line)\n"
+        "    if len(ct)%16: print(0, flush=True); continue\n"
+        "    pt=a.decrypt(ct); p=pt[-1]\n"
+        "    print(1 if 1<=p<=16 and pt.endswith(bytes([p])*p) else 0, flush=True)\n"
+    )
+    from Crypto.Cipher import AES as _AES
+    _key = b"0123456789abcdef"
+    _iv = b"\x00" * 16
+    _pt = b"0123456789abcdef" + b"secret!"
+    _pad_n = 16 - len(_pt) % 16
+    _data = _pt + bytes([_pad_n]) * _pad_n
+    _ct = _AES.new(_key, _AES.MODE_CBC, _iv).encrypt(_data)
+    r = run("crypto/block_oracles.py", "padding-oracle",
+            "--oracle-cmd", f'{sys.executable} "{_pad_oracle}"',
+            "--iv", _iv.hex(), "--ct", _ct.hex())
+    check("oracles padding", "secret!" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # 136. block_oracles: CBC flip
+    r = run("crypto/block_oracles.py", "cbc-flip", "--iv", "00" * 16,
+            "--known-text", "user=guest123456", "--target-text", "user=admin123456")
+    _expect = bytes(a ^ b ^ c for a, b, c in zip(
+        bytes(16), b"user=guest123456", b"user=admin123456")).hex()
+    check("oracles cbc-flip", _expect in r.stdout, r.stdout[-300:] + r.stderr)
+
+    # 137. hash_ext: length extension для трёх алгоритмов
+    _keyb = b"secretkey"
+    _data = b"user=guest"
+    _append = b"&admin=1"
+    for _alg, _hfun in (("md5", hashlib.md5), ("sha1", hashlib.sha1),
+                        ("sha256", hashlib.sha256)):
+        r = run("crypto/hash_ext.py", "length-extend", "--alg", _alg,
+                "--sig", _hfun(_keyb + _data).hexdigest(),
+                "--data", _data.decode(), "--key-len", len(_keyb),
+                "--append", _append.decode(), "--key-hex", _keyb.hex())
+        _glue = None
+        for _line in r.stdout.splitlines():
+            if "padding (hex)" in _line:
+                _glue = bytes.fromhex(_line.split(":")[1].strip())
+        _real = _hfun(_keyb + _data + (_glue or b"") + _append).hexdigest()
+        check(f"hash_ext {_alg}", _glue is not None and _real in r.stdout,
+              r.stdout[-500:] + r.stderr)
+
+    # 138. hash_ext: GCM nonce reuse
+    _gkey = bytes(range(16))
+    _nonce = bytes(range(12))
+    _g1 = _AES.new(_gkey, _AES.MODE_GCM, nonce=_nonce)
+    _gct1, _gtag1 = _g1.encrypt_and_digest(b"hello world!!!!!")
+    _g2 = _AES.new(_gkey, _AES.MODE_GCM, nonce=_nonce)
+    _gct2, _gtag2 = _g2.encrypt_and_digest(b"ATTACK AT DAWN!!!")
+    _g3 = _AES.new(_gkey, _AES.MODE_GCM, nonce=_nonce)
+    _gct3, _gtag3 = _g3.encrypt_and_digest(b"third message!!!?")
+    _gh = int.from_bytes(
+        _AES.new(_gkey, _AES.MODE_ECB).encrypt(b"\x00" * 16), "big")
+    r = run("crypto/hash_ext.py", "gcm-nonce-reuse",
+            "--ct1", _gct1.hex(), "--tag1", _gtag1.hex(),
+            "--ct2", _gct2.hex(), "--tag2", _gtag2.hex(),
+            "--ct3", _gct3.hex(), "--tag3", _gtag3.hex(),
+            "--pt1", "hello world!!!!!")
+    check("hash_ext gcm",
+          f"{_gh:032x}" in r.stdout and "ATTACK AT DAWN" in r.stdout
+          and r.stdout.count("[+] H = ") == 1,
+          r.stdout[-600:] + r.stderr)
+
+    # 139-145. свойства, дифференциал, фаззинг и мета-проверки
+    property_and_meta_checks(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

@@ -101,7 +101,12 @@ REGISTRY = [
     ("crypto", "ecb", "crypto/aes_ecb.py", "детект/расшифровка ECB"),
     ("crypto", "hash_id", "crypto/hash_id.py", "тип хеша + режим hashcat"),
     ("crypto", "hashcat", "crypto/hashcat_run.py", "запуск hashcat по режиму"),
-    ("crypto", "rsa", "crypto/rsa_tool.py", "RSA: gcd/Ферма/малая экспонента"),
+    ("crypto", "rsa", "crypto/rsa_tool.py",
+     "RSA: gcd/Ферма/малая e/Винер/Coppersmith/Boneh-Durfee"),
+    ("crypto", "oracles", "crypto/block_oracles.py",
+     "ECB/padding oracle, CBC flip, детект ECB"),
+    ("crypto", "hashext", "crypto/hash_ext.py",
+     "length extension MD5/SHA1/SHA256, GCM nonce reuse"),
     ("crypto", "otp", "crypto/otp_reuse.py", "two-time pad"),
     ("crypto", "stream", "crypto/stream_sha256.py", "SHA256-поток XOR"),
 

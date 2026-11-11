@@ -98,6 +98,27 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_stego_audio(tmp):
+    # audio_spectrum: низкие частоты внизу картинки (#60)
+    low_wav = os.path.join(tmp, "spec_low.wav")
+    with wave.open(low_wav, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+        w.writeframes(b"".join(
+            struct.pack("<h", int(8000 * math.sin(2 * math.pi * 300 * i / 8000)))
+            for i in range(8000)))
+    low_png = os.path.join(tmp, "spec_low.png")
+    r = run("stego/audio_spectrum.py", low_wav, "--out", low_png,
+            "--width", "100", "--height", "100")
+    row = -1
+    if os.path.exists(low_png):
+        _im = Image.open(low_png).convert("L")
+        _rows = [sum(_im.getpixel((x, y)) for x in range(_im.width))
+                 for y in range(_im.height)]
+        row = _rows.index(max(_rows))
+    check("stego/audio_spectrum.py low freq at bottom", row >= 80,
+          f"brightest row={row}\n" + r.stdout + r.stderr)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
@@ -1975,6 +1996,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_stego_audio(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

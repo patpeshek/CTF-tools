@@ -98,6 +98,42 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_forensics(tmp):
+    """Регрессии forensic/* (#67-#74): каждый артефакт строится здесь же."""
+    base = os.path.join(tmp, "forensics_regress")
+    os.makedirs(base, exist_ok=True)
+
+    # #67 git_hunt: dangling-объекты (loose и в pack) читаются, а .git
+    # задачи не меняется (раньше fsck --lost-found писал в .git/lost-found)
+    repo = os.path.join(base, "gitrepo")
+    os.makedirs(repo)
+
+    def _g(*a, data=None):
+        return subprocess.run(["git", "-C", repo, *a], input=data,
+                              capture_output=True, check=True)
+    _g("init", "-q")
+    _g("config", "user.email", "a@b.c")
+    _g("config", "user.name", "a")
+    open(os.path.join(repo, "readme.txt"), "w").write("nothing here\n")
+    _g("add", ".")
+    _g("commit", "-qm", "init")
+    _g("hash-object", "-w", "--stdin", data=b"CTF{git_packed_dangling}\n")
+    _g("repack", "-a", "-d", "-k", "-q")
+    _g("hash-object", "-w", "--stdin", data=b"CTF{git_loose_dangling}\n")
+
+    def _tree(root):
+        return sorted(os.path.relpath(os.path.join(dp, f), root)
+                      for dp, dn, fn in os.walk(root) for f in fn + dn)
+    before = _tree(os.path.join(repo, ".git"))
+    r = run("forensic/git_hunt.py", repo)
+    after = _tree(os.path.join(repo, ".git"))
+    check("git_hunt dangling blobs (#67)",
+          "CTF{git_packed_dangling}" in r.stdout
+          and "CTF{git_loose_dangling}" in r.stdout, r.stdout[-800:] + r.stderr)
+    check("git_hunt read-only (#67)", before == after,
+          str(sorted(set(after) ^ set(before)))[:400])
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
@@ -1975,6 +2011,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_forensics(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

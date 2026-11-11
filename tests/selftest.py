@@ -147,6 +147,53 @@ def checks_stego_img(tmp):
     check("esolang cow MMM/OOM/oom", "'5\\n0\\n-42\\n'" in r.stdout,
           r.stdout[-400:] + r.stderr)
 
+    # whitespace: куча, цикл, call/ret, арифметика и ввод — по спецификации
+    S, T, L = " ", "\t", "\n"
+
+    def _num(v):
+        return (S if v >= 0 else T) + "".join(T if b == "1" else S
+                                              for b in bin(abs(v))[2:]) + L
+
+    def _lab(s):
+        return "".join(T if b == "1" else S for b in s) + L
+
+    def push(v):
+        return S + S + _num(v)
+
+    dup, discard, swap = S + L + S, S + L + L, S + L + T
+    add, sub, mod = T + S + S + S, T + S + S + T, T + S + T + T
+    store, retrieve = T + T + S, T + T + T
+    outc, outn, readc = T + L + S + S, T + L + S + T, T + L + T + S
+
+    def mark(lb):
+        return L + S + S + _lab(lb)
+
+    def call(lb):
+        return L + S + T + _lab(lb)
+
+    def jump(lb):
+        return L + S + L + _lab(lb)
+
+    def jz(lb):
+        return L + T + S + _lab(lb)
+
+    ws_text = "CTF{ws_heap_loop}"
+    prog = ""
+    for k, ch in enumerate(ws_text + "\0"):          # строка в куче с адреса 100
+        prog += push(100 + k) + push(ord(ch)) + store
+    prog += push(100) + call("1") + push(7) + push(-3) + swap + sub + outn
+    prog += push(17) + push(5) + mod + outn + push(0) + readc
+    prog += push(0) + retrieve + outc + L + L + L
+    # подпрограмма: печатать кучу с адреса на стеке до нуля
+    prog += mark("1") + mark("10") + dup + retrieve + dup + jz("11")
+    prog += outc + push(1) + add + jump("10") + mark("11") + discard + discard + L + T + L
+    wsp = os.path.join(tmp, "heap_loop.ws")
+    with open(wsp, "w", newline="") as f:
+        f.write(prog)
+    r = run("stego/whitespace.py", wsp, "--input", "!")       # без --mode: auto
+    check("whitespace heap/loop/call", ws_text + "-102!" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
@@ -879,7 +926,7 @@ def main():
         return "  " + sign + "".join("\t" if b == "1" else " " for b in bits) + "\n"
 
     def ws_out():
-        return "\t\t  "
+        return "\t\n  "     # IMP [Tab][LF] (I/O) + [Space][Space] = outchar
 
     ws_flag = "CTF{ws}"
     wsp = os.path.join(tmp, "w.ws")

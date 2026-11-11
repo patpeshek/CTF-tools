@@ -41,119 +41,99 @@ S, T, L = " ", "\t", "\n"
 
 
 # ---------------- Whitespace interpreter ----------------
+#
+# Спецификация (IMP — префикс группы команд):
+#   [Space]       стек:  S n push, LS dup, TS n copy, LT swap, LL discard, TL n slide
+#   [Tab][Space]  арифметика: SS add, ST sub, SL mul, TS div, TT mod
+#   [Tab][Tab]    куча:  S store, T retrieve
+#   [LF]          поток: SS l mark, ST l call, SL l jump, TS l jz, TT l jn, TL ret, LL end
+#   [Tab][LF]     ввод/вывод: SS outchar, ST outnum, TS readchar, TT readnum
+# Число: знак (S=+, T=-), затем биты (S=0, T=1) до LF.
+# Метка: биты до LF; сравнивается как строка («S» и «SS» — разные метки).
+
+_WS_CMDS = {
+    S: {S: "push", T + S: "copy", T + L: "slide",
+        L + S: "dup", L + T: "swap", L + L: "discard"},
+    T + S: {S + S: "add", S + T: "sub", S + L: "mul", T + S: "div", T + T: "mod"},
+    T + T: {S: "store", T: "retrieve"},
+    L: {S + S: "label", S + T: "call", S + L: "jump", T + S: "jz", T + T: "jn",
+        T + L: "ret", L + L: "end"},
+    T + L: {S + S: "outchar", S + T: "outnum", T + S: "readchar", T + T: "readnum"},
+}
+_WS_NUM_ARG = {"push", "copy", "slide"}
+_WS_LABEL_ARG = {"label", "call", "jump", "jz", "jn"}
+
 
 def tokenize(prog: str):
     code = [c for c in prog if c in (S, T, L)]
+    n = len(code)
     i = 0
     out = []
 
     def rd():
         nonlocal i
-        if i >= len(code):
-            raise ValueError("EOF")
+        if i >= n:
+            raise ValueError("программа оборвалась посреди команды")
         c = code[i]
         i += 1
         return c
 
-    def num():
-        nonlocal i
-        sign = 1
-        c = rd()
-        if c == T:
-            sign = -1
-        elif c != S:
-            raise ValueError("bad number sign")
-        val = 0
+    def bits_until_lf():
+        s = []
         while True:
             c = rd()
             if c == L:
-                break
-            val = val * 2 + (1 if c == T else 0)
-        return sign * val
+                return "".join(s)
+            s.append("1" if c == T else "0")
 
-    while i < len(code):
-        a = rd()
-        if a == S:
-            b = rd()
-            if b == S:
-                out.append(("push", num()))
-            elif b == L:
-                c = rd()
-                if c == S:
-                    out.append(("dup", None))
-                elif c == T:
-                    out.append(("discard", None))
-                elif c == L:
-                    out.append(("slide", num()))
-                else:
-                    raise ValueError("bad stack op")
-            else:  # b == T
-                c = rd()
-                if c == S:
-                    out.append(("swap", None))
-                elif c == L:
-                    out.append(("copy", num()))
-                else:
-                    raise ValueError("bad stack op")
-        elif a == T:
-            b = rd()
-            if b == S:
-                c = rd()
-                if c == S:
-                    d = rd()
-                    op = {S: "add", T: "sub", L: "mul"}[d]
-                    out.append((op, None))
-                elif c == T:
-                    d = rd()
-                    op = {S: "div", T: "mod", L: "store"}[d]
-                    out.append((op, None))
-                else:
-                    d = rd()
-                    if d != S:
-                        raise ValueError("bad heap op")
-                    out.append(("retrieve", None))
-            else:
-                c = rd()
-                if c == S:
-                    d = rd()
-                    op = {S: "outchar", T: "outnum", L: "readchar"}[d]
-                    out.append((op, None))
-                elif c == T:
-                    d = rd()
-                    if d != S:
-                        raise ValueError("bad io op")
-                    out.append(("readnum", None))
-                else:
-                    raise ValueError("bad io")
-        else:  # L
-            b = rd()
-            if b == L:
-                c = rd()
-                if c != L:
-                    raise ValueError("bad end")
-                out.append(("end", None))
-                break
-            c = rd()
-            if b == S:
-                if c == S:
-                    d = rd()
-                    op = {S: "label", T: "call", L: "jump"}[d]
-                    out.append((op, num()))
-                else:
-                    d = rd()
-                    op = {S: "jz", T: "jn", L: "ret"}[d]
-                    out.append((op, num() if op != "ret" else None))
-            else:
-                raise ValueError("bad flow")
+    def num():
+        c = rd()
+        if c == L:                       # без знака и битов — 0
+            return 0
+        sign = -1 if c == T else 1
+        b = bits_until_lf()
+        return sign * int(b, 2) if b else 0
+
+    while i < n:
+        imp = rd()
+        if imp == T:
+            imp += rd()
+        table = _WS_CMDS[imp]
+        cmd = rd()
+        if cmd not in table:
+            cmd += rd()
+        op = table.get(cmd)
+        if op is None:
+            raise ValueError(f"неизвестная команда {imp + cmd!r} на позиции {i}")
+        if op in _WS_NUM_ARG:
+            out.append((op, num()))
+        elif op in _WS_LABEL_ARG:
+            out.append((op, bits_until_lf()))
+        else:
+            out.append((op, None))
     return out
 
 
 def run_ws(prog: str, inp: str = "", max_steps: int = 5_000_000):
     ops = tokenize(prog)
-    labels = {arg: idx for idx, (op, arg) in enumerate(ops) if op == "label"}
+    labels = {}
+    for idx, (op, arg) in enumerate(ops):
+        if op == "label":
+            labels.setdefault(arg, idx)
     stack, heap, calls = [], {}, []
     pc, out, steps = 0, [], 0
     inp_pos = 0
+
+    def pop():
+        if not stack:
+            raise ValueError(f"стек пуст (команда {pc - 1}: {ops[pc - 1][0]})")
+        return stack.pop()
+
+    def goto(label):
+        if label not in labels:
+            raise ValueError(f"нет метки {label!r}")
+        return labels[label]
+
     while pc < len(ops) and steps < max_steps:
         steps += 1
         op, arg = ops[pc]
@@ -161,63 +141,77 @@ def run_ws(prog: str, inp: str = "", max_steps: int = 5_000_000):
         if op == "push":
             stack.append(arg)
         elif op == "dup":
-            stack.append(stack[-1])
-        elif op == "swap":
-            stack[-1], stack[-2] = stack[-2], stack[-1]
-        elif op == "discard":
-            stack.pop()
+            v = pop()
+            stack += [v, v]
         elif op == "copy":
-            stack.append(stack[-arg])
+            if not 0 <= arg < len(stack):
+                raise ValueError(f"copy {arg}: в стеке {len(stack)}")
+            stack.append(stack[-1 - arg])
+        elif op == "swap":
+            b, a = pop(), pop()
+            stack += [b, a]
+        elif op == "discard":
+            pop()
         elif op == "slide":
-            if arg:
+            top = pop()
+            if arg > 0:
                 del stack[-arg:]
-        elif op == "add":
-            b, a = stack.pop(), stack.pop()
-            stack.append(a + b)
-        elif op == "sub":
-            b, a = stack.pop(), stack.pop()
-            stack.append(a - b)
-        elif op == "mul":
-            b, a = stack.pop(), stack.pop()
-            stack.append(a * b)
-        elif op == "div":
-            b, a = stack.pop(), stack.pop()
-            stack.append(int(a / b))
-        elif op == "mod":
-            b, a = stack.pop(), stack.pop()
-            stack.append(a % b)
+            stack.append(top)
+        elif op in ("add", "sub", "mul", "div", "mod"):
+            b, a = pop(), pop()
+            if op == "add":
+                stack.append(a + b)
+            elif op == "sub":
+                stack.append(a - b)
+            elif op == "mul":
+                stack.append(a * b)
+            elif b == 0:
+                raise ValueError("деление на 0")
+            else:                        # как div/mod в Haskell: к -бесконечности
+                stack.append(a // b if op == "div" else a % b)
         elif op == "store":
-            v, addr = stack.pop(), stack.pop()
+            v, addr = pop(), pop()
             heap[addr] = v
         elif op == "retrieve":
-            stack.append(heap.get(stack.pop(), 0))
+            stack.append(heap.get(pop(), 0))
         elif op == "outchar":
-            out.append(chr(stack.pop() & 0xFF))
+            v = pop()
+            out.append(chr(v) if 0 <= v < 0x110000 else chr(v & 0xFF))
         elif op == "outnum":
-            out.append(str(stack.pop()))
+            out.append(str(pop()))
         elif op == "readchar":
+            addr = pop()
             if inp_pos < len(inp):
-                stack.append(ord(inp[inp_pos]))
+                heap[addr] = ord(inp[inp_pos])
                 inp_pos += 1
             else:
-                stack.append(0)
+                heap[addr] = -1          # EOF
         elif op == "readnum":
-            stack.append(0)
+            addr = pop()
+            end = inp.find("\n", inp_pos)
+            end = len(inp) if end == -1 else end
+            try:
+                heap[addr] = int(inp[inp_pos:end].strip() or "0")
+            except ValueError:
+                heap[addr] = 0
+            inp_pos = end + 1
         elif op == "label":
             pass
         elif op == "call":
             calls.append(pc)
-            pc = labels.get(arg, pc)
+            pc = goto(arg)
         elif op == "jump":
-            pc = labels.get(arg, pc)
+            pc = goto(arg)
         elif op == "jz":
-            if stack.pop() == 0:
-                pc = labels.get(arg, pc)
+            if pop() == 0:
+                pc = goto(arg)
         elif op == "jn":
-            if stack.pop() < 0:
-                pc = labels.get(arg, pc)
+            if pop() < 0:
+                pc = goto(arg)
         elif op == "ret":
-            pc = calls.pop() if calls else len(ops)
+            if not calls:
+                raise ValueError("ret без call")
+            pc = calls.pop()
         elif op == "end":
             break
     return "".join(out), steps
@@ -310,7 +304,8 @@ def main():
 
     text = open(args.file, "r", encoding="utf-8", errors="replace").read()
     mode = args.mode
-    if mode == "auto":
+    auto = mode == "auto"
+    if auto:
         if any(0xFE00 <= ord(c) <= 0xFE0F for c in text):
             mode = "vs"
         elif any(0xE0000 <= ord(c) <= 0xE007F for c in text):
@@ -319,10 +314,11 @@ def main():
             mode = "zw"
         elif any(0x2800 <= ord(c) <= 0x28FF for c in text):
             mode = "braille"
+        elif all(c in (S, T, L, "\r") for c in text):
+            # раньше trail: у программы из одних пробелов «хвост» в каждой строке
+            mode = "ws"
         elif any(line != line.rstrip(" \t") for line in text.splitlines()):
             mode = "trail"
-        elif all(c in (S, T, L, "\r") for c in text):
-            mode = "ws"
         else:
             mode = "bits"
         print(f"[i] режим: {mode}")
@@ -332,8 +328,13 @@ def main():
             out, steps = run_ws(text, args.input, args.max_steps)
             print(f"[+] whitespace: шагов={steps}")
             print("  out:", repr(out[:500]))
-            for f in common.find_flags(out.encode("utf-8", "replace")):
+            flags = common.find_flags(out.encode("utf-8", "replace"))
+            for f in flags:
                 print("  !!! ФЛАГ:", f)
+            if auto and not flags:
+                # это могли быть просто биты space/tab — покажем и их
+                for name, data in decode_bits(text):
+                    report(name, data)
         except Exception as e:
             print(f"[-] ws не выполнился: {e}; пробую bits")
             for name, data in decode_bits(text):

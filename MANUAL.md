@@ -38,6 +38,24 @@
 Формат флага — это ограничение: `CTF{[A-Z]{6}}`, `ctf{some_word}`, `flag{...}`.
 Проверяй регистр и обёртку до сдачи.
 
+**Отдай условие автопилоту.** `solve` читает текст задачи и меняет план:
+
+```powershell
+python toolbox.py solve task.bin --desc "XOR, потом base64. Формат флага: ABC{...}"
+python toolbox.py solve task.bin --desc-file statement.txt     # UTF-8
+python toolbox.py solve --desc "nc host 31337, ответь на 100 раундов"   # цель из условия
+```
+
+Что берётся из текста (RU/EN): категория (явная `Категория: X` весит больше слов
+легенды), подсказки (`xor`, `rsa`, `lsb`, `base64`, `морзе`, `steghide`, «пароль от
+архива», Виженер, Цезарь, слои/цепочка, …) — их инструменты идут первыми; формат
+флага (`flag format: ABC{...}`, `формат флага ...`, шаблон `ABC{<...>}`) — префикс
+добавляется в начало списка префиксов (видят и все шаги, и `xorknown --known`);
+пароли/ключи (`password: "x"`, `ключ «x»`, `key=… iv=…`) — в шаги, которые их
+принимают (`xorknown --key`, `ecb`/`aes --key`, `classical vigenere --key`, словарь
+для хешей); URL и `host:port`/`nc host port` — цель, если её не дали. Разбор
+печатается в шапке плана (`[+] условие: …`), функция — `solve.parse_statement()`.
+
 ## 2. OSINT вручную
 
 **Обратный поиск картинки.** Яндекс.Картинки → Google Lens → Bing → TinEye.
@@ -237,3 +255,61 @@ print(result)
 ```
 
 Через 10 задач ты увидишь свои слабые места лучше, чем из любого гайда.
+
+## 14. Машиночитаемый solve: `--json` и `--events`
+
+Для сайта, агентов и скриптов. Человеческий лог при этом уходит в **stderr**,
+а stdout остаётся чисто машинным.
+
+```powershell
+python toolbox.py solve task.bin --json > result.json              # один итоговый объект
+python toolbox.py solve task.bin --events events.jsonl             # поток событий в файл
+python toolbox.py solve task.bin --events - 2> human.log           # поток событий в stdout
+python toolbox.py solve task.bin --json --events -                 # события, последней строкой — итог
+```
+
+**`--json`** — в stdout ровно одна строка JSON (UTF-8, `ensure_ascii=False`):
+
+| Поле | Что это |
+|---|---|
+| `version` | версия схемы (сейчас `1`); новые поля добавляются, старые не меняют смысл |
+| `status` | `solved` / `not_found` / `plan` (`--plan`) / `service` (host:port) / `error` |
+| `target`, `mode`, `kind` | цель; режим `file`/`dir`/`url`/`string`/`service`; тип по сигнатуре (`PNG`, `unknown`, …) |
+| `statement` | разобранное условие (`--desc`, см. раздел 1) или `null` |
+| `plan` | основной план: `[{tool, args, why, timeout}]` |
+| `steps` | все шаги в порядке завершения, включая подпланы (carve, архив, папка, цепочки) |
+| `flag`, `flags` | первый настоящий флаг (или `null`) и все флаги шага, где он найден |
+| `leads` | зацепки без флага: `[{n, tool, text}]` (PIN, «кандидат», «пароль»…) |
+| `stubs` | заглушки вида `CTF{fake}` — не флаг |
+| `suggest` | для `host:port`: команды, с которых начать |
+| `elapsed` | секунды на весь прогон |
+| `error` | только при `status: error` |
+
+Шаг в `steps`:
+
+| Поле | Что это |
+|---|---|
+| `n` | номер запуска (как `[03]` в логе); `null` у пропущенного шага |
+| `tool`, `args`, `why`, `timeout` | что запускали и зачем |
+| `status` | `ok` (rc=0) / `fail` (rc≠0, вывод всё равно разобран) / `timeout` / `killed` (снят, потому что флаг уже нашёл другой шаг) / `skipped` |
+| `reason` | только у `skipped`: нет инструмента / бюджет кончился / флаг уже найден |
+| `rc`, `seconds` | код возврата (`null` при timeout/killed) и время шага |
+| `output_tail` | последние 2000 символов stdout+stderr шага |
+| `flags`, `leads`, `stubs` | что нашлось в выводе этого шага |
+
+**`--events FILE|-`** — JSON Lines, по строке на событие, `flush` сразу. У каждого
+события есть `event` и `t` (секунды от старта):
+
+| `event` | Поля | Когда |
+|---|---|---|
+| `plan` | `target, mode, kind, statement, steps[]` | основной план построен |
+| `step_start` | `n, tool, args, why, timeout` | шаг запущен |
+| `step_end` | все поля шага (см. выше) | шаг закончился; у `skipped` нет парного `step_start` |
+| `lead` | `n, tool, text` | в выводе шага зацепка |
+| `flag` | `n, tool, flag, flags` | настоящий флаг (после `step_end` того же шага) |
+| `done` | `status, flag, steps, elapsed` | конец прогона, всегда последнее событие |
+
+Порядок для одного шага: `step_start` → (`lead`…) → `step_end` → (`flag`).
+При `--jobs > 1` шаги идут параллельно, поэтому события разных шагов
+перемешаны — связывай их по `n`. Неизвестные поля и события надо пропускать:
+схема расширяемая. `--plan` теперь честно только печатает план и для URL/строки.

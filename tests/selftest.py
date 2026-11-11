@@ -1400,6 +1400,155 @@ def checks_stego_img(tmp):
                   and "Traceback" not in r.stderr):
             bad.append(f"{tag}: " + r.stdout[-300:] + r.stderr[-300:])
     check("bitmap_font huge coordinates", not bad, "\n".join(bad))
+def checks_core(tmp):
+    """Ядро solve: условие задачи (#81), JSON/события (#82), цепочки (#83)."""
+    import re as _re
+    sys.path.insert(0, KIT)
+    import solve as _solve
+
+    # 81. parse_statement: категория, подсказки, формат флага, пароль, адрес
+    st = _solve.parse_statement(
+        "Категория: Crypto\nСообщение прогнали через XOR, а потом в base64. "
+        "Формат флага: QWE{...}. Пароль: \"pa55word\". Сервер: nc 127.0.0.1 31337")
+    check("solve parse_statement ru",
+          st["category"] == "crypto" and st["hints"][:2] == ["xor", "base64"]
+          and st["flag_prefixes"] == ["QWE"] and "pa55word" in st["passwords"]
+          and "127.0.0.1:31337" in st["hosts"],
+          json.dumps(st, ensure_ascii=False))
+    st = _solve.parse_statement(
+        "The message is hidden in the least significant bits of the picture. "
+        "Flag format: flag{[a-z_]+}. Source: http://chall.local:8080/")
+    check("solve parse_statement en",
+          st["category"] == "stego" and st["hints"][:1] == ["lsb"]
+          and st["urls"] == ["http://chall.local:8080/"],
+          json.dumps(st, ensure_ascii=False))
+
+    # 81b. --desc меняет порядок плана и добавляет префикс флага
+    ddir = os.path.join(tmp, "core_desc")
+    os.makedirs(ddir, exist_ok=True)
+    dflag = "QWE{" + hashlib.sha1(b"core-desc").hexdigest()[:12] + "}"
+    note = os.path.join(ddir, "note.txt")
+    with open(note, "w", encoding="utf-8") as f:
+        f.write("some note text with numbers 12345\n" + dflag + "\n")
+
+    def _plan_pos(text, tool):
+        for i, line in enumerate(text.splitlines()):
+            if _re.match(r"\s+\d+\. " + tool + r"\b", line):
+                return i
+        return 10 ** 6
+
+    r0 = run("solve.py", note, "--plan")
+    r1 = run("solve.py", note, "--plan", "--desc",
+             "Подсказка: brainfuck. Формат флага: QWE{...}")
+    check("solve --desc plan order",
+          _plan_pos(r0.stdout, "xorknown") < _plan_pos(r0.stdout, "esolang")
+          and _plan_pos(r1.stdout, "esolang") < _plan_pos(r1.stdout, "xorknown")
+          and "--known QWE{" in r1.stdout and "QWE{…}" in r1.stdout,
+          r0.stdout[-800:] + "\n----\n" + r1.stdout[-1200:] + r1.stderr)
+    r2 = run("solve.py", note, "--time", "40", "--desc", "flag format: QWE{...}")
+    check("solve --desc flag prefix", dflag in r2.stdout, r2.stdout[-800:] + r2.stderr)
+    desc_file = os.path.join(ddir, "statement.md")
+    with open(desc_file, "w", encoding="utf-8") as f:
+        f.write("Ответь на 100 раундов: nc 127.0.0.1 31337\n")
+    r3 = run("solve.py", "--desc-file", desc_file)
+    check("solve --desc-file target",
+          "127.0.0.1:31337" in r3.stdout and "game --connect" in r3.stdout,
+          r3.stdout[-800:] + r3.stderr)
+
+    # 82. --json: в stdout один JSON с шагами и флагом; --events: поток событий
+    jdir = os.path.join(tmp, "core_json")
+    os.makedirs(jdir, exist_ok=True)
+    jflag = "CTF{" + hashlib.sha1(b"core-json").hexdigest()[:12] + "}"
+    jfile = os.path.join(jdir, "blob.txt")
+    with open(jfile, "w", encoding="utf-8") as f:
+        f.write(base64.b64encode(jflag.encode()).decode() + "\n")
+    r = run("solve.py", jfile, "--time", "40", "--json")
+    try:
+        doc = json.loads(r.stdout)
+    except ValueError:
+        doc = {}
+    step_keys = {"n", "tool", "args", "why", "timeout", "status", "rc", "seconds",
+                 "output_tail", "flags", "leads"}
+    steps = doc.get("steps") or []
+    check("solve --json",
+          r.stdout.strip().count("\n") == 0 and doc.get("flag") == jflag
+          and doc.get("status") == "solved" and doc.get("plan") and steps
+          and all(step_keys <= set(s) for s in steps)
+          and any(jflag in s["flags"] for s in steps)
+          and all(s["status"] in ("ok", "fail", "timeout", "killed", "skipped") for s in steps)
+          and "[+] тип" in r.stderr,
+          r.stdout[-800:] + r.stderr[-400:])
+    evfile = os.path.join(jdir, "events.jsonl")
+    r = run("solve.py", jfile, "--time", "40", "--jobs", "1", "--events", evfile)
+    try:
+        with open(evfile, encoding="utf-8") as f:
+            evs = [json.loads(line) for line in f if line.strip()]
+    except (OSError, ValueError):
+        evs = []
+    names = [e.get("event") for e in evs]
+    fl = next((e for e in evs if e.get("event") == "flag"), {})
+    fn = fl.get("n")
+    ordered = False
+    if names and fn is not None:
+        i_start = next((i for i, e in enumerate(evs)
+                        if e["event"] == "step_start" and e.get("n") == fn), -1)
+        i_end = next((i for i, e in enumerate(evs)
+                      if e["event"] == "step_end" and e.get("n") == fn), -1)
+        i_flag = names.index("flag")
+        ordered = (names[0] == "plan" and names[-1] == "done"
+                   and 0 < i_start < i_end < i_flag < len(names) - 1
+                   and evs[-1].get("flag") == jflag and fl.get("flag") == jflag)
+    check("solve --events order", ordered and "ФЛАГ" in r.stdout,
+          " ".join(map(str, names)) + "\n" + r.stdout[-400:] + r.stderr[-400:])
+    r = run("solve.py", base64.b64encode(jflag.encode()).decode(), "--events", "-")
+    try:
+        evs = [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
+    except ValueError:
+        evs = []
+    check("solve --events - stdout",
+          evs and evs[0]["event"] == "plan" and evs[-1]["event"] == "done"
+          and evs[-1]["flag"] == jflag and "[+] цель: строка" in r.stderr,
+          r.stdout[-600:] + r.stderr[-300:])
+
+    # 83. цепочка из 4 слоёв: base64 → hex → ROT13 → однобайтовый XOR
+    up, lo = bytes(range(65, 91)), bytes(range(97, 123))
+    rot13 = bytes.maketrans(up + lo, up[13:] + up[:13] + lo[13:] + lo[:13])
+    cflag = ("CTF{multi_layer_chain_" + hashlib.sha1(b"core-chain").hexdigest()[:6]
+             + "}").encode()
+    ckey = hashlib.sha1(b"core-chain-key").digest()[0] | 1
+    while cflag.translate(bytes(b ^ ckey for b in range(256))).translate(rot13) == \
+            cflag.translate(bytes(b ^ ckey for b in range(256))):
+        ckey = (ckey + 2) % 256 or 1      # ROT13 должен реально менять слой
+    xored = bytes(b ^ ckey for b in cflag)
+    layered = base64.b64encode(xored.translate(rot13).hex().encode()).decode()
+    r = run("crypto/chain.py", layered)
+    check("crypto/chain.py 4 layers",
+          ("ФЛАГ: " + cflag.decode()) in r.stdout
+          and "base64 → hex → rot13 → xor:0x%02x" % ckey in r.stdout,
+          r.stdout[-800:] + r.stderr[-400:])
+    # обратный порядок: XOR → ROT13 → hex → base64, бинарный файл
+    rev = bytes(b ^ ckey for b in base64.b64encode(cflag).hex().encode().translate(rot13))
+    cdir = os.path.join(tmp, "core_chain")
+    os.makedirs(cdir, exist_ok=True)
+    rev_path = os.path.join(cdir, "layers.bin")
+    with open(rev_path, "wb") as f:
+        f.write(rev)
+    r = run("crypto/chain.py", "--file", rev_path)
+    check("crypto/chain.py reverse order",
+          ("ФЛАГ: " + cflag.decode()) in r.stdout, r.stdout[-800:] + r.stderr[-400:])
+    # solve сам доходит до цепочки на текстовом файле
+    lay_path = os.path.join(cdir, "layers.txt")
+    with open(lay_path, "w", encoding="utf-8") as f:
+        f.write(layered + "\n")
+    r = run("solve.py", lay_path, "--time", "60")
+    check("solve chain 4 layers", cflag.decode() in r.stdout and "chain" in r.stdout,
+          r.stdout[-900:] + r.stderr[-400:])
+    r = run("crypto/chain.py", "--file", os.path.join(cdir, "missing.bin"))
+    r2 = run("crypto/chain.py", "--file", cdir)
+    check("crypto/chain.py no file",
+          r.returncode == 1 and r2.returncode == 1 and "не могу прочитать" in r.stdout
+          and "Traceback" not in r.stderr + r2.stderr,
+          r.stdout[-300:] + r.stderr[-300:] + r2.stderr[-300:])
 
 
 def main():
@@ -3290,6 +3439,7 @@ def main():
     checks_reverse(tmp)
     checks_admin(tmp)
     checks_stego_img(tmp)
+    checks_core(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

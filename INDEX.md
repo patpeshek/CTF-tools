@@ -11,7 +11,7 @@
 
 | Имя | Что делает | Пример |
 |---|---|---|
-| `solve` | автопилот: сам выбирает шаги по типу, идёт до первого флага | `python toolbox.py solve file.bin` |
+| `solve` | автопилот: сам выбирает шаги по типу, идёт до первого флага; `--desc`/`--desc-file` — условие задачи (категория, подсказки, формат флага, пароли, адреса) меняет план; `--json` — итог одним JSON, `--events FILE\|-` — поток событий (схема: `MANUAL.md` §14) | `python toolbox.py solve file.bin --desc "XOR. Формат флага: ABC{...}"` |
 | `hint` | разбор с объяснением «что вижу → на что похоже → почему» | `python toolbox.py hint file.bin` |
 | `auto` | сам смотрит файл: тип, вложенные сигнатуры, флаги, архивы, DNS, WAV, защиты; даёт план команд | `python toolbox.py auto capture.pcap` |
 | `all` | универсальный перебор: файлы/папки/строки, known-plaintext XOR по префиксу флага | `python toolbox.py all dump.bin` |
@@ -89,6 +89,7 @@
 | `classical` | классические шифры + `vigenere-crack` | `python toolbox.py classical vigenere-crack --text "..."` |
 | `genetic` | триплеты → аминокислоты | `python toolbox.py genetic "UGUACUUUC"` |
 | `xorknown` | XOR с known plaintext; длину ключа подбирает сам | `python toolbox.py xorknown enc.bin --known "CTF{"` |
+| `chain` | многослойные цепочки кодировок: поиск лучом по base64/32/85, hex, bin/dec/oct, url, zlib/gzip/bz2/xz, ROT13/ROT-N/ROT47, Atbash, реверс, NOT, однобайтовый XOR + все декодеры `enc`; глубина/луч/бюджет, стоп на флаге; `solve` зовёт его сам | `python toolbox.py chain "<строка>"` / `chain blob.bin --depth 8 --time 30` |
 | `prng` | random по seed | `python toolbox.py prng --ts "2026-01-01 12:00:00"` |
 | `aes` | AES-CBC из бинарника | `python toolbox.py aes f.enc --auto --from-bin encryptor` |
 | `ecb` | детект/расшифровка ECB | `python toolbox.py ecb c.hex --hex --key K --decrypt` |

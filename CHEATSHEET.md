@@ -72,6 +72,7 @@ python crypto/aes_file.py enc.bin --auto --from-bin encryptor   # ключ/IV и
 python crypto/hash_id.py 5f4dcc3b5aa765d61d8327deb882cf99
 python enc.py "Q1RGe2ZsYWd9"                              # все базовые декоды
 python enc.py --file utf16.txt                            # utf-16/32, cp1251, base36/58/85/z85...
+python toolbox.py chain "<строка>"                        # несколько слоёв подряд (enc — один)
 python toolbox.py solve file                              # enc уже включён в автопилот
 ```
 
@@ -160,6 +161,8 @@ python crypto/rsa_tool.py batch --moduli moduli.txt
 python crypto/rsa_tool.py dp-leak --n ... --e 65537 --dp <d mod p-1> --cipher ...
 python crypto/rsa_tool.py auto public.pem --cipher cipher.bin
 python crypto/rsa_tool.py auto task.txt          # n/e/c, dp, d, p,q — что найдёт
+python crypto/chain.py "<строка>"                   # base64→hex→ROT13→XOR… сам найдёт цепочку
+python crypto/chain.py blob.bin --depth 8 --beam 60 --time 30   # глубже/шире
 python crypto/autocrack.py --text "..."
 python crypto/autocrack.py --hex ... --deep
 python crypto/autocrack.py --hash <hash> --wordlist auto
@@ -245,6 +248,10 @@ python forensic/volatility_text.py windows.pstree.txt --grep lab --keys
 python toolbox.py auto <файл|строка>
 python toolbox.py solve <файл>              # прогнать всё самому до флага
 python toolbox.py solve <файл> --deep --time 180
+python toolbox.py solve <файл> --desc "текст условия"    # подсказки/формат флага/пароли → план
+python toolbox.py solve --desc-file task.txt            # цель (URL, host:port) — из условия
+python toolbox.py solve <файл> --json > result.json     # итог JSON (лог — в stderr)
+python toolbox.py solve <файл> --events events.jsonl    # события plan/step_*/lead/flag/done (MANUAL §14)
 python toolbox.py hint <файл>               # объяснить, что это и почему
 python toolbox.py index
 

@@ -99,6 +99,8 @@ REGISTRY = [
     ("crypto", "classical", "crypto/classical.py", "классические шифры"),
     ("crypto", "genetic", "crypto/genetic.py", "триплеты → аминокислоты"),
     ("crypto", "xorknown", "crypto/xor_known.py", "XOR с known plaintext"),
+    ("crypto", "chain", "crypto/chain.py",
+     "многослойные цепочки: base64→hex→ROT13→XOR… (поиск лучом)"),
     ("crypto", "prng", "crypto/prng_seed.py", "random по seed-timestamp"),
     ("crypto", "aes", "crypto/aes_file.py", "AES-CBC из бинарника"),
     ("crypto", "ecb", "crypto/aes_ecb.py", "детект/расшифровка ECB"),

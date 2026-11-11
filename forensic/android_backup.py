@@ -37,10 +37,36 @@ INTEREST = re.compile(
     r"package|version|user|email|phone|salt|iv)"
 )
 KV = re.compile(r"(?m)^\s*([A-Za-z0-9_.-]{2,40})\s*[:=]\s*(\S+)")
+SQLITE_MAGIC = b"SQLite format 3\x00"
 
+
+def sniff(path):
+    """Тип по содержимому: в databases/ файлы часто без расширения."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(64)
+    except OSError:
+        return None
+    if head.startswith(SQLITE_MAGIC):
+        return "db"
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n").startswith((b"<?xml", b"<map")):
+        return "xml"
+    return None
+
+
+def scan_flags(path, out, max_bytes=20_000_000):
+    """Флаги в сырых байтах файла (XML, БД, всё неизвестное)."""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(max_bytes)
+    except OSError:
+        return
+    for f in common.find_flags(data):
+        out.append({"file": path, "flag": f})
 
 
 def scan_xml(path, out):
+    scan_flags(path, out)
     try:
         tree = ET.parse(path)
     except Exception as e:
@@ -66,6 +92,7 @@ def scan_text(path, out):
 
 
 def scan_db(path, out, limit):
+    scan_flags(path, out)       # строки дальше --db-limit и удалённые записи
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         cur = con.cursor()
@@ -111,6 +138,15 @@ def main():
             scan_db(p, out, args.db_limit)
         elif low.endswith((".txt", ".log", ".json", ".conf", ".properties")):
             scan_text(p, out)
+        else:
+            # без расширения/незнакомое: тип по сигнатуре, иначе только флаги
+            kind = sniff(p)
+            if kind == "db":
+                scan_db(p, out, args.db_limit)
+            elif kind == "xml":
+                scan_xml(p, out)
+            else:
+                scan_flags(p, out)
 
     for item in out:
         print(json.dumps(item, ensure_ascii=False))

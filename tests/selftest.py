@@ -237,6 +237,36 @@ def checks_forensics(tmp):
     check("cloud_creds prints value (#72)", "FAKE-test-token-0001" in r.stdout,
           r.stdout[-600:] + r.stderr)
 
+    # #73 android_backup: флаг в shared_prefs XML и SQLite без расширения
+    adump = os.path.join(base, "com.example.app")
+    os.makedirs(os.path.join(adump, "shared_prefs"))
+    os.makedirs(os.path.join(adump, "databases"))
+    open(os.path.join(adump, "shared_prefs", "prefs.xml"), "w").write(
+        "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n"
+        "    <string name=\"note\">CTF{prefs_xml_flag}</string>\n</map>\n")
+    import sqlite3 as _sqlite3
+    _con = _sqlite3.connect(os.path.join(adump, "databases", "appdata"))
+    _con.execute("create table notes(body text)")
+    _con.execute("insert into notes values('CTF{sqlite_noext_flag}')")
+    _con.commit()
+    _con.close()
+    r = run("forensic/android_backup.py", adump)
+    check("android_backup xml/sqlite flags (#73)",
+          "CTF{prefs_xml_flag}" in r.stdout and "CTF{sqlite_noext_flag}" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+    # #73 apk_info: resources.arsc (UTF-16 пул строк) и assets/
+    apkp = os.path.join(base, "res.apk")
+    with zipfile.ZipFile(apkp, "w") as z:
+        z.writestr("AndroidManifest.xml",
+                   b"\x03\x00\x08\x00" + "com.example.res".encode("utf-16-le"))
+        z.writestr("resources.arsc", b"\x02\x00\x0c\x00"
+                   + "CTF{arsc_string_flag}".encode("utf-16-le") + b"\x00\x00")
+        z.writestr("assets/blob.bin", b"\x00\x01CTF{apk_asset_flag}\x00")
+    r = run("forensic/apk_info.py", apkp)
+    check("apk_info resources.arsc/assets (#73)",
+          "CTF{arsc_string_flag}" in r.stdout and "CTF{apk_asset_flag}" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

@@ -177,6 +177,16 @@ python linux/gtfobins.py --from-sudo sudo.txt
 python linux/script_audit.py /usr/local/sbin/reconcile --check-writable
 ```
 
+## Admin: образы ВМ, логи, Windows, конфиги
+
+```bash
+python admin/vm_image.py disk.qcow2                 # формат, разделы, флаги внутри диска
+python admin/vm_image.py disk.vmdk --raw disk.raw   # QCOW2/VMDK/VDI/VHD → raw (потоково)
+python admin/vm_image.py vm.ova --extract out       # OVA: .ovf/.mf/диски
+python admin/vm_image.py disk.vdi --find flag.txt   # строка ASCII/UTF-16 в диске
+python admin/vm_image.py disk.vhd --mount           # qemu-nbd/guestmount/7z/VBoxManage
+```
+
 ## Артефакты и текстовые выгрузки
 
 ```bash

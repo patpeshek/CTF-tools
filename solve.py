@@ -458,6 +458,16 @@ def sibling_texts(path, limit=3):
     return out
 
 
+def admin_kind(path, data):
+    """Тип для admin/*: образ ВМ, куст реестра, задача, лог, история (по данным)."""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "admin"))
+        import adminlib
+        return adminlib.detect(path, data[:4096])
+    except Exception:
+        return None, None
+
+
 def steps_for(path, deep=False, depth=0):
     """[(имя_инструмента, аргументы, зачем, таймаут)] по типу данных."""
     data = common.read_bytes(path)[:2_000_000] if os.path.isfile(path) else b""
@@ -577,6 +587,12 @@ def steps_for(path, deep=False, depth=0):
             add(("udp", [path], "полезная нагрузка UDP", 40))
             add(("reasm", [path], "склейка TCP-потоков", 60))
             add(("mc", [path], "Minecraft-протокол", 60))
+
+    # admin: образы ВМ, кусты реестра, логи — тип по сигнатурам/содержимому
+    adm, _adm_detail = admin_kind(path, data) if data else (None, None)
+    if adm in ("QCOW2", "VMDK", "VDI", "VHD", "VHDX", "OVA", "OVF"):
+        add(("vm", [path, "--next"],
+             f"образ ВМ {adm}: кластеры → флаги, raw → разделы/ФС", 180))
 
     # PEM/DER-ключ: рядом часто лежит cipher.bin/flag.enc
     if ext in (".pem", ".pub", ".key", ".crt", ".der") or b"-----BEGIN" in data[:200]:

@@ -121,6 +121,15 @@
 | `wsl` | запуск ELF в Arch WSL (gdb/pwntools), файлы в `~/inbox` | `python linux/wsl.py run .\chall --dir` / `wsl.py inbox` / `--arch auto` |
 | `audit` | что source-ит root-скрипт | `python toolbox.py audit /usr/local/sbin/x --check-writable` |
 
+## Admin
+
+Системное администрирование: образы ВМ, логи, Windows, конфиги. Чистый Python,
+только чтение; артефакты для тестов — `tests/gen_admin.py`.
+
+| Имя | Что делает | Пример |
+|---|---|---|
+| `vm` | образ ВМ QCOW2/VMDK (sparse/stream/flat)/VDI/VHD/OVA: разделы, флаги внутри (в т.ч. в сжатых кластерах), `--raw` потоково, `--find`, `--mount`, `--next` → `forensic/disk_image.py` | `python toolbox.py vm disk.qcow2 --raw disk.raw` / `vm vm.ova --extract out` |
+
 ## Web
 
 | Имя | Что делает | Пример |

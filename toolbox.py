@@ -114,6 +114,9 @@ REGISTRY = [
     ("linux", "wsl", "linux/wsl.py",
      "запуск ELF в Arch WSL: копирует в Linux, +x, gdb/pwntools"),
 
+    ("admin", "vm", "admin/vm_image.py",
+     "образ ВМ QCOW2/VMDK/VDI/VHD/OVA: raw, разделы, флаги внутри"),
+
     ("web", "recon", "web/recon.py", "разведка страницы: ссылки/формы/JS/куки/robots"),
     ("web", "jwt", "web/jwt_tool.py", "JWT decode/forge"),
     ("web", "jwtbrute", "web/jwt_brute.py", "подбор секрета JWT"),
@@ -458,6 +461,18 @@ def _plan_file(path):
                 print("[+] декодируется как:")
                 for how, val in cands[:4]:
                     print(f"    {how}: {val[:120]}")
+
+    # admin: образ ВМ / куст реестра / логи — тип по данным (admin/adminlib.py)
+    try:
+        sys.path.insert(0, os.path.join(HERE, "admin"))
+        import adminlib
+        adm, adm_detail = adminlib.detect(path, full[:4096])
+    except Exception:
+        adm, adm_detail = None, None
+    if adm:
+        print(f"[+] admin-тип: {adm}" + (f" ({adm_detail})" if adm_detail else ""))
+    if adm in ("QCOW2", "VMDK", "VDI", "VHD", "VHDX", "OVA", "OVF"):
+        act(1, "vm", f"образ ВМ {adm}: разделы, флаги внутри, --raw для ФС")
 
     if kind == "SQLite":
         act(2, "android", "SQLite: таблицы, чаты, токены")

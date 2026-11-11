@@ -98,6 +98,29 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_admin(tmp):
+    """admin/*: образы ВМ, логи, Windows, триаж. Артефакты — tests/gen_admin.py."""
+    sys.path.insert(0, os.path.join(KIT, "tests"))
+    import gen_admin
+    base = os.path.join(tmp, "admin")
+
+    # #85 vm_image: QCOW2 (zlib-кластер), VDI, VMDK sparse/stream, OVA
+    vms = gen_admin.write_vm_set(os.path.join(base, "vm"))
+    for kind, (p, flag, raw) in vms.items():
+        r = run("admin/vm_image.py", p)
+        check(f"admin/vm_image.py {kind} flag", flag in r.stdout and "MBR 0x83" in r.stdout,
+              r.stdout[-700:] + r.stderr[-400:])
+        out = p + ".raw"
+        r = run("admin/vm_image.py", p, "--raw", out)
+        same = os.path.exists(out) and open(out, "rb").read() == raw
+        check(f"admin/vm_image.py {kind} --raw", same, r.stdout[-500:] + r.stderr[-400:])
+    r = run("admin/vm_image.py", vms["vmdk_sparse"][0], "--find", "flag.txt")
+    check("admin/vm_image.py --find", "0x000000050010" in r.stdout, r.stdout[-500:])
+    r = run("solve.py", vms["qcow2"][0], "--time", "40")
+    check("solve.py vm image", vms["qcow2"][1] in r.stdout and "vm" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
@@ -1975,6 +1998,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_admin(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

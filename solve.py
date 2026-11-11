@@ -722,8 +722,22 @@ def steps_for(path, deep=False, depth=0):
     return uniq_steps, kind
 
 
-def solve_file(target, runner, deep, plan_only):
+def _dedupe_steps(steps):
+    seen, out = set(), []
+    for step in steps:
+        key = (step[0], tuple(map(str, step[1])))
+        if key not in seen:
+            seen.add(key)
+            out.append(step)
+    return out
+
+
+def solve_file(target, runner, deep, plan_only, statement=None):
     steps, kind = steps_for(target, deep)
+    if statement:
+        # условие: добавить шаги с паролями/ключами и поднять подсказанные
+        steps = _dedupe_steps(order_steps(statement_steps(statement, target) + steps,
+                                          statement))
     print(f"[+] тип: {kind}")
     if plan_only:
         for i, (name, args, why, timeout) in enumerate(steps, 1):
@@ -757,6 +771,7 @@ def solve_file(target, runner, deep, plan_only):
                 # не жёсткий список, а план по типу внутреннего файла:
                 # pcap → http/creds, wav → morse/DTMF, zip → метаданные и т.д.
                 sub_steps, _subk = steps_for(p2)
+                sub_steps = order_steps(sub_steps, statement)
                 for n2, a2, w2, t2 in sub_steps[:8]:
                     if n2 == "carve":
                         continue
@@ -787,6 +802,7 @@ def solve_file(target, runner, deep, plan_only):
                 if time.time() >= runner.deadline - 2 or runner.stop.is_set():
                     return None
                 sub, _ = steps_for(p, deep=deep)
+                sub = order_steps(sub, statement)
                 seq = [(n2, a2, f"{os.path.basename(p)}: {w2}", t2)
                        for n2, a2, w2, t2 in sub[:6] if n2 != "carve"]
                 return runner.run_serial(seq)
@@ -807,6 +823,7 @@ def solve_file(target, runner, deep, plan_only):
                     break
                 print(f"--- {k}: {os.path.basename(p)}")
                 sub_steps, _ = steps_for(p, deep=deep)
+                sub_steps = order_steps(sub_steps, statement)
                 for n2, a2, w2, t2 in sub_steps[:6]:
                     if n2 == "carve":
                         continue
@@ -829,26 +846,455 @@ def solve_url(url, runner, deep):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Условие задачи (--desc / --desc-file): категория, подсказки, формат флага,
+# пароли/ключи, адреса. Чистая функция parse_statement() + правка плана.
+# ---------------------------------------------------------------------------
+
+STATEMENT_CATEGORIES = {
+    "crypto": r"crypto\w*|крипт\w*|шифр\w*|cipher\w*|encrypt\w*|decrypt\w*|"
+              r"расшифр\w*|зашифр\w*|\brsa\b|\baes\b|\bxor\b|modulus|ключ\w*",
+    "stego": r"stego\w*|стег\w*|картинк\w*|изображени\w*|\bimage\w*|picture\w*|"
+             r"\blsb\b|pixel\w*|пиксел\w*|hidden in|спрятан\w*",
+    "forensics": r"forensic\w*|форензик\w*|криминалист\w*|дамп\w*|\bdump\w*|"
+                 r"\bmemory\b|памят\w*|disk image|образ\w* диска|pcap\w*|traffic|"
+                 r"трафик\w*|\blogs?\b|удал[её]нн?\w*|deleted|volatility|wireshark",
+    "web": r"\bweb\b|веб\w*|сайт\w*|website|\bsite\b|https?://|cookie\w*|куки|"
+           r"\blogin\b|логин\w*|\bsql\w*|\bxss\b|\bssti\b|\bjwt\b|админк\w*|"
+           r"admin panel|browser|браузер\w*",
+    "pwn": r"\bpwn\w*|overflow|переполнени\w*|\bbuffer\b|буфер\w*|shellcode|"
+           r"format string|\brop\b|ret2\w*|exploit\w*|эксплойт\w*|эксплуат\w*",
+    "reverse": r"revers\w*|реверс\w*|crackme|\bbinary\b|бинарник\w*|\bexe\b|"
+               r"\belf\b|decompil\w*|декомпил\w*|disassembl\w*|дизасс\w*|"
+               r"ghidra|\bida\b|keygen",
+    "ppc": r"\bppc\b|programming|программировани\w*|\brounds?\b|раунд\w*|"
+           r"\bбот\w*|\bbot\b|answer .{0,20}(?:fast|quick|seconds)|"
+           r"за \d+ секунд\w*",
+    "osint": r"osint|осинт|геолок\w*|geolocat\w*|где (?:сделан\w*|снят\w*)|"
+             r"where .{0,20}taken|соцсет\w*|social network\w*|username|никнейм\w*",
+    "misc": r"\bmisc\b|разное|esolang\w*|эзотерич\w*",
+}
+
+STATEMENT_CATEGORY_ALIASES = {
+    "crypto": "crypto", "cryptography": "crypto", "криптография": "crypto",
+    "крипта": "crypto", "крипто": "crypto",
+    "stego": "stego", "steganography": "stego", "стеганография": "stego",
+    "стего": "stego",
+    "forensic": "forensics", "forensics": "forensics", "форензика": "forensics",
+    "web": "web", "веб": "web",
+    "pwn": "pwn", "binary exploitation": "pwn", "пывн": "pwn",
+    "reverse": "reverse", "reversing": "reverse", "rev": "reverse",
+    "reverse engineering": "reverse", "реверс": "reverse",
+    "ppc": "ppc", "programming": "ppc", "программирование": "ppc",
+    "osint": "osint", "осинт": "osint",
+    "misc": "misc", "разное": "misc",
+}
+
+# (подсказка, regex, инструменты, которые она поднимает в начало плана)
+STATEMENT_HINTS = [
+    ("xor", r"\bxor\w*|исключающ\w* или|\bксор\w*",
+     ["xorknown", "xorscan", "chain", "autocrack"]),
+    ("rsa", r"\brsa\b|\bрса\b|public exponent|modulus|\bphi\b|эйлер\w*",
+     ["rsa"]),
+    ("aes", r"\baes\b|\bcbc\b|\becb\b|\biv\b|вектор инициализации",
+     ["aes", "ecb"]),
+    ("lsb", r"\blsb\b|младш\w* бит\w*|least significant|пиксел\w*|pixel\w*",
+     ["lsb", "alpha"]),
+    ("base64", r"base\s?-?(?:64|32|85|58|62|91)|кодировк\w*|\bencod\w*|закодир\w*",
+     ["chain", "enc"]),
+    ("hex", r"\bhex\w*|шестнадцатеричн\w*", ["chain", "enc"]),
+    ("layers", r"\bсло[йяеёи]\w*|\blayer\w*|\bonion\b|матр[её]шк\w*|\bnested\b|"
+               r"многослойн\w*|\bchain\w*|цепочк\w*",
+     ["chain", "enc"]),
+    ("morse", r"морз\w*|\bmorse\b", ["audiotools", "enc", "chain"]),
+    ("steghide", r"steghide|stegseek|outguess|openstego|jsteg",
+     ["steghide", "stegseek", "exif", "jpeg_tail", "lsb"]),
+    ("zip-password",
+     r"(?:\bzip\b|архив\w*)\W+(?:\w+\W+){0,4}?(?:парол\w*|password\w*)|"
+     r"(?:парол\w*|password\w*)\W+(?:\w+\W+){0,4}?(?:\bzip\b|архив\w*)",
+     ["zipmeta", "zipcrack", "carve"]),
+    ("vigenere", r"vigen[eè]re|виженер\w*", ["classical", "autocrack"]),
+    ("caesar", r"caesar|цезар\w*|\brot\s?-?\d+\b|\bshift\w*|сдвиг\w*",
+     ["classical", "autocrack", "enc", "chain"]),
+    ("whitespace", r"whitespace|пробел\w*|zero.?width|невидим\w*|invisible",
+     ["ws"]),
+    ("qr", r"\bqr\b|qr-?код\w*", ["qr"]),
+    ("ocr", r"\bocr\b|распозна\w*|скриншот\w*|screenshot\w*", ["ocr"]),
+    ("metadata", r"\bexif\b|метаданн\w*|metadata|\bgps\b|геолок\w*",
+     ["exif", "geo"]),
+    ("audio", r"spectrogram\w*|спектр\w*|\baudio\b|аудио\w*|\bзвук\w*|\bdtmf\b",
+     ["audio", "audiotools"]),
+    ("dns", r"\bdns\b", ["dns"]),
+    ("pcap", r"\bpcap\w*|трафик\w*|\btraffic\b|wireshark",
+     ["http", "creds", "dns", "icmp", "reasm", "udp"]),
+    ("jwt", r"\bjwt\b|json web token", ["jwt"]),
+    ("sqli", r"\bsql\w*|инъекци\w*|injection", ["param"]),
+    ("esolang", r"brainf\w*|\bbf\b|\book\b|esolang\w*|эзотерич\w*|befunge|"
+                r"malbolge", ["esolang"]),
+    ("hash", r"\bhash\w*|\bхе[шэ]\w*|\bхэш\w*|\bmd5\b|\bsha-?\d*\b|bcrypt",
+     ["autocrack", "hashcat", "hash_id"]),
+    ("disasm", r"crackme|ghidra|\bida\b|дизасс\w*|disassembl\w*|decompil\w*|"
+               r"декомпил\w*", ["disasm", "ghidra", "megarev", "strings"]),
+    ("embedded", r"binwalk|hidden file\w*|embedded|вложенн\w*|\bcarv\w*",
+     ["carve", "jpeg_tail", "png_chunks"]),
+    ("otp", r"two.?time pad|one.?time pad|\botp\b|одноразов\w*|многоразов\w*",
+     ["otp"]),
+    ("classical", r"атбаш|atbash|playfair|плейфер\w*|affine|аффинн\w*|"
+                  r"\bbacon\b|бэкон\w*", ["classical", "obscure"]),
+]
+
+# какие инструменты поднимать, если категория известна, а подсказок нет
+STATEMENT_CATEGORY_TOOLS = {
+    "crypto": ["rsa", "xorknown", "chain", "autocrack", "classical", "enc",
+               "obscure", "ecb", "aes", "otp", "all"],
+    "stego": ["lsb", "png_chunks", "alpha", "jpeg_tail", "exif", "ws", "qr",
+              "audio", "audiotools", "gif_frames", "carve"],
+    "forensics": ["hunt", "flaghunt", "carve", "zipmeta", "exif", "dns", "http",
+                  "creds", "icmp", "reasm", "udp", "android", "text", "ooxml"],
+    "web": ["recon", "param", "jwt", "dirfuzz", "ssti"],
+    "pwn": ["checksec", "disasm", "strings", "megarev", "fmtstr", "ret2win"],
+    "reverse": ["strings", "disasm", "megarev", "ghidra", "xorscan", "lang",
+                "pypack"],
+    "osint": ["geo", "exif", "ocr", "qr"],
+    "misc": ["esolang", "ws", "chain", "enc", "ocr", "qr", "nearlines"],
+}
+
+_FLAGFMT_RE = re.compile(
+    r"(?i)(?:flag\s*format|format\s*(?:of\s*(?:the\s*)?)?flag|формат\s*флага|"
+    r"флаг\s*(?:в\s*формате|имеет\s*вид|выглядит\s*(?:как|так))|"
+    r"flag\s*(?:looks\s*like|is\s*in\s*(?:the\s*)?form(?:at)?(?:\s*of)?|"
+    r"is\s*wrapped\s*in|has\s*the\s*form(?:at)?(?:\s*of)?)|"
+    r"wrap\w*(?:\s+\w+){0,3}?\s+in|оберн\w*(?:\s+\w+){0,3}?\s+в)"
+    r"\s*[:\-—]?\s*[`'\"«]?\s*([A-Za-z][A-Za-z0-9_]{1,24})\s*\{")
+# слова из кода, которые шаблон X{...} не должен принять за префикс флага
+_FLAGTPL_STOP = {"if", "else", "for", "while", "do", "try", "catch", "finally",
+                 "switch", "case", "function", "return", "struct", "class", "enum",
+                 "union", "then", "begin", "main", "void", "int", "char", "def",
+                 "lambda", "match", "loop", "unsafe", "impl", "mod", "fn"}
+_FLAGTPL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_]{1,24})\{\s*(?:\.\.\.|…|<[^<>{}]{0,40}>|"
+    r"\[[^\[\]{}]{0,40}\][*+]?(?:\{\d+(?:,\d*)?\})?|\.\*|\.\+|\*|x+|X+|_+|"
+    r"[A-Za-z_ ]{0,20}(?:flag|text|here|example|something|secret)[A-Za-z_ ]{0,20}|"
+    r"[а-яё_ ]{0,20}(?:флаг|текст|пример|секрет)[а-яё_ ]{0,20})\s*\}")
+_PASS_QUOTED_RE = re.compile(
+    r"(?i)(?:password|passphrase|passwd|\bpass\b|пароль|кодов\w* слово|"
+    r"\bkey\b|ключ|secret|секрет|\bpin\b)\w*(?:\s+(?!is\b|это\b)\w+){0,3}?"
+    r"\s*(?:is|=|:|—|-|это)?\s*[`\"«“]([^`\"»”\n]{1,64})[`\"»”]")
+_PASS_PLAIN_RE = re.compile(
+    r"(?i)(?:password|passphrase|пароль|\bkey\b|ключ)\s*(?:is|=|:|—|это)\s*"
+    r"([^\s`\"«»“”,;]{2,64})")
+_QUOTED_RE = re.compile(r"[\"«“`]([^\"»”`\n]{2,80})[\"»”`]")
+_URL_RE = re.compile(r"https?://[^\s<>\"'`)\]»”]+", re.I)
+_NC_RE = re.compile(r"(?i)\b(?:nc|ncat|netcat|telnet)\s+(?:-\w+\s+)*"
+                    r"([A-Za-z0-9][\w.\-]*)\s+(\d{2,5})\b")
+_HOSTPORT_RE = re.compile(
+    r"(?<![/\w@.:])((?:\d{1,3}\.){3}\d{1,3}|localhost|"
+    r"[A-Za-z0-9][\w\-]*(?:\.[\w\-]+)+):(\d{2,5})\b")
+_EXPLICIT_CAT_RE = re.compile(r"(?im)^\s*(?:category|категория|cat)\s*[:\-—]\s*(.+)$")
+
+
+def parse_statement(text: str) -> dict:
+    """Разобрать текст условия. Чистая функция: только текст → dict.
+
+    Ключи: category (или None), scores {категория: вес}, hints [подсказки],
+    flag_prefixes, passwords, params {key/iv/...}, quoted, urls, hosts
+    (host:port), blobs (строки, похожие на кодировку).
+    """
+    text = text or ""
+    st = {"category": None, "scores": {}, "hints": [], "flag_prefixes": [],
+          "passwords": [], "params": {}, "quoted": [], "urls": [], "hosts": [],
+          "blobs": []}
+    if not text.strip():
+        return st
+
+    # категория: явная строка «Категория: X» весит больше, чем слова в легенде
+    scores = {}
+    for m in _EXPLICIT_CAT_RE.finditer(text):
+        val = m.group(1).strip().strip(".:;").lower()
+        cat = STATEMENT_CATEGORY_ALIASES.get(val)
+        if not cat:
+            for alias, c in STATEMENT_CATEGORY_ALIASES.items():
+                if re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", val):
+                    cat = c
+                    break
+        if cat:
+            scores[cat] = scores.get(cat, 0) + 10
+    for cat, rx in STATEMENT_CATEGORIES.items():
+        n = len(re.findall(rx, text, re.I))
+        if n:
+            scores[cat] = scores.get(cat, 0) + n
+    st["scores"] = scores
+    if scores:
+        st["category"] = max(scores.items(), key=lambda kv: kv[1])[0]
+
+    # подсказки — в порядке первого упоминания
+    found = []
+    for name, rx, _tools in STATEMENT_HINTS:
+        m = re.search(rx, text, re.I)
+        if m:
+            found.append((m.start(), name))
+    st["hints"] = [name for _, name in sorted(found)]
+
+    # формат флага → дополнительный префикс
+    pres = []
+    for rx in (_FLAGFMT_RE, _FLAGTPL_RE):
+        for m in rx.finditer(text):
+            pre = m.group(1)
+            if rx is _FLAGTPL_RE and pre.lower() in _FLAGTPL_STOP:
+                continue
+            if len(pre) >= 2 and pre.lower() not in {p.lower() for p in pres}:
+                pres.append(pre)
+    st["flag_prefixes"] = pres
+
+    # адреса: URL, затем host:port и «nc host port» вне URL
+    urls = []
+    for m in _URL_RE.finditer(text):
+        u = m.group(0).rstrip(".,;:!?")
+        if u not in urls:
+            urls.append(u)
+    st["urls"] = urls
+    no_url = _URL_RE.sub(" ", text)
+    hosts = []
+    for rx in (_NC_RE, _HOSTPORT_RE):
+        for m in rx.finditer(no_url):
+            host, port = m.group(1), m.group(2)
+            if not 0 < int(port) <= 65535:
+                continue
+            hp = f"{host}:{port}"
+            if hp not in hosts:
+                hosts.append(hp)
+    st["hosts"] = hosts
+
+    # пароли/ключи: «password: X», «ключ "X"», key=..., iv=...
+    pw = []
+    for rx in (_PASS_QUOTED_RE, _PASS_PLAIN_RE):
+        for m in rx.finditer(text):
+            v = m.group(1).strip().rstrip(".,;:!?")
+            if v and v not in pw and not v.lower().startswith(("http://", "https://")):
+                pw.append(v)
+    params = {}
+    for m in HINT_RE.finditer(text):
+        params.setdefault(m.group(1).lower(), m.group(2).rstrip(".,;:!?"))
+    st["params"] = params
+    st["passwords"] = pw[:8]
+
+    quoted = []
+    for m in _QUOTED_RE.finditer(text):
+        q = m.group(1).strip()
+        if q and q not in quoted:
+            quoted.append(q)
+    st["quoted"] = quoted[:12]
+
+    # строки, похожие на кодировку (base64/hex/морзе) — кандидаты в цель
+    blobs = []
+    for m in CAND_RE.finditer(no_url):
+        c = m.group(1)
+        if c in blobs or any(c in h for h in hosts):
+            continue
+        if not (re.search(r"\d", c) or "+" in c or "=" in c
+                or re.fullmatch(r"[.\-]+", c) or len(c) >= 24):
+            continue
+        blobs.append(c)
+    st["blobs"] = blobs[:5]
+    return st
+
+
+def load_statement(desc=None, desc_file=None):
+    """Текст условия из --desc и/или --desc-file. (текст, ошибка)."""
+    parts = []
+    if desc_file:
+        try:
+            with open(desc_file, encoding="utf-8-sig", errors="replace") as f:
+                parts.append(f.read(200_000))
+        except (FileNotFoundError, IsADirectoryError, PermissionError, OSError) as e:
+            return None, f"не могу прочитать файл условия {desc_file}: {e.__class__.__name__}"
+    if desc:
+        parts.append(desc)
+    return "\n".join(parts), None
+
+
+def apply_statement_flags(st, any_prefix=False):
+    """Префиксы из формата флага — в начало списка (их видят и подпроцессы)."""
+    pres = (st or {}).get("flag_prefixes") or []
+    if not pres:
+        return []
+    have = common.prefixes()
+    new = [p for p in pres if p.lower() not in {x.lower() for x in have}]
+    merged = list(pres) + [p for p in have if p.lower() not in {x.lower() for x in pres}]
+    common.configure(prefixes=merged, any_prefix=any_prefix)
+    return new
+
+
+def statement_tools(st):
+    """(инструменты из подсказок по порядку, инструменты категории)."""
+    pri = []
+    if not st:
+        return pri, []
+    table = {name: tools for name, _rx, tools in STATEMENT_HINTS}
+    for h in st.get("hints", []):
+        for t in table.get(h, []):
+            if t not in pri:
+                pri.append(t)
+    return pri, STATEMENT_CATEGORY_TOOLS.get(st.get("category") or "", [])
+
+
+def order_steps(steps, st):
+    """Подсказки из условия — первыми, потом инструменты категории, потом остальное.
+
+    Сортировка устойчивая: внутри группы порядок steps_for сохраняется.
+    """
+    if not st or not steps:
+        return steps
+    pri, cat = statement_tools(st)
+    if not pri and not cat:
+        return steps
+
+    def rank(item):
+        i, step = item
+        name = step[0]
+        if name in pri:
+            return (0, pri.index(name), i)
+        if name in cat:
+            return (1, 0, i)
+        return (2, 0, i)
+
+    return [s for _, s in sorted(enumerate(steps), key=rank)]
+
+
+def statement_wordlist(st):
+    """Словарь из условия: пароли, строки в кавычках, слова — для перебора хешей."""
+    words = list(st.get("passwords", [])) + list(st.get("quoted", []))
+    words += [v for v in st.get("params", {}).values()]
+    if not words:
+        return None
+    path = os.path.join(tempfile.gettempdir(), "solve_desc", "words.txt")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(dict.fromkeys(words)) + "\n")
+    except OSError:
+        return None
+    return path
+
+
+def statement_steps(st, target):
+    """Шаги, которые добавляет условие: пароль/ключ — тем, кто его принимает."""
+    extra = []
+    if not st:
+        return extra
+    params = st.get("params", {})
+    keys = list(dict.fromkeys(
+        list(st.get("passwords", []))
+        + [params[k] for k in ("key", "password", "pass", "pin") if params.get(k)]))[:3]
+    iv = params.get("iv")
+    if os.path.isfile(target):
+        try:
+            data = common.read_bytes(target)[:2_000_000]
+        except OSError:
+            data = b""
+        text = read_text(target) if data and common.printable_ratio(data[:4096]) >= 0.85 else ""
+        for k in keys:
+            if data and len(data) % 16 == 0 and len(data) >= 16:
+                extra.append(("ecb", [target, "--key", k, "--decrypt"],
+                              "ключ из условия — AES-ECB", 30))
+                extra.append(("aes", [target, "--auto", "--key", k]
+                              + (["--iv", iv] if iv else []),
+                              "ключ из условия — AES-CBC", 40))
+            if data and len(data) <= 1_000_000:
+                extra.append(("xorknown", [target, "--key", k],
+                              "XOR ключом из условия", 20))
+            if text and k.isalpha() and len(re.findall(r"[A-Za-z]", text)) >= 8:
+                extra.append(("classical", ["vigenere", "--text", text[:6000], "--key", k],
+                              "Виженер с ключом из условия", 20))
+        if text:
+            hashes = list(dict.fromkeys(re.findall(
+                r"\b[0-9a-fA-F]{32}\b|\b[0-9a-fA-F]{40}\b|\b[0-9a-fA-F]{64}\b", text)))[:3]
+            wl = statement_wordlist(st) if hashes else None
+            for h in hashes:
+                if wl:
+                    extra.append(("autocrack", ["--hash", h, "--wordlist", wl],
+                                  "хеш против слов из условия", 30))
+    for b in st.get("blobs", [])[:3]:
+        if b != target:
+            extra.append(("enc", [b], "строка из условия", 20))
+    return extra
+
+
+def statement_target(st):
+    """Цели нет — взять её из условия: URL, host:port, закодированная строка."""
+    if not st:
+        return None
+    for key in ("urls", "hosts", "blobs"):
+        if st.get(key):
+            return st[key][0]
+    return None
+
+
+def print_statement(st):
+    if not st:
+        return
+    scores = ", ".join(f"{k}×{v}" for k, v in sorted(st["scores"].items(),
+                                                       key=lambda kv: -kv[1]))
+    print(f"[+] условие: категория {st['category'] or '?'}"
+          + (f" ({scores})" if scores else ""))
+    if st["hints"]:
+        pri, _ = statement_tools(st)
+        print(f"    подсказки: {', '.join(st['hints'])} → вперёд: {', '.join(pri[:8])}")
+    if st["flag_prefixes"]:
+        print("    формат флага: "
+              + ", ".join(p + "{…}" for p in st["flag_prefixes"])
+              + " → префиксы добавлены")
+    secrets = list(dict.fromkeys(st["passwords"]
+                                 + [f"{k}={v}" for k, v in st["params"].items()]))
+    if secrets:
+        print(f"    пароли/ключи: {', '.join(secrets[:6])}")
+    addrs = st["urls"] + st["hosts"]
+    if addrs:
+        print(f"    адреса: {', '.join(addrs[:6])}")
+    if st["blobs"]:
+        print(f"    строки-кандидаты: {len(st['blobs'])}")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("target", help="файл, папка, строка, URL или host:port")
+    ap.add_argument("target", nargs="?",
+                    help="файл, папка, строка, URL или host:port "
+                         "(можно не указывать, если адрес есть в --desc)")
     ap.add_argument("--time", type=float, default=90, help="общий бюджет, сек")
     ap.add_argument("--jobs", type=int, default=4, help="сколько шагов считать параллельно")
     ap.add_argument("--deep", action="store_true", help="включить дорогие шаги")
     ap.add_argument("--verbose", action="store_true", help="печатать вывод каждого шага")
     ap.add_argument("--plan", action="store_true", help="только показать план")
     ap.add_argument("--log", help="сохранить полный вывод шагов")
+    ap.add_argument("--desc", help="текст условия: категория, подсказки, формат флага, "
+                                   "пароли, адреса — меняют план")
+    ap.add_argument("--desc-file", help="файл с текстом условия (UTF-8)")
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
     if args.any_prefix:
         os.environ["FLAG_ANY"] = "1"
 
-    target = args.target
+    statement = None
+    if args.desc or args.desc_file:
+        desc_text, err = load_statement(args.desc, args.desc_file)
+        if err:
+            print(f"[-] {err}")
+            sys.exit(2)
+        statement = parse_statement(desc_text)
+        apply_statement_flags(statement, args.any_prefix or os.environ.get("FLAG_ANY") == "1")
+        print_statement(statement)
+
+    target = args.target or statement_target(statement)
+    if not target:
+        ap.error("нужна цель: файл, папка, строка, URL или host:port "
+                 "(или адрес/строка в --desc)")
+    if not args.target:
+        print(f"[+] цель из условия: {target}")
     runner = Runner(args.time, args.verbose, args.log, args.jobs)
 
     if os.path.exists(target):
-        flag = solve_file(target, runner, args.deep, args.plan)
+        flag = solve_file(target, runner, args.deep, args.plan, statement)
     elif target.lower().startswith(("http://", "https://")):
         print("[+] цель: URL")
         flag = solve_url(target, runner, args.deep)
@@ -860,15 +1306,30 @@ def main():
         print(f"    python toolbox.py oracle --connect {target} --match \"(\\d+)\" --expr \"v\"")
         print("    если это эхо/format string:")
         print(f"    python toolbox.py fmtstr scan --connect {target} --deref")
+        cat = (statement or {}).get("category")
+        if cat in ("ppc", "misc"):
+            print("    условие похоже на PPC/игру:")
+            print(f"    python toolbox.py game --connect {target} --auto")
+        elif cat == "pwn":
+            print("    условие похоже на pwn:")
+            print(f"    python toolbox.py fmtstr auto --connect {target}")
         return
     else:
         print("[+] цель: строка")
         flag = None
-        for name, sargs, why, timeout in (
+        str_steps = [
             ("enc", [target], "кодировки во все стороны", 20),
             ("autocrack", ["--text", target], "шифры/кодировки", 40),
             ("obscure", ["auto", "--text", target], "экзотические кодировки", 30),
-        ):
+        ]
+        if statement:
+            str_steps = _dedupe_steps(order_steps(str_steps + statement_steps(statement, target),
+                                                  statement))
+        if args.plan:
+            for i, (name, sargs, why, timeout) in enumerate(str_steps, 1):
+                print(f"  {i:02d}. {name} {' '.join(map(str, sargs))}   # {why}")
+            str_steps = []
+        for name, sargs, why, timeout in str_steps:
             flag = runner.run(name, sargs, why, timeout)
             if flag:
                 break

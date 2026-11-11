@@ -98,6 +98,62 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_core(tmp):
+    """Ядро solve: условие задачи (#81), JSON/события (#82), цепочки (#83)."""
+    import re as _re
+    sys.path.insert(0, KIT)
+    import solve as _solve
+
+    # 81. parse_statement: категория, подсказки, формат флага, пароль, адрес
+    st = _solve.parse_statement(
+        "Категория: Crypto\nСообщение прогнали через XOR, а потом в base64. "
+        "Формат флага: QWE{...}. Пароль: \"pa55word\". Сервер: nc 127.0.0.1 31337")
+    check("solve parse_statement ru",
+          st["category"] == "crypto" and st["hints"][:2] == ["xor", "base64"]
+          and st["flag_prefixes"] == ["QWE"] and "pa55word" in st["passwords"]
+          and "127.0.0.1:31337" in st["hosts"],
+          json.dumps(st, ensure_ascii=False))
+    st = _solve.parse_statement(
+        "The message is hidden in the least significant bits of the picture. "
+        "Flag format: flag{[a-z_]+}. Source: http://chall.local:8080/")
+    check("solve parse_statement en",
+          st["category"] == "stego" and st["hints"][:1] == ["lsb"]
+          and st["urls"] == ["http://chall.local:8080/"],
+          json.dumps(st, ensure_ascii=False))
+
+    # 81b. --desc меняет порядок плана и добавляет префикс флага
+    ddir = os.path.join(tmp, "core_desc")
+    os.makedirs(ddir, exist_ok=True)
+    dflag = "QWE{" + hashlib.sha1(b"core-desc").hexdigest()[:12] + "}"
+    note = os.path.join(ddir, "note.txt")
+    with open(note, "w", encoding="utf-8") as f:
+        f.write("some note text with numbers 12345\n" + dflag + "\n")
+
+    def _plan_pos(text, tool):
+        for i, line in enumerate(text.splitlines()):
+            if _re.match(r"\s+\d+\. " + tool + r"\b", line):
+                return i
+        return 10 ** 6
+
+    r0 = run("solve.py", note, "--plan")
+    r1 = run("solve.py", note, "--plan", "--desc",
+             "Подсказка: brainfuck. Формат флага: QWE{...}")
+    check("solve --desc plan order",
+          _plan_pos(r0.stdout, "xorknown") < _plan_pos(r0.stdout, "esolang")
+          and _plan_pos(r1.stdout, "esolang") < _plan_pos(r1.stdout, "xorknown")
+          and "--known QWE{" in r1.stdout and "QWE{…}" in r1.stdout,
+          r0.stdout[-800:] + "\n----\n" + r1.stdout[-1200:] + r1.stderr)
+    r2 = run("solve.py", note, "--time", "40", "--desc", "flag format: QWE{...}")
+    check("solve --desc flag prefix", dflag in r2.stdout, r2.stdout[-800:] + r2.stderr)
+    desc_file = os.path.join(ddir, "statement.md")
+    with open(desc_file, "w", encoding="utf-8") as f:
+        f.write("Ответь на 100 раундов: nc 127.0.0.1 31337\n")
+    r3 = run("solve.py", "--desc-file", desc_file)
+    check("solve --desc-file target",
+          "127.0.0.1:31337" in r3.stdout and "game --connect" in r3.stdout,
+          r3.stdout[-800:] + r3.stderr)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
@@ -1975,6 +2031,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_core(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

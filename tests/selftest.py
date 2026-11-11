@@ -153,6 +153,42 @@ def checks_forensics(tmp):
     check("windows_triage --limit 0 (#68)", "CTF{after_limit}" in r.stdout,
           r.stdout[-600:] + r.stderr)
 
+    # #69 docker_image: относительный --out и whiteout в корне слоя
+    def _layer(files):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as t:
+            for n, d in files.items():
+                ti = tarfile.TarInfo(n)
+                ti.size = len(d)
+                t.addfile(ti, io.BytesIO(d))
+        return buf.getvalue()
+    dimg = os.path.join(base, "img.tar")
+    with tarfile.open(dimg, "w") as t:
+        for n, d in (
+                ("manifest.json", json.dumps([{"Config": "c.json",
+                                               "Layers": ["a/layer.tar", "b/layer.tar"]}]).encode()),
+                ("c.json", b'{"config": {}}'),
+                ("a/layer.tar", _layer({"rootflag.txt": b"CTF{docker_root_wh}\n",
+                                        "app/data.txt": b"keep\n",
+                                        ".env": b"MODE=test\n"})),
+                ("b/layer.tar", _layer({".wh.rootflag.txt": b""}))):
+            ti = tarfile.TarInfo(n)
+            ti.size = len(d)
+            t.addfile(ti, io.BytesIO(d))
+    r = subprocess.run([PY, os.path.join(KIT, "forensic", "docker_image.py"), dimg,
+                        "--out", "fsout"], cwd=base, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=ENV)
+    fsout = os.path.join(base, "fsout")
+    check("docker_image relative --out (#69)",
+          os.path.isfile(os.path.join(fsout, "app", "data.txt"))
+          and os.path.isfile(os.path.join(fsout, ".env")),
+          r.stdout[-600:] + r.stderr)
+    check("docker_image root whiteout (#69)",
+          "- rootflag.txt" in r.stdout and "CTF{docker_root_wh}" in r.stdout
+          and not os.path.exists(os.path.join(fsout, "rootflag.txt"))
+          and not os.path.exists(os.path.join(fsout, "wh.rootflag.txt")),
+          r.stdout[-600:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

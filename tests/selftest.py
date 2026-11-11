@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import zlib
 import atexit
 import base64
 import hashlib
@@ -96,6 +97,94 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
         if comment:
             z.comment = comment
     return buf.getvalue()
+
+
+def zipcrypto_zip(name, body, pwd):
+    """Минимальный ZipCrypto-шифратор (stored) для теста."""
+    tab = []
+    for n in range(256):
+        c = n
+        for _ in range(8):
+            c = (c >> 1) ^ 0xEDB88320 if c & 1 else c >> 1
+        tab.append(c)
+
+    def upd(crc, b):
+        return (crc >> 8) ^ tab[(crc ^ b) & 0xFF]
+    k = [0x12345678, 0x23456789, 0x34567890]
+
+    def feed(b):
+        k[0] = upd(k[0], b)
+        k[1] = ((k[1] + (k[0] & 0xFF)) * 134775813 + 1) & 0xFFFFFFFF
+        k[2] = upd(k[2], k[1] >> 24)
+    for ch in pwd:
+        feed(ch)
+    crc = zlib.crc32(body) & 0xFFFFFFFF
+    plain = bytes(range(11)) + bytes([crc >> 24])
+    enc = bytearray()
+    for b in plain + body:
+        t = (k[2] | 2) & 0xFFFF
+        ks = ((t * (t ^ 1)) >> 8) & 0xFF
+        enc.append(b ^ ks)
+        feed(b)
+    nb = name.encode()
+    lh = struct.pack("<4sHHHHHIIIHH", b"PK\x03\x04", 20, 1, 0, 0, 0x21, crc,
+                     len(enc), len(body), len(nb), 0) + nb
+    cd = struct.pack("<4s6H3I5H2I", b"PK\x01\x02", 20, 20, 1, 0, 0, 0x21, crc,
+                     len(enc), len(body), len(nb), 0, 0, 0, 0, 0, 0) + nb
+    eocd = struct.pack("<4s4H2IH", b"PK\x05\x06", 0, 0, 1, 1, len(cd),
+                       len(lh) + len(enc), 0)
+    return lh + bytes(enc) + cd + eocd
+
+
+def checks_zip_tricks(tmp):
+    import random
+    rnd = random.Random(99)
+    flag = "CTF{zt_" + "".join(rnd.choice("abcdefghijklmnop0123456789") for _ in range(10)) + "}"
+    # 1. fakecrypt: бит шифрования стоит, данные открыты
+    buf = bytearray(make_zip_bytes("flag.txt", flag.encode()))
+    lh = buf.find(b"PK\x03\x04")
+    cd = buf.find(b"PK\x01\x02")
+    struct.pack_into("<H", buf, lh + 6, struct.unpack_from("<H", buf, lh + 6)[0] | 1)
+    struct.pack_into("<H", buf, cd + 8, struct.unpack_from("<H", buf, cd + 8)[0] | 1)
+    fz = os.path.join(tmp, "zt_fake.zip")
+    with open(fz, "wb") as f:
+        f.write(buf)
+    out = os.path.join(tmp, "zt_fake_out")
+    r = run("forensic/zip_tricks.py", "fakecrypt", fz, "--out", out)
+    got = ""
+    try:
+        got = open(os.path.join(out, "flag.txt"), encoding="utf-8").read()
+    except OSError:
+        pass
+    check("forensic/zip_tricks.py fakecrypt", got == flag and flag in r.stdout, r.stdout + r.stderr)
+    r = run("forensic/zip_tricks.py", "info", fz)
+    check("forensic/zip_tricks.py info", "flag.txt" in r.stdout and "encCD" in r.stdout,
+          r.stdout + r.stderr)
+    # 2. crc-brute: флаг разрезан на куски по 1-4 байта
+    cut, i = [], 0
+    while i < len(flag):
+        n = rnd.randint(1, 4)
+        cut.append(flag[i:i + n].encode())
+        i += n
+    bz = os.path.join(tmp, "zt_split.zip")
+    with zipfile.ZipFile(bz, "w", zipfile.ZIP_STORED) as z:
+        for j, part in enumerate(cut):
+            z.writestr(f"{j:03d}.txt", part)
+    r = run("forensic/zip_tricks.py", "crc-brute", bz)
+    check("forensic/zip_tricks.py crc-brute", flag in r.stdout, r.stdout[-600:] + r.stderr)
+    # 3. password: ZipCrypto
+    pw = "s3cret" + str(rnd.randint(10, 99))
+    pz = os.path.join(tmp, "zt_pw.zip")
+    with open(pz, "wb") as f:
+        f.write(zipcrypto_zip("f.txt", flag.encode(), pw.encode()))
+    wl = os.path.join(tmp, "zt_words.txt")
+    with open(wl, "w") as f:
+        f.write("nope\nadmin\n" + pw + "\nlast\n")
+    r = run("forensic/zip_tricks.py", "password", pz, "--wordlist", wl)
+    check("forensic/zip_tricks.py password", f"пароль: {pw}" in r.stdout and flag in r.stdout,
+          r.stdout + r.stderr)
+    r = run("forensic/zip_tricks.py", "known-plaintext", pz, "--magic", "png")
+    check("forensic/zip_tricks.py known-plaintext", "bkcrack" in r.stdout, r.stdout + r.stderr)
 
 
 def main():
@@ -1975,6 +2064,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_zip_tricks(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

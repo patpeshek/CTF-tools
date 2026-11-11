@@ -43,6 +43,7 @@
 | Имя | Что делает | Пример |
 |---|---|---|
 | `zipmeta` | комментарии/extra ZIP | `python toolbox.py zipmeta a.zip --decode` |
+| `ziptricks` | ZIP: info, fakecrypt, crc-brute, password, known-plaintext (bkcrack) | `python toolbox.py ziptricks fakecrypt a.zip` |
 | `exif` | метаданные | `python toolbox.py exif photo.jpg` |
 | `disk` | образ диска: mount/photorec/LUKS | `sudo bash forensic/disk_triage.sh disk.img` |
 | `hunt` | ключи/секреты/флаги в файлах и zip | `python toolbox.py hunt dump --zip` |

@@ -492,6 +492,18 @@ def steps_for(path, deep=False, depth=0):
         zip_like = True
     if zip_like:
         add(("zipmeta", [path, "--decode"], "комментарии/имена/лишние поля", 30))
+        add(("ziptricks", ["fakecrypt", path, "--out",
+                           os.path.join(tempfile.gettempdir(), "solve_zip", os.path.basename(path))],
+             "бит шифрования без шифрования", 30))
+        add(("ziptricks", ["info", path], "записи, флаги шифрования, CRC", 30))
+        try:
+            import zipfile as _zf
+            with _zf.ZipFile(path) as _z:
+                _tiny = [i for i in _z.infolist() if 0 < i.file_size <= 6]
+            if len(_tiny) >= 4:
+                add(("ziptricks", ["crc-brute", path], "много крошечных записей: флаг по CRC", 60))
+        except Exception:
+            pass
         if ext in (".docx", ".xlsx", ".pptx"):
             dump = os.path.join(tempfile.gettempdir(), "solve_doc",
                                 os.path.basename(path) + ".txt")

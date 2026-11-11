@@ -27,6 +27,11 @@ python stego/jpeg_tail.py pic.jpg --extract out
 
 ```bash
 python forensic/zipmeta.py a.zip --decode
+python forensic/zip_tricks.py info a.zip                 # заголовки, бит шифрования, CRC
+python forensic/zip_tricks.py fakecrypt a.zip --out d    # бит шифрования есть, шифрования нет
+python forensic/zip_tricks.py crc-brute a.zip            # флаг разрезан на файлы по 1-6 байт
+python forensic/zip_tricks.py password a.zip --password P  # ZipCrypto по словарю
+python forensic/zip_tricks.py known-plaintext a.zip --magic png  # команда bkcrack
 python forensic/ipa_info.py app.ipa --out app      # iOS: Info.plist, строки
 python forensic/geo_photo.py photo.jpg --json r.json  # EXIF/GPS + ссылки
 sudo bash forensic/disk_triage.sh disk.img

@@ -259,6 +259,40 @@ def checks_reverse(tmp):
     check("megarev --time respected", took < 6 and r.returncode == 0,
           f"{took:.1f}s\n" + r.stdout[-400:] + r.stderr)
 
+    # #80 lang_info: PNG с «logo1.png» в метаданных — не Go
+    from PIL import PngImagePlugin
+    logo = os.path.join(tmp, "logo1.png")
+    meta = PngImagePlugin.PngInfo()
+    meta.add_text("Title", "logo1.png")
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(logo, pnginfo=meta)
+    r = run("reverse/lang_info.py", logo)
+    lang_line = next((ln for ln in r.stdout.splitlines() if "language:" in ln), "")
+    check("lang_info: PNG is not Go", lang_line and "Go" not in lang_line,
+          r.stdout[-400:] + r.stderr)
+
+    # #80 py_pack: zipapp со строкой #! перед zip
+    import zipapp
+    za_src = os.path.join(tmp, "za_src")
+    os.makedirs(za_src, exist_ok=True)
+    open(os.path.join(za_src, "__main__.py"), "w").write("print('hi')\n")
+    pyz = os.path.join(tmp, "app.pyz")
+    zipapp.create_archive(za_src, pyz, interpreter="/usr/bin/env python3")
+    r = run("reverse/py_pack.py", pyz)
+    check("py_pack zipapp with shebang",
+          open(pyz, "rb").read(2) == b"#!" and "zipapp" in r.stdout and "__main__.py" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    # #80 xor_scan: 3-байтовый ключ по префиксу флага, флаг не в начале файла
+    xflag = b"CTF{three_byte_key_xor}"
+    xplain = b"header text before the flag: " + xflag + b" tail"
+    xk = b"KEY"
+    xbin = os.path.join(tmp, "xor3.bin")
+    open(xbin, "wb").write(bytes(c ^ xk[i % 3] for i, c in enumerate(xplain)))
+    outs = [run("reverse/xor_scan.py", xbin, *a).stdout
+            for a in (("--known", "CTF{"), ("--keylen", "3"), ())]
+    check("xor_scan 3-byte key from flag prefix",
+          all("key=b'KEY'" in o and xflag.decode() in o for o in outs), "\n".join(outs)[-900:])
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
@@ -1246,7 +1280,8 @@ def main():
 
     # 84. lang info (Go)
     gop = os.path.join(tmp, "go.bin")
-    open(gop, "wb").write(b"junk .go.buildinfo go1.22.0 path\tmain")
+    open(gop, "wb").write(b"\x7fELF\x02\x01\x01" + b"\x00" * 9
+                          + b"junk .go.buildinfo go1.22.0 path\tmain")
     r = run("reverse/lang_info.py", gop)
     check("reverse/lang_info.py", "Go" in r.stdout, r.stdout + r.stderr)
 

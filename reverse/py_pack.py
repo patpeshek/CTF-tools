@@ -53,25 +53,34 @@ def main():
         pos = data.find(sig)
         if pos != -1:
             hits.append((name, pos, advice))
-    if not hits:
-        print("[-] известных маркеров не найдено")
-    for name, pos, advice in hits:
-        print(f"[+] {name} @ 0x{pos:x}: {advice}")
 
-    # zip-внутренности (PyInstaller/zipapp)
-    if data[:4] == b"PK\x03\x04":
+    # zip-внутренности (PyInstaller/zipapp). zipapp может начинаться со строки
+    # «#!/usr/bin/env python3», поэтому zip ищется не только в начале файла.
+    pk = data.find(b"PK\x03\x04")
+    if pk != -1 and (pk == 0 or zipfile.is_zipfile(args.file)):
         try:
             with zipfile.ZipFile(args.file) as z:
                 names = z.namelist()
-                print(f"[+] это zip: {len(names)} файлов")
+                where = f" после {pk} b префикса" if pk else ""
+                if data[:2] == b"#!":
+                    where += " (строка #!)"
+                print(f"[+] это zip{where}: {len(names)} файлов")
                 for n in names[:20]:
                     print("    ", n)
+                if ("__main__.py" in names or "__main__.pyc" in names) \
+                        and not any(h[0] == "zipapp" for h in hits):
+                    hits.append(("zipapp", pk, "python app.pyz; распакуй и смотри __main__.py"))
                 if args.extract:
                     os.makedirs(args.extract, exist_ok=True)
                     z.extractall(args.extract)
                     print(f"[+] распаковано: {args.extract}")
         except zipfile.BadZipFile:
             print("[!] PK-сигнатура есть, но zip не открылся (может быть CArchive)")
+
+    if not hits:
+        print("[-] известных маркеров не найдено")
+    for name, pos, advice in hits:
+        print(f"[+] {name} @ 0x{pos:x}: {advice}")
 
     # интересные строки
     ss = [m.group().decode("latin-1") for m in INTEREST.finditer(data)]

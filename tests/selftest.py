@@ -194,6 +194,33 @@ def checks_stego_img(tmp):
     check("whitespace heap/loop/call", ws_text + "-102!" in r.stdout,
           r.stdout[-600:] + r.stderr)
 
+    # carve: PCAP режется по записям, голые сигнатуры не плодят гигабайты
+    def _dir_size(d):
+        return sum(os.path.getsize(os.path.join(d, f)) for f in os.listdir(d)) \
+            if os.path.isdir(d) else 0
+
+    spam = os.path.join(tmp, "pcap_spam.bin")
+    with open(spam, "wb") as f:
+        f.write(b"HEAD" + b"\xd4\xc3\xb2\xa1" * 5000 + b"\x0a\x0d\x0d\x0a" * 500)
+    out = os.path.join(tmp, "carve_spam")
+    r = run("stego/carve.py", spam, "--out", out)
+    check("carve pcap signature spam bounded",
+          _dir_size(out) <= 2 * os.path.getsize(spam),
+          f"carved {_dir_size(out)} bytes\n" + r.stdout[-300:] + r.stderr)
+
+    pcap = struct.pack("<IHHiIII", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1)
+    for k, payload in enumerate([b"A" * 60, b"CTF{pcap_records}" + b"B" * 30]):
+        pcap += struct.pack("<IIII", 1000 + k, 0, len(payload), len(payload)) + payload
+    host = os.path.join(tmp, "host_pcap.bin")
+    with open(host, "wb") as f:
+        f.write(b"JUNK" * 10 + pcap + b"\xff" * 5000)
+    out = os.path.join(tmp, "carve_pcap")
+    r = run("stego/carve.py", host, "--out", out)
+    got = [f for f in os.listdir(out) if f.endswith(".pcap")] if os.path.isdir(out) else []
+    check("carve pcap by records",
+          len(got) == 1 and open(os.path.join(out, got[0]), "rb").read() == pcap,
+          r.stdout[-400:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

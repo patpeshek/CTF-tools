@@ -87,6 +87,7 @@
 | `classical` | классические шифры + `vigenere-crack` | `python toolbox.py classical vigenere-crack --text "..."` |
 | `genetic` | триплеты → аминокислоты | `python toolbox.py genetic "UGUACUUUC"` |
 | `xorknown` | XOR с known plaintext; длину ключа подбирает сам | `python toolbox.py xorknown enc.bin --known "CTF{"` |
+| `chain` | многослойные цепочки кодировок: поиск лучом по base64/32/85, hex, bin/dec/oct, url, zlib/gzip/bz2/xz, ROT13/ROT-N/ROT47, Atbash, реверс, NOT, однобайтовый XOR + все декодеры `enc`; глубина/луч/бюджет, стоп на флаге; `solve` зовёт его сам | `python toolbox.py chain "<строка>"` / `chain blob.bin --depth 8 --time 30` |
 | `prng` | random по seed | `python toolbox.py prng --ts "2026-01-01 12:00:00"` |
 | `aes` | AES-CBC из бинарника | `python toolbox.py aes f.enc --auto --from-bin encryptor` |
 | `ecb` | детект/расшифровка ECB | `python toolbox.py ecb c.hex --hex --key K --decrypt` |

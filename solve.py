@@ -285,7 +285,7 @@ class Runner:
             return uniq[0]
         # полезный текст: OCR, кадры, «почти одинаковые строки» — его надо
         # показать, иначе человек не увидит распознанный флаг
-        if name in ("ocr", "video", "nearlines", "text", "enc", "exif"):
+        if name in ("ocr", "video", "nearlines", "text", "enc", "exif", "chain"):
             shown = 0
             for line in out.splitlines():
                 line = line.strip()
@@ -774,6 +774,9 @@ def steps_for(path, deep=False, depth=0):
                 add(("esolang", [path, "--input", _inp],
                      f"эзотерика с входом из {_nm}", 40))
             add(("enc", ["--file", path], "кодировки строкой", 20))
+            if len(data) <= 65536:
+                add(("chain", ["--file", path, "--time", "20"],
+                     "многослойные кодировки: base64→hex→ROT13→XOR…", 30))
             add(("autocrack", ["--file", path], "цезарь/XOR/кодировки/хеши", 60))
             if len(re.findall(r"[A-Za-zА-Яа-я]", text)) >= 200:
                 add(("classical", ["vigenere-crack", "--text", text[:6000]],
@@ -821,6 +824,8 @@ def steps_for(path, deep=False, depth=0):
                  "XOR: текст начинается с префикса флага", 20))
             add(("autocrack", ["--file", path], "XOR/кодировки/хеши", 60))
             add(("enc", ["--file", path], "все кодировки/base (utf-16/32, cp, baseN)", 30))
+            add(("chain", ["--file", path, "--time", "20"],
+                 "многослойные: XOR→ROT13→hex→base64…", 30))
 
     # что осталось — универсальные переборы
     if ext in (".pkl", ".pickle", ".pt", ".pth", ".joblib") or data[:1] == b"\x80":
@@ -899,7 +904,8 @@ def solve_file(target, runner, deep, plan_only, statement=None):
                                       f"{os.path.basename(p2)}: {w2}", t2)
                     if flag:
                         return flag
-    # цепочка: вывод инструментов часто сам является закодированной строкой
+    # цепочка: вывод инструментов часто сам является закодированной строкой;
+    # chain = все декодеры enc на первом слое + поиск лучом на глубину
     cands = harvest_candidates(runner)
     if cands:
         print(f"[i] цепочка: {len(cands)} кандидатов из вывода, пробую декодировать")
@@ -907,7 +913,8 @@ def solve_file(target, runner, deep, plan_only, statement=None):
             if time.time() >= runner.deadline - 1:
                 print("[i] бюджет кончился на цепочке")
                 break
-            flag = runner.run("enc", [c], "декод кандидата из вывода", 15)
+            flag = runner.run("chain", ["--time", "10", "--", c],
+                              "многослойный декод кандидата из вывода", 15)
             if flag:
                 return flag
 
@@ -1341,7 +1348,8 @@ def statement_steps(st, target):
                                   "хеш против слов из условия", 30))
     for b in st.get("blobs", [])[:3]:
         if b != target:
-            extra.append(("enc", [b], "строка из условия", 20))
+            extra.append(("chain", ["--time", "15", "--", b],
+                          "строка из условия: все слои кодировок", 20))
     return extra
 
 
@@ -1484,6 +1492,8 @@ def main():
         flag = None
         str_steps = [
             ("enc", [target], "кодировки во все стороны", 20),
+            ("chain", ["--time", "20", "--", target],
+             "многослойные цепочки: base64→hex→ROT13→XOR…", 30),
             ("autocrack", ["--text", target], "шифры/кодировки", 40),
             ("obscure", ["auto", "--text", target], "экзотические кодировки", 30),
         ]

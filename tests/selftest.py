@@ -208,6 +208,46 @@ def checks_core(tmp):
           and evs[-1]["flag"] == jflag and "[+] цель: строка" in r.stderr,
           r.stdout[-600:] + r.stderr[-300:])
 
+    # 83. цепочка из 4 слоёв: base64 → hex → ROT13 → однобайтовый XOR
+    up, lo = bytes(range(65, 91)), bytes(range(97, 123))
+    rot13 = bytes.maketrans(up + lo, up[13:] + up[:13] + lo[13:] + lo[:13])
+    cflag = ("CTF{multi_layer_chain_" + hashlib.sha1(b"core-chain").hexdigest()[:6]
+             + "}").encode()
+    ckey = hashlib.sha1(b"core-chain-key").digest()[0] | 1
+    while cflag.translate(bytes(b ^ ckey for b in range(256))).translate(rot13) == \
+            cflag.translate(bytes(b ^ ckey for b in range(256))):
+        ckey = (ckey + 2) % 256 or 1      # ROT13 должен реально менять слой
+    xored = bytes(b ^ ckey for b in cflag)
+    layered = base64.b64encode(xored.translate(rot13).hex().encode()).decode()
+    r = run("crypto/chain.py", layered)
+    check("crypto/chain.py 4 layers",
+          ("ФЛАГ: " + cflag.decode()) in r.stdout
+          and "base64 → hex → rot13 → xor:0x%02x" % ckey in r.stdout,
+          r.stdout[-800:] + r.stderr[-400:])
+    # обратный порядок: XOR → ROT13 → hex → base64, бинарный файл
+    rev = bytes(b ^ ckey for b in base64.b64encode(cflag).hex().encode().translate(rot13))
+    cdir = os.path.join(tmp, "core_chain")
+    os.makedirs(cdir, exist_ok=True)
+    rev_path = os.path.join(cdir, "layers.bin")
+    with open(rev_path, "wb") as f:
+        f.write(rev)
+    r = run("crypto/chain.py", "--file", rev_path)
+    check("crypto/chain.py reverse order",
+          ("ФЛАГ: " + cflag.decode()) in r.stdout, r.stdout[-800:] + r.stderr[-400:])
+    # solve сам доходит до цепочки на текстовом файле
+    lay_path = os.path.join(cdir, "layers.txt")
+    with open(lay_path, "w", encoding="utf-8") as f:
+        f.write(layered + "\n")
+    r = run("solve.py", lay_path, "--time", "60")
+    check("solve chain 4 layers", cflag.decode() in r.stdout and "chain" in r.stdout,
+          r.stdout[-900:] + r.stderr[-400:])
+    r = run("crypto/chain.py", "--file", os.path.join(cdir, "missing.bin"))
+    r2 = run("crypto/chain.py", "--file", cdir)
+    check("crypto/chain.py no file",
+          r.returncode == 1 and r2.returncode == 1 and "не могу прочитать" in r.stdout
+          and "Traceback" not in r.stderr + r2.stderr,
+          r.stdout[-300:] + r.stderr[-300:] + r2.stderr[-300:])
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

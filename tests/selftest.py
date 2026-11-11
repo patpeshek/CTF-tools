@@ -215,6 +215,22 @@ def checks_stego_audio(tmp):
         check("stego/qr_scan.py transparent bg", "CTF{qr_alpha}" in r.stdout,
               r.stdout + r.stderr)
 
+    # ooxml: --strings печатает строки из всех частей, не только media (#66)
+    p_docx = os.path.join(tmp, "strings.docx")
+    with zipfile.ZipFile(p_docx, "w") as z:
+        z.writestr("word/document.xml",
+                   '<?xml version="1.0" encoding="UTF-8"?><w:document><w:body><w:p>'
+                   '<w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden_part_text</w:t></w:r>'
+                   '</w:p></w:body></w:document>')
+        z.writestr("docProps/core.xml",
+                   "<cp:coreProperties><dc:subject>subject_part_text</dc:subject>"
+                   "</cp:coreProperties>")
+        z.writestr("customXml/item1.bin", b"\x00\x01binary_part_text\x02")
+    r = run("stego/ooxml.py", p_docx, "--strings")
+    marks = ("hidden_part_text", "subject_part_text", "binary_part_text")
+    check("stego/ooxml.py --strings", all(m in r.stdout for m in marks),
+          r.stdout[-800:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

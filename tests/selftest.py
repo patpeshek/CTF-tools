@@ -259,6 +259,28 @@ def checks_stego_img(tmp):
           f"на смещении: {len(scans)}" in r.stdout and ".zip" in r.stdout,
           r.stdout[-400:] + r.stderr)
 
+    # png_chunks --fix: высоту уменьшили, CRC IHDR оставили — размер из CRC
+    im = Image.new("RGB", (37, 23), (0, 0, 0))
+    for x in range(37):
+        im.putpixel((x, 22), (255, 255, 255))
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    raw = bytearray(b.getvalue())
+    raw[20:24] = struct.pack(">I", 10)            # IHDR height, CRC прежний
+    p = os.path.join(tmp, "ihdr_short.png")
+    with open(p, "wb") as f:
+        f.write(raw)
+    fixed = os.path.join(tmp, "ihdr_fixed.png")
+    r = run("stego/png_chunks.py", p, "--fix", fixed)
+    try:
+        with Image.open(fixed) as im2:
+            im2.load()
+            size = im2.size
+    except Exception as e:
+        size = repr(e)
+    check("png_chunks --fix dims from crc", size == (37, 23),
+          f"size={size}\n" + r.stdout[-400:] + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

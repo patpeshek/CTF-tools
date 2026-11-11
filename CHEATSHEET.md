@@ -190,6 +190,12 @@ python admin/log_analyze.py access.log --top 15     # SQLi/LFI/сканеры, 4
 python admin/log_analyze.py journal.json audit.log  # journalctl -o json/export, auditd (hex)
 python admin/log_analyze.py .bash_history           # подозрительные команды, креды, base64/-enc
 python admin/log_analyze.py var/log --timeline --year 2024   # всё в одну хронологию
+python admin/win_admin.py dump/                     # авто: кусты, Tasks, ConsoleHost_history
+python admin/win_admin.py reg NTUSER.DAT --deleted  # сводка + флаги + удалённые ключи/значения
+python admin/win_admin.py reg SOFTWARE --key "Microsoft\Windows\CurrentVersion\Run"
+python admin/win_admin.py services SYSTEM           # службы: ImagePath/Start/ServiceDll
+python admin/win_admin.py run SOFTWARE NTUSER.DAT   # Run/RunOnce/Winlogon/IFEO/AppInit
+python admin/win_admin.py tasks Windows/System32/Tasks   # задачи + раскодирование -enc
 ```
 
 ## Артефакты и текстовые выгрузки

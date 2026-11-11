@@ -596,6 +596,8 @@ def steps_for(path, deep=False, depth=0):
     elif adm in ("LOG", "SHELLHISTORY", "PSHISTORY"):
         add(("logs", [path], f"лог ({_adm_detail or adm.lower()}): атаки, креды, "
                              "раскодирование, слепая SQLi", 60))
+    elif adm in ("REGF", "TASKXML"):
+        add(("winadm", [path], f"{adm}: ключи/службы/автозапуск/удалённое, -enc", 60))
 
     # PEM/DER-ключ: рядом часто лежит cipher.bin/flag.enc
     if ext in (".pem", ".pub", ".key", ".crt", ".der") or b"-----BEGIN" in data[:200]:

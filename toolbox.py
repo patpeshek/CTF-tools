@@ -118,6 +118,8 @@ REGISTRY = [
      "образ ВМ QCOW2/VMDK/VDI/VHD/OVA: raw, разделы, флаги внутри"),
     ("admin", "logs", "admin/log_analyze.py",
      "auth/nginx/journald/auditd/history: атаки, брутфорс, таймлайн"),
+    ("admin", "winadm", "admin/win_admin.py",
+     "реестр regf, службы, Run-ключи, задачи, PS-история (-enc)"),
 
     ("web", "recon", "web/recon.py", "разведка страницы: ссылки/формы/JS/куки/robots"),
     ("web", "jwt", "web/jwt_tool.py", "JWT decode/forge"),
@@ -477,6 +479,8 @@ def _plan_file(path):
         act(1, "vm", f"образ ВМ {adm}: разделы, флаги внутри, --raw для ФС")
     elif adm in ("LOG", "SHELLHISTORY", "PSHISTORY"):
         act(1, "logs", "лог/история: входы, атаки, команды, раскодирование, --timeline")
+    elif adm in ("REGF", "TASKXML"):
+        act(1, "winadm", "куст реестра/задача: ключи, службы, автозапуск, удалённое, -enc")
 
     if kind == "SQLite":
         act(2, "android", "SQLite: таблицы, чаты, токены")

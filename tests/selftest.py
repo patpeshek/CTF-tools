@@ -153,6 +153,38 @@ def checks_admin(tmp):
     check("solve.py logs", logs["access"][1] in r.stdout and "«logs»" in r.stdout,
           r.stdout[-700:] + r.stderr[-300:])
 
+    # #87 win_admin: regf (SYSTEM/NTUSER), службы, Run, удалённое, задачи, PS-история
+    win_root = os.path.join(base, "win")
+    win = gen_admin.write_win_set(win_root)
+    p, flag = win["ntuser"]
+    r = run("admin/win_admin.py", "reg", p)
+    check("admin/win_admin.py reg", flag in r.stdout and "NTUSER" in r.stdout
+          and "checksum ok" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", "reg", p, "--deleted")
+    check("admin/win_admin.py reg --deleted", win["deleted"][1] in r.stdout
+          and "удалённое значение" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", "run", p)
+    check("admin/win_admin.py run", "Updater" in r.stdout and "RunOnce" in r.stdout
+          and "[!] Updater" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["system"]
+    r = run("admin/win_admin.py", "services", p)
+    check("admin/win_admin.py services", flag in r.stdout and "[!] UpdSvc" in r.stdout
+          and "-EncodedCommand" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["task"]
+    r = run("admin/win_admin.py", "tasks", os.path.dirname(p))
+    check("admin/win_admin.py tasks", flag in r.stdout and "WIN-TEST\\admin" in r.stdout
+          and "Hidden" in r.stdout and "PT15M" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["pshistory"]
+    r = run("admin/win_admin.py", "pshistory", p)
+    check("admin/win_admin.py pshistory", flag in r.stdout and "defense-evasion" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", win_root)
+    check("admin/win_admin.py auto dir", all(win[k][1] in r.stdout for k in win),
+          r.stdout[-900:] + r.stderr[-400:])
+    r = run("solve.py", win["system"][0], "--time", "40")
+    check("solve.py winadm", win["system"][1] in r.stdout and "«winadm»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

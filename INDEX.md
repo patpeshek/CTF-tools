@@ -130,6 +130,7 @@
 |---|---|---|
 | `vm` | образ ВМ QCOW2/VMDK (sparse/stream/flat)/VDI/VHD/OVA: разделы, флаги внутри (в т.ч. в сжатых кластерах), `--raw` потоково, `--find`, `--mount`, `--next` → `forensic/disk_image.py` | `python toolbox.py vm disk.qcow2 --raw disk.raw` / `vm vm.ova --extract out` |
 | `logs` | логи по содержимому: auth.log/syslog (брутфорс, вход после неудач, sudo/su, новые uid 0, группы, cron), nginx/apache (SQLi/LFI/XSS/RCE/сканеры, всплески 4xx/5xx, base64/hex-параметры, восстановление слепой SQLi), journald JSON/export, auditd (hex EXECVE), bash/zsh/PowerShell history (`-enc`, `base64 -d`, креды); `--timeline` по всем файлам, `.gz` читается сам | `python toolbox.py logs var/log --timeline --year 2024` |
+| `winadm` | Windows оффлайн без regipy: куст regf (nk/vk/lf/lh/li/ri/db, checksum, «грязный» куст) — `reg` (сводка, `--key`, `--search`, `--dump`, `--deleted` из свободных ячеек, флаги ASCII/UTF-16/base64/UserAssist ROT13, пользователи SAM), `services` (ImagePath/Start/ObjectName/ServiceDll, подозрительные пути), `run` (Run/RunOnce/Winlogon/IFEO/AppInit/BootExecute), `tasks` (XML планировщика: команда, триггеры, автор, Hidden), `pshistory` (ConsoleHost_history, `-EncodedCommand`); без подкоманды — авто по файлу/папке | `python toolbox.py winadm dump/` / `winadm services SYSTEM` |
 
 ## Web
 

@@ -133,6 +133,7 @@ python tests/selftest.py
 | git-репозиторий / `.git` | `forensic/git_hunt.py` |
 | профиль браузера | `forensic/browser_artifacts.py` |
 | Windows dump (hives/EVTX/lnk) | `forensic/windows_triage.py` |
+| куст реестра, службы, Run-ключи, задачи, PS-история | `admin/win_admin.py` |
 | Office/PDF: макросы, JS | `forensic/office_docs.py` |
 | облачные ключи | `forensic/cloud_creds.py` |
 | Kubernetes под | `linux/k8s_audit.sh`, `network/k8s_api.py` |

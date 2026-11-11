@@ -174,8 +174,17 @@ def checks_reverse(tmp):
         r = run("reverse/disasm.py", elf32, "--all")
         check("disasm ELF32 i386", "0x08049000" in r.stdout and "eax, 0x41" in r.stdout,
               r.stdout[-600:] + r.stderr)
+        # #76 imm-операнд подписан, мусорный байт не обрывает листинг, --func работает
+        check("disasm imm + skipdata",
+              "eax, 0x41 ; 'A'" in r.stdout and "ecx, 0x1337" in r.stdout,
+              r.stdout[-600:] + r.stderr)
+        r = run("reverse/disasm.py", elf32, "--func", "0x08049010")
+        check("disasm --func",
+              "push ebp" in r.stdout and "xor eax, eax" in r.stdout
+              and "eax, 0x41" not in r.stdout and r.returncode == 0,
+              r.stdout[-600:] + r.stderr)
     else:
-        print("[SKIP] disasm ELF32: нет capstone")
+        print("[SKIP] disasm ELF32/--func: нет capstone")
 
 
 def main():

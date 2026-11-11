@@ -8,7 +8,9 @@ disasm.py — дизассемблер для реверса без Ghidra (caps
   python disasm.py bin --grep "cmp|strcmp"    # фильтр по мнемонике/операндам
   python disasm.py bin --around 0x4011a2 -n 40
   python disasm.py bin --strings              # ссылки на строки из .rodata
-  python disasm.py bin --func 0x401136       # один «функций» (до ret/перехода)
+  python disasm.py bin --func 0x401136       # одна функция: от адреса до ret
+
+Мусорные байты не обрывают листинг (capstone skipdata: строка .byte).
 
 Понимает ELF (x86/x64/arm64) и PE (x86/x64). Пишет vaddr, байты, инструкцию
 и, где можно, строку/константу, на которую она ссылается.
@@ -33,6 +35,14 @@ try:
 except Exception:
     print("[-] нет capstone: pip install capstone")
     raise SystemExit(1)
+try:  # типы операндов: X86_OP_REG=1, X86_OP_IMM=2, X86_OP_MEM=3
+    from capstone.x86 import X86_OP_IMM, X86_OP_MEM
+except Exception:
+    X86_OP_IMM, X86_OP_MEM = 2, 3
+try:
+    from capstone.arm64 import ARM64_OP_IMM
+except Exception:
+    ARM64_OP_IMM = None
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common  # noqa: E402
@@ -123,6 +133,42 @@ def section_of(sections, va):
     return None, None
 
 
+def section_at(sections, va):
+    """Секция (name, addr, off, size), в которую попадает адрес, с ненулевым addr."""
+    for sec in sections:
+        name, addr, off, size = sec
+        if addr and addr <= va < addr + size:
+            return sec
+    return None
+
+
+RET = {"ret", "retn", "retf", "hlt"}
+
+
+def operand_comment(ins, carch, data, sections):
+    """Символ/строка для непосредственного операнда или абсолютного адреса."""
+    comment = ""
+    for op in ins.operands:
+        if carch == CS_ARCH_X86 and op.type == X86_OP_MEM:
+            # абсолютный адрес без базы/индекса (i386: mov eax, [0x804a020])
+            if not op.mem.base and not op.mem.index and op.mem.disp > 0x1000:
+                s = read_cstr(data, sections, op.mem.disp)
+                if s and len(s) >= 3:
+                    comment += f" ; \"{s}\""
+            continue
+        imm_type = X86_OP_IMM if carch == CS_ARCH_X86 else ARM64_OP_IMM
+        if imm_type is None or op.type != imm_type:
+            continue
+        val = op.imm & ((1 << 64) - 1)
+        if 0x20 <= val < 0x7F:
+            comment += f" ; '{chr(val)}'"
+        elif val > 0x1000:
+            s = read_cstr(data, sections, val)
+            if s and len(s) >= 3:
+                comment += f" ; \"{s}\""
+    return comment
+
+
 def read_cstr(data, sections, va, limit=120):
     name, off = section_of(sections, va)
     if off is None or off >= len(data):
@@ -153,6 +199,8 @@ def main():
     ap.add_argument("-n", "--count", type=int, default=60)
     ap.add_argument("--strings", action="store_true", help="ссылки на строки")
     ap.add_argument("--limit", type=int, default=4000)
+    ap.add_argument("--func", type=lambda x: int(x, 0),
+                    help="одна функция: от адреса до ret (адрес как в листинге)")
     args = ap.parse_args()
 
     data = open(args.file, "rb").read()
@@ -165,6 +213,7 @@ def main():
     name, carch, cmode = arch
     md = Cs(carch, cmode)
     md.detail = True
+    md.skipdata = True  # мусорный байт не обрывает листинг: .byte и дальше
 
     text = None
     for want in (".text", "text", ".init", ".plt"):
@@ -177,9 +226,18 @@ def main():
     if text is None:
         name0, addr, off, size = max(sections, key=lambda s: s[3]) if sections else (None, 0, 0, 0)
         text = (name0 or "?", addr, off, size)
+    if args.func is not None:
+        sec = section_at(sections, args.func)
+        if sec is None:
+            print(f"[-] адрес 0x{args.func:x} не попадает ни в одну секцию")
+            return
+        sname, addr, off, size = sec
+        delta = args.func - addr
+        text = (sname, args.func, off + delta, size - delta)
 
     sname, base, off, size = text
-    print(f"[+] {os.path.basename(args.file)}: {name}, {sname} @0x{base:x}, {size} b")
+    what = f"функция @0x{base:x} ({sname})" if args.func is not None else f"{sname} @0x{base:x}"
+    print(f"[+] {os.path.basename(args.file)}: {name}, {what}, {size} b")
     code = data[off:off + size]
     if args.around:
         start = max(0, (args.around - base) - args.count * 4)
@@ -189,7 +247,7 @@ def main():
     shown = 0
     for ins in md.disasm(code, base):
         txt = f"{ins.mnemonic} {ins.op_str}".strip()
-        keep = args.all or bool(args.around)
+        keep = args.all or bool(args.around) or args.func is not None
         if args.interesting:
             keep = ins.mnemonic in INTERESTING
         if args.grep and re.search(args.grep, txt, re.I):
@@ -203,16 +261,8 @@ def main():
             s = read_cstr(data, sections, target)
             if s and len(s) >= 3:
                 comment += f" ; \"{s}\""
-        if not comment:
-            for op in ins.operands:
-                if op.type == 3:  # IMM
-                    val = op.imm & ((1 << 64) - 1)
-                    if 0x20 <= val < 0x7F:
-                        comment += f" ; '{chr(val)}'"
-                    elif val > 0x1000:
-                        s = read_cstr(data, sections, val)
-                        if s and len(s) >= 3:
-                            comment += f" ; \"{s}\""
+        if not comment and ins.id != 0:  # id 0 — пропущенный байт (.byte)
+            comment = operand_comment(ins, carch, data, sections)
         if args.strings:
             keep = bool(comment)
         if not keep:
@@ -221,6 +271,8 @@ def main():
         shown += 1
         if shown >= args.limit:
             print("   ... (лимит)")
+            break
+        if args.func is not None and ins.mnemonic in RET:
             break
     if shown == 0:
         print("[-] ничего под фильтр не попало")

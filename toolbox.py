@@ -114,6 +114,9 @@ REGISTRY = [
     ("linux", "wsl", "linux/wsl.py",
      "запуск ELF в Arch WSL: копирует в Linux, +x, gdb/pwntools"),
 
+    ("ctb", "ctb", "ctb/ctb.py",
+     "boot2root: recon одного хоста, план, журнал, разбор privesc.sh"),
+
     ("web", "recon", "web/recon.py", "разведка страницы: ссылки/формы/JS/куки/robots"),
     ("web", "jwt", "web/jwt_tool.py", "JWT decode/forge"),
     ("web", "jwtbrute", "web/jwt_brute.py", "подбор секрета JWT"),

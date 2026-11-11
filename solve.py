@@ -861,6 +861,9 @@ def main():
         print("    если это эхо/format string:")
         print(f"    python toolbox.py fmtstr scan --connect {target} --deref")
         return
+    elif re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", target):
+        print("[+] цель: голый IP — разведка одного хоста (ctb recon)")
+        flag = runner.run("ctb", ["recon", target], "TCP-скан топ-портов + баннеры", 90)
     else:
         print("[+] цель: строка")
         flag = None

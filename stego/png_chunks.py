@@ -33,6 +33,14 @@ CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}       # color type -> каналов
 ADAM7 = [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4),
          (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)]
 MAX_DIM = 1 << 16                                 # перебор ширины/высоты по CRC
+MAX_TEXT = 1 << 20          # zTXt/iTXt: распаковывать не больше (защита от zlib-бомб)
+
+
+def inflate_text(z: bytes):
+    """Распаковать текстовый чанк не больше MAX_TEXT байт: (данные, обрезано ли)."""
+    d = zlib.decompressobj()
+    out = d.decompress(z, MAX_TEXT)
+    return out, bool(d.unconsumed_tail) or (len(out) >= MAX_TEXT and not d.eof)
 
 
 def raw_size(w, h, depth, color, interlace):
@@ -144,10 +152,14 @@ def main():
             flag = "" if stored == calc else f"  [!] CRC {stored:08x} != {calc:08x}"
             print(f"{n:3d}. {name:8s} len={length}{flag}")
 
-        if ctype == b"IHDR" and len(cdata) >= 8:
-            w, h = struct.unpack(">II", cdata[:8])
-            depth, color = cdata[8], cdata[9]
-            print(f"     IHDR {w}x{h}, depth={depth}, color={color}")
+        if ctype == b"IHDR":
+            if len(cdata) < 13:
+                print(f"     [!] IHDR длиной {len(cdata)} байт вместо 13 — битый заголовок")
+            if len(cdata) >= 8:
+                w, h = struct.unpack(">II", cdata[:8])
+                extra = (f", depth={cdata[8]}, color={cdata[9]}"
+                         if len(cdata) >= 10 else "")
+                print(f"     IHDR {w}x{h}{extra}")
             if stored != calc and len(cdata) == 13:
                 ihdr_bad = (len(rebuilt) + 8, cdata, stored)
         elif ctype == b"IDAT":
@@ -161,8 +173,10 @@ def main():
         elif ctype == b"zTXt":
             try:
                 k, rest = cdata.split(b"\x00", 1)
-                v = zlib.decompress(rest[1:])
+                v, cut = inflate_text(rest[1:])
                 print(f"     zTXt {k.decode()!r}: {v.decode('utf-8', 'replace')[:300]!r}")
+                if cut:
+                    print(f"     [!] zTXt распакован только первые {MAX_TEXT} байт (zlib-бомба?)")
             except Exception as e:
                 print("     zTXt error:", e)
         elif ctype == b"iTXt":
@@ -172,8 +186,10 @@ def main():
                 rest = rest[2:]
                 lang, rest = rest.split(b"\x00", 1)
                 trans, rest = rest.split(b"\x00", 1)
-                v = zlib.decompress(rest) if comp_flag else rest
+                v, cut = inflate_text(rest) if comp_flag else (rest, False)
                 print(f"     iTXt {k.decode()!r}: {v.decode('utf-8', 'replace')[:300]!r}")
+                if cut:
+                    print(f"     [!] iTXt распакован только первые {MAX_TEXT} байт (zlib-бомба?)")
             except Exception as e:
                 print("     iTXt error:", e)
         elif ctype not in KNOWN and ctype[:1].isupper():

@@ -281,6 +281,59 @@ def checks_stego_img(tmp):
     check("png_chunks --fix dims from crc", size == (37, 23),
           f"size={size}\n" + r.stdout[-400:] + r.stderr)
 
+    # png_chunks: zTXt-бомба распаковывается с пределом, короткий IHDR не падает
+    import contextlib
+    import importlib.util
+    import tracemalloc
+    import zlib
+
+    def _chunk(t, d):
+        return (struct.pack(">I", len(d)) + t + d
+                + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF))
+
+    png_sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    comp = zlib.compressobj(9)                    # 150 МБ нулей -> ~150 КБ
+    bomb = comp.compress(b"CTF{ztxt_bomb}")
+    zeros = b"\x00" * (1 << 20)
+    for _ in range(150):
+        bomb += comp.compress(zeros)
+    bomb += comp.flush()
+    p = os.path.join(tmp, "ztxt_bomb.png")
+    with open(p, "wb") as f:
+        f.write(png_sig + _chunk(b"IHDR", ihdr) + _chunk(b"zTXt", b"k\x00\x00" + bomb)
+                + _chunk(b"IDAT", zlib.compress(b"\x00" * 4)) + _chunk(b"IEND", b""))
+    spec = importlib.util.spec_from_file_location(
+        "png_chunks_selftest", os.path.join(KIT, "stego", "png_chunks.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    buf = io.StringIO()
+    old_argv = sys.argv
+    sys.argv = ["png_chunks.py", p]
+    tracemalloc.start()
+    try:
+        with contextlib.redirect_stdout(buf):
+            mod.main()
+        peak = tracemalloc.get_traced_memory()[1]
+    except Exception as e:
+        peak = None
+        buf.write(repr(e))
+    finally:
+        tracemalloc.stop()
+        sys.argv = old_argv
+    check("png_chunks ztxt bomb limited",
+          peak is not None and peak < 64 << 20 and "CTF{ztxt_bomb}" in buf.getvalue(),
+          f"peak={peak}\n" + buf.getvalue()[-300:])
+    bad = []
+    for n in (8, 9, 12):
+        p = os.path.join(tmp, f"ihdr_{n}.png")
+        with open(p, "wb") as f:
+            f.write(png_sig + _chunk(b"IHDR", ihdr[:n]) + _chunk(b"IEND", b""))
+        r = run("stego/png_chunks.py", p)
+        if "Traceback" in r.stderr or r.returncode != 0:
+            bad.append(f"{n}: {r.stderr[-200:]}")
+    check("png_chunks short IHDR", not bad, "\n".join(bad))
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

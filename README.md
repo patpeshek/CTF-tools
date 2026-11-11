@@ -167,7 +167,8 @@ python tests/selftest.py
   `scan --connect/--local`, `--deref`.
 - `oracle.py`: `--connect`/`--local`, `--match`, `--expr`, `--send`/`--send-expr`,
   `--repeat`, `--until`, `--peek`, `--delay`, `--log`.
-- `disasm.py`: `--interesting`, `--grep`, `--around`, `--strings`, `--all`, `--limit`.
+- `disasm.py`: `--interesting`, `--grep`, `--around`, `--strings`, `--all`, `--limit`,
+  `--func ADDR` (одна функция до ret).
   `solve.py`: `--jobs` (параллельные шаги), `--plan`, `--deep`, `--time`, `--log`.
 - `strings_filter.py`: `--utf16`, `--grep`, `--flag`, `--url`, `--path`.
 - `xor_scan.py`: `--keylen`, `--known`, `--offset`, `--length`.

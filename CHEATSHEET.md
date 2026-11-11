@@ -185,6 +185,11 @@ python admin/vm_image.py disk.vmdk --raw disk.raw   # QCOW2/VMDK/VDI/VHD → raw
 python admin/vm_image.py vm.ova --extract out       # OVA: .ovf/.mf/диски
 python admin/vm_image.py disk.vdi --find flag.txt   # строка ASCII/UTF-16 в диске
 python admin/vm_image.py disk.vhd --mount           # qemu-nbd/guestmount/7z/VBoxManage
+python admin/log_analyze.py auth.log                # брутфорс, вход после неудач, sudo, uid 0, cron
+python admin/log_analyze.py access.log --top 15     # SQLi/LFI/сканеры, 4xx-всплески, слепая SQLi
+python admin/log_analyze.py journal.json audit.log  # journalctl -o json/export, auditd (hex)
+python admin/log_analyze.py .bash_history           # подозрительные команды, креды, base64/-enc
+python admin/log_analyze.py var/log --timeline --year 2024   # всё в одну хронологию
 ```
 
 ## Артефакты и текстовые выгрузки

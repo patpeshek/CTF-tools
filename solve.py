@@ -593,6 +593,9 @@ def steps_for(path, deep=False, depth=0):
     if adm in ("QCOW2", "VMDK", "VDI", "VHD", "VHDX", "OVA", "OVF"):
         add(("vm", [path, "--next"],
              f"образ ВМ {adm}: кластеры → флаги, raw → разделы/ФС", 180))
+    elif adm in ("LOG", "SHELLHISTORY", "PSHISTORY"):
+        add(("logs", [path], f"лог ({_adm_detail or adm.lower()}): атаки, креды, "
+                             "раскодирование, слепая SQLi", 60))
 
     # PEM/DER-ключ: рядом часто лежит cipher.bin/flag.enc
     if ext in (".pem", ".pub", ".key", ".crt", ".der") or b"-----BEGIN" in data[:200]:

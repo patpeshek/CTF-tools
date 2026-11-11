@@ -120,6 +120,39 @@ def checks_admin(tmp):
     check("solve.py vm image", vms["qcow2"][1] in r.stdout and "vm" in r.stdout,
           r.stdout[-700:] + r.stderr[-300:])
 
+    # #86 log_analyze: auth.log, nginx, journald JSON, zsh history, таймлайн
+    logs = gen_admin.write_log_set(os.path.join(base, "logs"))
+    p, flag = logs["auth"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py auth",
+          flag in r.stdout and "брутфорс удался" in r.stdout and "UID 0" in r.stdout
+          and "download-exec" in r.stdout and "backdoor → group sudo" in r.stdout,
+          r.stdout[-900:] + r.stderr[-400:])
+    p, flag = logs["access"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py web",
+          flag in r.stdout and "слепая SQLi" in r.stdout and "lfi/traversal" in r.stdout
+          and "nikto" in r.stdout and "user=guest;role=admin" in r.stdout
+          and "всплеск 4xx/5xx" in r.stdout, r.stdout[-900:] + r.stderr[-400:])
+    p, flag = logs["journal"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py journald",
+          flag in r.stdout and "journal_json" in r.stdout and "192.0.2.44" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    p, flag = logs["history"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py history",
+          flag in r.stdout and "reverse-shell" in r.stdout and "password-arg" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/log_analyze.py", logs["auth"][0], logs["history"][0], logs["journal"][0],
+            "--timeline", "--year", "2024")
+    tl = r.stdout.split("=== таймлайн", 1)[-1]
+    i1, i2, i3 = tl.find("192.0.2.44"), tl.find("wget http"), tl.find("203.0.113.7: 12")
+    check("admin/log_analyze.py --timeline", 0 <= i1 < i2 < i3, tl[:900] + r.stderr[-300:])
+    r = run("solve.py", logs["access"][0], "--time", "40")
+    check("solve.py logs", logs["access"][1] in r.stdout and "«logs»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

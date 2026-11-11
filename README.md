@@ -81,6 +81,7 @@ python tests/selftest.py
 | ZIP/архив, «пароль», «комментарий» | `forensic/zipmeta.py` |
 | образ диска, «удалённые файлы» | `forensic/disk_triage.sh` |
 | образ ВМ: OVA/VMDK/QCOW2/VDI/VHD | `admin/vm_image.py` (`--raw` → raw-диск) |
+| логи auth/nginx/journald/auditd, history, «кто вошёл / что сделал» | `admin/log_analyze.py` (`--timeline`) |
 | фото, «где снято / когда» | `forensic/exif.py`, `misc/timeconv.py` |
 | PCAP, «кто атаковал / что украли» | `network/pcap_report.py` |
 | классический шифр | `crypto/classical.py` |

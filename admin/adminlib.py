@@ -375,7 +375,7 @@ SUSPICIOUS = [
                     r"systemctl\s+enable|/etc/systemd/system|schtasks\s+/create|"
                     r"New-ScheduledTask|Register-ScheduledTask|"
                     r"\\CurrentVersion\\Run|New-Service|sc(?:\.exe)?\s+create"),
-    ("account", r"\b(?:useradd|adduser|usermod\s+-aG|passwd|chpasswd|visudo)\b|"
+    ("account", r"(?<![/\w.-])(?:useradd|adduser|usermod\s+-aG|passwd|chpasswd|visudo)\b|"
                 r"/etc/sudoers|net\s+user\s+\S+\s+\S+\s+/add|net\s+localgroup\s+administrators|"
                 r"New-LocalUser|Add-LocalGroupMember"),
     ("anti-forensics", r"history\s+-c|unset\s+HISTFILE|HISTFILE=/dev/null|HISTSIZE=0|"

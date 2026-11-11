@@ -153,6 +153,12 @@
 | `xorscan` | XOR-скан файла | `python toolbox.py xorscan bin --keylen 8` |
 | `pypack` | PyInstaller/pyarmor/Nuitka | `python toolbox.py pypack app.exe` |
 
+## CTB (boot2root, свои стенды)
+
+| Имя | Что делает | Пример |
+|---|---|---|
+| `ctb` | recon одного хоста (порты/баннеры/HTTP), plan, журнал, разбор privesc.sh | `python toolbox.py ctb recon 10.10.10.5` |
+
 ## Misc
 
 | Имя | Что делает | Пример |

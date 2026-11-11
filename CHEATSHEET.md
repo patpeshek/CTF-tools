@@ -168,6 +168,16 @@ python blockchain/evm_decode.py --sig "transfer(address,uint256)"
 python ai/pickle_scan.py model.pkl                     # опасные глобалы, без запуска
 ```
 
+## CTB: практические машины (свой стенд)
+
+```bash
+python ctb/ctb.py recon 10.10.10.5 --out r.json   # один хост, топ-порты, баннеры, HTTP
+python ctb/ctb.py plan r.json                     # чек-лист
+python ctb/ctb.py log add "ftp anon" --result ok  # журнал (ctb_log.jsonl)
+python ctb/ctb.py log show
+python ctb/ctb.py privesc privesc.txt             # без файла — как залить privesc.sh
+```
+
 ## Linux: разведка и privesc
 
 ```bash

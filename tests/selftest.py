@@ -98,6 +98,108 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_ctb(tmp):
+    """ctb: recon по локальным фейковым сервисам, plan, log, разбор privesc."""
+    import http.server
+    import secrets
+    import socket
+    import threading
+
+    flag = "CTF{ctb_" + secrets.token_hex(4) + "}"
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/robots.txt":
+                body = f"User-agent: *\nDisallow: /{flag}\n".encode()
+            else:
+                body = b"<html><head><title>CtbLab</title></head></html>"
+            self.send_response(200)
+            self.send_header("Server", "LabHTTP/1.0")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), H)
+    hport = httpd.server_address[1]
+    ftp = socket.socket()
+    ftp.bind(("127.0.0.1", 0))
+    ftp.listen(5)
+    fport = ftp.getsockname()[1]
+    stop = threading.Event()
+
+    def ftp_loop():
+        ftp.settimeout(0.3)
+        while not stop.is_set():
+            try:
+                c, _ = ftp.accept()
+            except OSError:
+                continue
+            try:
+                c.sendall(b"220 (vsFTPd 2.3.4)\r\n")
+            except OSError:
+                pass
+            c.close()
+
+    ts = [threading.Thread(target=httpd.serve_forever, daemon=True),
+          threading.Thread(target=ftp_loop, daemon=True)]
+    for t in ts:
+        t.start()
+    try:
+        rep_path = os.path.join(tmp, "ctb_report.json")
+        r = run("ctb/ctb.py", "recon", "127.0.0.1", "--ports",
+                f"{fport},{hport}", "--timeout", "1", "--out", rep_path)
+        check("ctb recon: баннер FTP", "vsFTPd 2.3.4" in r.stdout, r.stdout[-500:] + r.stderr)
+        check("ctb recon: title/Server", "CtbLab" in r.stdout and "LabHTTP" in r.stdout,
+              r.stdout[-500:] + r.stderr)
+        check("ctb recon: флаг из robots.txt", flag in r.stdout, r.stdout[-500:] + r.stderr)
+        check("ctb recon: заметка по версии", "бэкдор" in r.stdout, r.stdout[-500:])
+        r = run("ctb/ctb.py", "recon", "127.0.0.0/24")
+        check("ctb recon: диапазоны отвергаются", "[-]" in r.stdout and '"open"' not in r.stdout,
+              r.stdout + r.stderr)
+        r = run("ctb/ctb.py", "plan", rep_path)
+        check("ctb plan", "Чек-лист" in r.stdout and "ftp" in r.stdout.lower(),
+              r.stdout + r.stderr)
+    finally:
+        stop.set()
+        httpd.shutdown()
+        httpd.server_close()
+        ftp.close()
+        for t in ts:
+            t.join(2)
+
+    # журнал
+    logf = os.path.join(tmp, "ctb_log.jsonl")
+    env = {"CTB_LOG": logf}
+    run("ctb/ctb.py", "log", "add", "ftp anon", "--result", "ok", "--note", "n1", env=env)
+    r = run("ctb/ctb.py", "log", "show", env=env)
+    rec = json.loads(open(logf, encoding="utf-8").readline())
+    check("ctb log", "ftp anon" in r.stdout and rec["result"] == "ok" and rec["note"] == "n1",
+          r.stdout + r.stderr)
+
+    # privesc
+    sample = os.path.join(tmp, "privesc_sample.txt")
+    open(sample, "w", encoding="utf-8").write(
+        "===== 1. Кто я =====\nuid=1000(bob)\n"
+        "Linux box 4.4.0-31-generic #50 SMP x86_64 GNU/Linux\n\n"
+        "===== 2. sudo =====\n"
+        "User bob may run the following commands on box:\n"
+        "    (root) NOPASSWD: /usr/bin/vim\n\n"
+        "===== 3. SUID / SGID =====\n/usr/bin/passwd\n/usr/bin/find\n/bin/su\n"
+        "--- SGID ---\n\n"
+        "===== 4. Capabilities =====\n/usr/bin/python3 = cap_setuid+ep\n")
+    r = run("ctb/ctb.py", "privesc", sample)
+    check("ctb privesc parse",
+          "NOPASSWD: /usr/bin/vim" in r.stdout and "/usr/bin/find" in r.stdout
+          and "cap_setuid" in r.stdout and "4.4.0" in r.stdout
+          and "SUID (необычный): /usr/bin/passwd" not in r.stdout,
+          r.stdout + r.stderr)
+    r = run("ctb/ctb.py", "privesc")
+    check("ctb privesc howto", "privesc.sh" in r.stdout, r.stdout + r.stderr)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")
     atexit.register(shutil.rmtree, tmp, True)
@@ -1975,6 +2077,8 @@ def main():
     check("ai/pickle_scan.py",
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
+
+    checks_ctb(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

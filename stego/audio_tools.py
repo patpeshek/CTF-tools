@@ -175,20 +175,58 @@ def morse_runs(data, rate):
     ons = [l for s, l in runs if s]
     if not ons:
         return []
-    unit = float(np.percentile(ons, 25))
-    if unit < 1:
-        unit = float(min(ons))
+    # оценка точки — по грубо очищенным отрезкам, потом чистка от точки;
+    # огибающая по окну win удлиняет тоны и укорачивает паузы на ~0.75*win
+    unit = morse_unit(merge_short(runs, 0.2 * float(np.median(ons))), rate,
+                      bias=0.75 * win)
     # глитчи короче половины точки просто съедаем (состояние не меняется)
+    clean = merge_short(runs, 0.5 * unit)
+    return [(bool(s), l / unit) for s, l in clean]
+
+
+def merge_short(runs, limit):
+    """Отрезки короче limit приклеиваются к предыдущему (глитчи)."""
     clean = []
     for state, length in runs:
-        if length < 0.5 * unit and clean:
+        if length < limit and clean:
             clean[-1][1] += length
             continue
         if clean and clean[-1][0] == state:
             clean[-1][1] += length
         else:
             clean.append([state, length])
-    return [(bool(s), l / unit) for s, l in clean]
+    return clean
+
+
+def morse_unit(runs, rate, bias=0.0):
+    """Длительность точки (в сэмплах) по тонам И паузам.
+
+    Если есть и короткие, и длинные тоны (отношение ~1:3) — точка это
+    короткие. Если все тоны одной длины L, это либо точки, либо тире
+    (например «MOO» = «-- --- ---»): паузы должны ложиться на 1/3/7
+    единиц — сравниваем обе гипотезы (единица L или L/3). Полная
+    неоднозначность («TTT» == «S» в другом темпе, одиночный знак)
+    решается темпом: тон длиннее ~0.11 с — тире.
+    """
+    ons = sorted(max(1.0, l - bias) for s, l in runs if s)
+    lo, hi = ons[0], ons[-1]
+    if hi >= 2 * lo:
+        cut = (lo * hi) ** 0.5
+        return float(np.median([x for x in ons if x <= cut]))
+    L = float(np.median(ons))
+    gaps = [l + bias for i, (s, l) in enumerate(runs)
+            if not s and 0 < i < len(runs) - 1]
+
+    def misfit(unit):
+        if not gaps:
+            return 0.0
+        return float(np.mean([min(abs(np.log(g / (unit * k))) for k in (1, 3, 7))
+                              for g in gaps]))
+
+    e_dot, e_dash = misfit(L), misfit(L / 3)
+    if abs(e_dot - e_dash) < 0.1:
+        return L / 3 if L >= 0.11 * rate else L
+    return L if e_dot < e_dash else L / 3
 
 
 def decode_morse(data, rate, want_raw=False):

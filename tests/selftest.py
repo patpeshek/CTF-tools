@@ -160,6 +160,26 @@ def checks_stego_audio(tmp):
     check("stego/audio_tools.py dtmf fast+noise", f"DTMF: {fast}\n" in r.stdout,
           r.stdout + r.stderr)
 
+    # audio_tools: морзе только из тире — точку нельзя брать из длины тонов (#63)
+    def _morse(text, rate=22050, dot_s=0.08):
+        table = {"M": "--", "O": "---", "T": "-"}
+        dot = int(rate * dot_s)
+        out = []
+        for ch in text:
+            for sym in table[ch]:
+                out += [6000 * math.sin(2 * math.pi * 700 * i / rate)
+                        for i in range(dot if sym == "." else dot * 3)]
+                out += [0.0] * dot
+            out += [0.0] * (dot * 2)
+        return out
+
+    for word in ("MOO", "TTT"):
+        pm = os.path.join(tmp, f"morse_{word}.wav")
+        _wav(pm, _morse(word), 22050, 2)
+        r = run("stego/audio_tools.py", pm, "--mode", "morse", "--raw")
+        check(f"stego/audio_tools.py morse dashes {word}", f"MORSE: {word}\n" in r.stdout,
+              r.stdout + r.stderr)
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="ctfkit_")

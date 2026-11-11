@@ -30,6 +30,10 @@ python forensic/zipmeta.py a.zip --decode
 python forensic/ipa_info.py app.ipa --out app      # iOS: Info.plist, строки
 python forensic/geo_photo.py photo.jpg --json r.json  # EXIF/GPS + ссылки
 sudo bash forensic/disk_triage.sh disk.img
+python forensic/disk_image.py parts disk.img       # MBR/GPT (без sleuthkit)
+python forensic/disk_image.py scan disk.img --out out --find-flags   # FAT/NTFS/ext, удалённые, ADS
+python forensic/disk_image.py mft '$MFT' --find-flags                 # сырой $MFT: ADS, удалённые
+python forensic/disk_image.py ext ext.img --find-flags                # суперблок, дерево, журнал jbd2 (частично)
 photorec disk.img                 # восстановление удалённых
 testdisk disk.img                 # разделы
 cryptsetup luksOpen disk.img secure && mount /dev/mapper/secure /mnt

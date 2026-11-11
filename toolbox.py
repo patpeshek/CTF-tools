@@ -74,6 +74,8 @@ REGISTRY = [
     ("forensic", "office", "forensic/office_docs.py", "Office/PDF: макросы, JS, вложенное"),
     ("forensic", "cloud", "forensic/cloud_creds.py", "AWS/GCP/Azure ключи и metadata"),
     ("forensic", "flaghunt", "forensic/flag_hunt.py", "файлы-флаги по имени и содержимому"),
+    ("forensic", "disk_image", "forensic/disk_image.py",
+     "образы: MBR/GPT, FAT/NTFS $MFT/ext, удалённые, ADS, журнал"),
 
     ("network", "pcap", "network/pcap_report.py", "сводка по PCAP"),
     ("network", "reasm", "network/tcp_reassemble.py", "сборка TCP по seq"),

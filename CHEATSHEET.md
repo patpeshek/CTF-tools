@@ -17,6 +17,7 @@ steghide extract -sf pic.jpg     # пароль может быть в текс�
 stegsolve                        # GUI: каналы, биты, frame browser
 binwalk --dd='.*' pic.jpg        # вырезать всё
 python stego/lsb.py pic.png --channel r --bits 2
+python stego/lsb_brute.py pic.png    # аналог zsteg -a: все раскладки LSB
 python stego/alpha.py pic.png --channel a
 python stego/jpeg_tail.py pic.jpg --extract out
 ```
@@ -310,8 +311,12 @@ paru -Syu                                          # обновить репы +
 
 # stego
 python stego/audio_spectrum.py sound.wav --peaks
+python stego/wav_lsb.py sound.wav                   # LSB сэмплов WAV (8/16/24/32 бит)
+python stego/wav_lsb.py sound.wav --echo --seg 4096 --d0 60 --d1 120  # эхо-скрытие
 python stego/carve.py blob.bin --out carved        # ZIP ищется по EOCD и распаковывается
 python stego/qr_scan.py pic.png
+python stego/stego_crack.py pic.jpg --desc "пароль: s3cr3t"   # steghide/outguess/stegseek перебором
+python stego/stego_crack.py pic.jpg --wordlist rockyou.txt --max 20000
 python stego/whitespace.py file.txt
 python stego/esolang.py file.bf
 python crypto/obscure.py auto --text "..."

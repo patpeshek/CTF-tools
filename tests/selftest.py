@@ -1703,6 +1703,173 @@ def checks_core(tmp):
           r.returncode == 1 and r2.returncode == 1 and "не могу прочитать" in r.stdout
           and "Traceback" not in r.stderr + r2.stderr,
           r.stdout[-300:] + r.stderr[-300:] + r2.stderr[-300:])
+def _lsb_image(path, fmt, flag, order="rgb", plane=0, w=64, h=64, **save_kw):
+    """Картинка с шумом; флаг+NUL пишется в бит plane каналов по кругу order."""
+    rnd = random.Random(7)
+    arr = [[[rnd.randrange(256) for _ in range(3)] for _ in range(w)] for _ in range(h)]
+    bits = [(b >> (7 - i)) & 1 for b in flag.encode() + b"\0" for i in range(8)]
+    idx = {"rgb": (0, 1, 2), "bgr": (2, 1, 0)}[order]
+    k = 0
+    for y in range(h):
+        for x in range(w):
+            for c in idx:
+                if k < len(bits):
+                    arr[y][x][c] = (arr[y][x][c] & ~(1 << plane)) | (bits[k] << plane)
+                    k += 1
+    im = Image.new("RGB", (w, h))
+    im.putdata([tuple(p) for row in arr for p in row])
+    im.save(path, fmt, **save_kw)
+
+
+def checks_stego_new(tmp):
+    # #95: zsteg-подобный перебор раскладок (BGR, бит 3 — не «классика»)
+    f95 = "CTF{" + "lsb_brute_" + "ok}"
+    p = os.path.join(tmp, "brute_bgr.png")
+    _lsb_image(p, "PNG", f95, order="bgr", plane=2)
+    r = run("toolbox.py", "zsteg", p)
+    check("zsteg bgr plane3", f95 in r.stdout, r.stdout[-500:] + r.stderr)
+    r = run("stego/lsb_brute.py", os.path.join(tmp, "no_such.png"))
+    check("zsteg missing path", "Traceback" not in r.stderr and "[-]" in r.stdout,
+          r.stdout + r.stderr)
+    r = run("stego/lsb_brute.py", tmp)
+    check("zsteg directory", "Traceback" not in r.stderr and "[-]" in r.stdout,
+          r.stdout + r.stderr)
+
+    # #96: классический 1-LSB R,G,B в BMP / TIFF / WEBP(lossless): reader + solve
+    f96 = "CTF{" + "fmt_lsb_ok}"
+    for ext, fmt, kw in (("bmp", "BMP", {}), ("tiff", "TIFF", {}),
+                         ("webp", "WEBP", {"lossless": True, "exact": True})):
+        p = os.path.join(tmp, "classic." + ext)
+        _lsb_image(p, fmt, f96, **kw)
+        r = run("stego/lsb_brute.py", p)
+        check(f"zsteg {ext} reader", f96 in r.stdout, r.stdout[-400:] + r.stderr)
+        r = run("solve.py", p, "--time", 40)
+        check(f"solve {ext} lsb", f96 in r.stdout, r.stdout[-600:] + r.stderr)
+
+def checks_wav_lsb(tmp):
+    """stego/wav_lsb.py: LSB в сэмплах WAV (16/24-бит) и эхо-скрытие.
+
+    Все артефакты генерируются кодом (модуль wave), без ручного base64.
+    """
+    rng = random.Random(SEED)
+
+    def _bits_lsb(data):
+        # порядок байта little-endian (lsb-first): bit0 сначала
+        return [(byte >> b) & 1 for byte in data for b in range(8)]
+
+    def _pack24(v):
+        v = int(v) & 0xFFFFFF
+        return bytes((v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF))
+
+    # (a) 16-бит моно: флаг в 1 младшем бите всех сэмплов, lsb-first
+    flag16 = "CTF{wav_lsb_16bit}"
+    n16 = 4000
+    s16 = [rng.randrange(-8000, 8000) for _ in range(n16)]
+    bits = _bits_lsb(flag16.encode())
+    for i, bit in enumerate(bits):
+        s16[i] = (s16[i] & ~1) | bit
+    wav16 = os.path.join(tmp, "wavlsb16.wav")
+    with wave.open(wav16, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(b"".join(struct.pack("<h", x) for x in s16))
+    r = run("stego/wav_lsb.py", wav16)
+    check("stego/wav_lsb.py 16bit", flag16 in r.stdout, r.stdout[:800] + r.stderr)
+
+    # (b) 24-бит стерео: флаг в 1 младшем бите левого канала
+    flag24 = "CTF{wav24_lsb}"
+    n24 = 3000
+    left = [rng.randrange(-800000, 800000) for _ in range(n24)]
+    right = [rng.randrange(-800000, 800000) for _ in range(n24)]
+    bits = _bits_lsb(flag24.encode())
+    for i, bit in enumerate(bits):
+        left[i] = (left[i] & ~1) | bit
+    frames = bytearray()
+    for i in range(n24):
+        frames += _pack24(left[i]) + _pack24(right[i])
+    wav24 = os.path.join(tmp, "wavlsb24.wav")
+    with wave.open(wav24, "w") as w:
+        w.setnchannels(2); w.setsampwidth(3); w.setframerate(16000)
+        w.writeframes(bytes(frames))
+    r = run("stego/wav_lsb.py", wav24)
+    check("stego/wav_lsb.py 24bit", flag24 in r.stdout, r.stdout[:800] + r.stderr)
+
+    # (c) эхо-скрытие: на каждый бит добавляем задержанную ослабленную копию
+    #     сегмента (d0 кодирует 0, d1 — 1). Декодер — кепстральный.
+    seg_len, d0, d1, alpha = 2048, 50, 100, 0.6
+    echo_flag = "CTF{echo}"
+    ebits = [(byte >> b) & 1 for byte in echo_flag.encode() for b in range(7, -1, -1)]
+    nseg = len(ebits)
+    host = [rng.gauss(0, 3000) for _ in range((nseg + 1) * seg_len)]
+    out = list(host)
+    for k, bit in enumerate(ebits):
+        st = k * seg_len
+        d = d1 if bit else d0
+        for i in range(d, seg_len):
+            out[st + i] = host[st + i] + alpha * host[st + i - d]
+    out16 = [max(-32768, min(32767, int(x))) for x in out]
+    echo_wav = os.path.join(tmp, "wavecho.wav")
+    with wave.open(echo_wav, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(b"".join(struct.pack("<h", x) for x in out16))
+    expect_bits = "".join(str(b) for b in ebits)
+    r = run("stego/wav_lsb.py", echo_wav, "--echo",
+            "--seg", seg_len, "--d0", d0, "--d1", d1)
+    # сильнее: восстановленный флаг; мягче (fallback по заданию): битовый шаблон
+    check("stego/wav_lsb.py echo",
+          echo_flag in r.stdout or expect_bits in r.stdout,
+          r.stdout[:800] + r.stderr)
+
+    # (d) не PCM WAV / отсутствующий путь — без трейсбека, rc=0
+    notwav = os.path.join(tmp, "wavlsb_bad.wav")
+    open(notwav, "w", encoding="utf-8").write('{"code":"ACCESS_DENIED"}')
+    r = run("stego/wav_lsb.py", notwav)
+    check("stego/wav_lsb.py not-wav",
+          r.returncode == 0 and "не PCM WAV" in r.stdout and "Traceback" not in r.stderr,
+          r.stdout + r.stderr)
+def checks_stego_crack(tmp):
+    """stego/stego_crack.py: подставной steghide находит флаг; без тулз — подсказка."""
+    fakebin = os.path.join(tmp, "stego_fakebin")
+    os.makedirs(fakebin, exist_ok=True)
+    pw = "hunter2stego"
+    flag = "CTF{fake_steghide_" + hashlib.md5(pw.encode()).hexdigest()[:8] + "}"
+
+    # подставной steghide: "извлекает" флаг только при верном пароле (-p),
+    # пишет в файл, указанный через -xf; иначе выходит с ошибкой.
+    impl = os.path.join(fakebin, "steghide_impl.py")
+    with open(impl, "w", encoding="utf-8") as f:
+        f.write(
+            "import sys\n"
+            "a = sys.argv[1:]\n"
+            "def opt(k):\n"
+            "    return a[a.index(k) + 1] if k in a and a.index(k) + 1 < len(a) else None\n"
+            "pw = opt('-p'); xf = opt('-xf')\n"
+            f"if pw == {pw!r} and xf:\n"
+            f"    open(xf, 'wb').write({flag!r}.encode() + b'\\n'); sys.exit(0)\n"
+            "sys.stderr.write('could not extract any data with that passphrase!\\n')\n"
+            "sys.exit(1)\n")
+    # .bat-обёртка: shutil.which найдёт её по PATHEXT, subprocess запустит
+    bat = os.path.join(fakebin, "steghide.bat")
+    with open(bat, "w", encoding="utf-8") as f:
+        f.write("@echo off\r\n\"%s\" \"%s\" %%*\r\n" % (PY, impl))
+
+    carrier = os.path.join(tmp, "stego_crack_carrier.jpg")
+    Image.new("RGB", (16, 16), (20, 40, 60)).save(carrier, "JPEG")
+
+    # (a) подставной steghide первым на PATH — флаг и пароль должны найтись
+    env_a = {"PATH": fakebin + os.pathsep + os.environ.get("PATH", "")}
+    r = run("stego/stego_crack.py", carrier, "--desc", f'пароль "{pw}" в картинке',
+            "--no-sibling", env=env_a)
+    ok_a = (flag in r.stdout and pw in r.stdout and "steghide" in r.stdout
+            and "Traceback" not in (r.stderr or "") and r.returncode == 0)
+    check("stego_crack: подставной steghide находит флаг", ok_a,
+          (r.stdout or "")[-900:] + (r.stderr or "")[-400:])
+
+    # (b) инструментов нет на PATH — чистая подсказка, без трейсбека
+    r2 = run("stego/stego_crack.py", carrier, "--no-sibling")
+    ok_b = ("Traceback" not in (r2.stderr or "") and r2.returncode == 0
+            and "steghide extract -sf" in r2.stdout)
+    check("stego_crack: без тулз — подсказка, не трейсбек", ok_b,
+          (r2.stdout or "")[-700:] + (r2.stderr or "")[-400:])
 
 
 def main():
@@ -3743,6 +3910,12 @@ def main():
 
     # 139-145. свойства, дифференциал, фаззинг и мета-проверки
     property_and_meta_checks(tmp)
+
+    checks_stego_new(tmp)
+    # 146. wav_lsb: LSB в сэмплах WAV (16/24-бит) и эхо-скрытие
+    checks_wav_lsb(tmp)
+    # stego/stego_crack.py: перебор паролей через внешние тулзы
+    checks_stego_crack(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

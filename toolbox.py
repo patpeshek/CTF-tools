@@ -44,6 +44,7 @@ REGISTRY = [
     ("", "auto", "", "определить тип и предложить действия"),
 
     ("stego", "lsb", "stego/lsb.py", "LSB одного канала / diff двух картинок"),
+    ("stego", "zsteg", "stego/lsb_brute.py", "перебор LSB-раскладок (бит/канал/обход/порядок), PNG/BMP/TIFF/WEBP"),
     ("stego", "alpha", "stego/alpha.py", "значения канала как ASCII"),
     ("stego", "jpeg_tail", "stego/jpeg_tail.py", "хвост после JPEG → ZIP/PNG"),
     ("stego", "carve", "stego/carve.py", "вырезать вложенные файлы по сигнатурам"),
@@ -56,7 +57,9 @@ REGISTRY = [
     ("stego", "esolang", "stego/esolang.py", "Brainfuck/Ook/Cow/Befunge/Deadfish"),
     ("stego", "audio", "stego/audio_spectrum.py", "спектрограмма WAV"),
     ("stego", "audiotools", "stego/audio_tools.py", "DTMF и морзе из WAV"),
+    ("stego", "wavlsb", "stego/wav_lsb.py", "LSB в сэмплах WAV + эхо-скрытие"),
     ("stego", "qr", "stego/qr_scan.py", "найти и прочитать QR"),
+    ("stego", "stegopass", "stego/stego_crack.py", "перебор паролей steghide/outguess/stegseek"),
 
     ("forensic", "zipmeta", "forensic/zipmeta.py", "комментарии/extra ZIP"),
     ("forensic", "exif", "forensic/exif.py", "метаданные файла"),

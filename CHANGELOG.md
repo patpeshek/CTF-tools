@@ -37,9 +37,17 @@ Tesseract; падает и на чистом HEAD).
   `forensic/disk_image.py` (#100) — MBR/GPT, FAT/NTFS($MFT,ADS)/ext, удалённые
   файлы; PPC MATH (#89) — 12 решателей (хеши, сортировки, модулярка, графы),
   ppc_bench 21→42.
+- **Стего-инструменты (#95–98):** `stego/lsb_brute.py` (`zsteg`) — перебор
+  слоёв LSB (биты 1–8, каналы RGB/BGR, обход xy/yx, MSB/LSB, скоринг) + план
+  solve для BMP/TIFF/WEBP (#95, #96); `stego/stego_crack.py` (`stegopass`) —
+  steghide/outguess/F5/stegseek с паролями из условия и словаря, внешние тулзы
+  опциональны (#97); `stego/wav_lsb.py` (`wavlsb`) — LSB в сэмплах WAV
+  (8/16/24/32 бит) и эхо-скрытие (#98).
 - Всё новое подключено к `solve` по типу данных, добавлено в `REGISTRY`,
-  `INDEX.md`, `CHEATSHEET.md`; по ходу работы заведён тикет #160
-  (`volatility_text` правило 5).
+  `INDEX.md`, `CHEATSHEET.md`; по ходу работы заведены тикеты #160
+  (`volatility_text` правило 5) и #162 (несогласованная зависимость sympy в
+  rsa_tool). Финальный selftest 334/2 (оба минуса — #162), ppc_bench 41/42
+  (captcha требует Tesseract).
 ## 2026-11-10 — 0.47.0
 
 - **Расширенные атаки на RSA (#90), `crypto/rsa_tool.py`:**

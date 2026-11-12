@@ -700,6 +700,7 @@ def steps_for(path, deep=False, depth=0):
     if kind == "PNG":
         add(("png_chunks", [path], "нестандартные чанки/текст", 30))
         add(("lsb", [path], "младшие биты", 40))
+        add(("zsteg", [path], "перебор LSB-раскладок", 40))
         add(("alpha", [path], "альфа-канал", 40))
         add(("qr", [path], "QR на картинке", 30))
         add(("ocr", [path], "текст с картинки", 40))
@@ -716,6 +717,12 @@ def steps_for(path, deep=False, depth=0):
         add(("lsb", [path], "младшие биты", 40))
         add(("ocr", [path], "текст с картинки", 40))
         add(("ocr", [path, "--variants"], "текст + правки ошибок OCR", 50))
+        add(("geo", [path], "EXIF/GPS + ссылки для поиска", 30))
+    elif kind in ("BMP", "TIFF", "WEBP"):
+        add(("zsteg", [path], f"перебор LSB-раскладок ({kind})", 40))
+        add(("lsb", [path], "младшие биты", 40))
+        add(("qr", [path], "QR на картинке", 30))
+        add(("ocr", [path], "текст с картинки", 40))
         add(("geo", [path], "EXIF/GPS + ссылки для поиска", 30))
     elif kind == "GIF":
         add(("gif_frames", [path], "кадры/палитра", 30))
@@ -735,11 +742,18 @@ def steps_for(path, deep=False, depth=0):
 
     if kind == "RIFF" or ext in (".wav",):
         add(("audiotools", [path, "--raw"], "морзе/DTMF", 40))
+        add(("wavlsb", [path], "LSB в сэмплах WAV", 40))
         if deep:
             add(("audio", [path], "спектрограмма", 60))
     elif kind in ("MP3", "OGG"):
         add(("audio", [path], "спектрограмма", 60))
         add(("audiotools", [path, "--raw"], "морзе/DTMF", 40))
+
+    # steghide/outguess берут пароль из текста задачи: быстрый перебор для
+    # контейнеров, которые они поддерживают (JPEG/BMP/WAV). Полный словарь —
+    # только при явном вызове stegopass --wordlist.
+    if kind in ("JPEG", "RIFF") or ext in (".wav", ".bmp") or data[:2] == b"BM":
+        add(("stegopass", [path], "steghide/outguess: пароли из условия задачи", 40))
 
     # ключ/IV могут лежать в соседней подсказке (hint.txt)
     hint = hint_params(path)

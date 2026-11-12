@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time as _clock
 import zipfile
 import zlib
 import atexit
@@ -43,12 +44,15 @@ PY = sys.executable
 ENV = dict(os.environ, PYTHONIOENCODING="utf-8")
 
 passed, failed = 0, 0
+TIMINGS = []  # (секунды, что запускали) — для отчёта «где тормозит»
 
 # настройки прогона (переопределяются аргументами командной строки)
 SEED = 1234
 FUZZ = 10
 QUICK = False
 TIMEOUT = 180
+SHOW_TIMING = True
+FAIL_FAST = False
 
 
 class _Result:
@@ -63,12 +67,16 @@ def run(rel_script, *args, env=None, timeout=None):
     e = dict(ENV)
     if env:
         e.update(env)
+    label = f"{rel_script} " + " ".join(map(str, args))[:60]
+    started = _clock.perf_counter()
     try:
         return subprocess.run([PY, path, *map(str, args)], capture_output=True,
                               text=True, encoding="utf-8", errors="replace",
                               env=e, timeout=timeout or TIMEOUT)
     except subprocess.TimeoutExpired:
         return _Result(124, "", f"[timeout {timeout or TIMEOUT}s] {rel_script}")
+    finally:
+        TIMINGS.append((_clock.perf_counter() - started, label))
 
 
 def check(name, cond, detail=""):
@@ -81,6 +89,9 @@ def check(name, cond, detail=""):
         print(f"[FAIL] {name}")
         if detail:
             print("       " + detail.replace("\n", "\n       ")[:1200])
+        if FAIL_FAST:
+            print(f"\n=== FAIL-FAST: {name} (PASS: {passed}  FAIL: {failed}) ===")
+            sys.exit(1)
 
 
 HASH_INIT = {
@@ -213,9 +224,67 @@ def property_and_meta_checks(tmp):
 
     # 145. мета: новые инструменты описаны в INDEX
     idx = open(os.path.join(KIT, "INDEX.md"), encoding="utf-8").read()
-    absent = [n for n in ("oracles", "hashext") if f"`{n}`" not in idx]
+    absent = [n for n in ("oracles", "hashext", "doctor", "bench", "shamir")
+              if f"`{n}`" not in idx]
     check("meta: INDEX описывает новые инструменты", not absent,
           ", ".join(absent))
+
+    # 146. shamir: property — случайные k/n, поля и битая доля
+    sham = _load_kit_module("crypto/shamir.py")
+    sham_bad = []
+    for trial in range(5):
+        prime = (1 << 61) - 1
+        k = rng.randint(2, 5)
+        n = k + rng.randint(1, 3)
+        coeffs = [rng.randrange(1, 10 ** 9)] + [rng.randrange(10 ** 9)
+                                                for _ in range(k - 1)]
+
+        def _f(x, _c=coeffs, _p=prime):
+            return sum(c * pow(x, i, _p) for i, c in enumerate(_c)) % _p
+
+        shares = [(x, _f(x)) for x in range(1, n + 1)]
+        res = sham.solve_shamir(shares, prime=prime, k=k)
+        if res["secret"] % prime != coeffs[0] % prime:
+            sham_bad.append(f"t{trial}:secret")
+        # портим одну долю
+        broken = list(shares)
+        idx_bad = rng.randrange(n)
+        x_b, y_b = broken[idx_bad]
+        broken[idx_bad] = (x_b, (y_b + 1) % prime)
+        if n >= k + 2:
+            # лишних долей хватает — ошибка исправляется
+            res2 = sham.solve_shamir(broken, prime=prime, k=k, robust=True)
+            if res2["secret"] % prime != coeffs[0] % prime:
+                sham_bad.append(f"t{trial}:robust")
+        else:
+            # n = k+1: однозначно исправить нельзя — обязан честно отказаться
+            try:
+                sham.solve_shamir(broken, prime=prime, k=k, robust=True)
+                sham_bad.append(f"t{trial}:guessed")
+            except ValueError as exc:
+                if "неоднозначно" not in str(exc):
+                    sham_bad.append(f"t{trial}:wrong-error")
+    check("property: shamir random k/n", not sham_bad, ", ".join(sham_bad))
+
+
+def make_pe(path, marker=b"CTF{pe_fixture}"):
+    """Маленький PE (1 КБ): MZ, DOS-заглушка, PE-заголовок, строки.
+
+    Раньше тесты реверса пихали в мегарев сам `python.exe` (70+ МБ) — он
+    сканировал его десятки минут. Фикстура даёт тот же вердикт за секунду.
+    """
+    data = bytearray(0x400)
+    data[0:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x80)
+    dos = b"This program cannot be run in DOS mode"
+    data[0x40:0x40 + len(dos)] = dos
+    data[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<HHIIIHH", data, 0x84, 0x8664, 1, 0, 0, 0, 0xE0, 0x22)
+    blob = marker + b"\0KEY=secretkey\0http://example.invalid\0"
+    data[0x200:0x200 + len(blob)] = blob
+    with open(path, "wb") as f:
+        f.write(bytes(data))
+    return path
 
 
 def write_png_with_lsb(path, message: bytes):
@@ -1706,9 +1775,11 @@ def checks_core(tmp):
 
 
 def main():
-    global SEED, FUZZ, QUICK, TIMEOUT
+    global SEED, FUZZ, QUICK, TIMEOUT, SHOW_TIMING, FAIL_FAST
     argv = sys.argv[1:]
     QUICK = "--quick" in argv
+    SHOW_TIMING = "--no-timing" not in argv
+    FAIL_FAST = "--fail-fast" in argv
     for i, a in enumerate(argv):
         if a == "--seed" and i + 1 < len(argv):
             SEED = int(argv[i + 1])
@@ -2039,8 +2110,10 @@ def main():
         check("network/udp_payloads.py", False, f"scapy error: {e}")
 
     # 27. classical: vigenere-crack
+    # 2 повтора, а не 4: тот же ключ находится, но тест в 4 раза быстрее
+    # (crack растёт квадратично от длины текста).
     plain = ("the quick brown fox jumps over the lazy dog and then runs away "
-             "into the forest where nobody can find him ") * 4
+             "into the forest where nobody can find him ") * 2
     vkey = "LEMON"
     cipher = ""
     j = 0
@@ -2540,9 +2613,12 @@ def main():
     r = run("toolbox.py", "auto", denial_json)
     check("toolbox.py auto api-denial", "ответ API" in r.stdout, r.stdout + r.stderr)
 
-    # 74. megarev: PE
-    r = run("reverse/megarev.py", "--file", PY)
-    check("reverse/megarev.py PE", "PE" in r.stdout, r.stdout[-500:] + r.stderr)
+    # 74. megarev: PE (фикстура 1 КБ, а не python.exe на 70 МБ)
+    pe_path = make_pe(os.path.join(tmp, "mini.exe"), b"CTF{pe_fixture}")
+    r = run("reverse/megarev.py", "--file", pe_path)
+    check("reverse/megarev.py PE",
+          "PE" in r.stdout and "CTF{pe_fixture}" in r.stdout,
+          r.stdout[-500:] + r.stderr)
 
     # 75. megarev: pyc + XOR-флаг
     import py_compile
@@ -3056,7 +3132,7 @@ def main():
 
     # 100. vigenere-crack: флаг в начале текста не ломает ключ
     key_v = "qzlmw"
-    plain_v = "CTF{vig} " + "the quick brown fox jumps over the lazy dog " * 6
+    plain_v = "CTF{vig} " + "the quick brown fox jumps over the lazy dog " * 3
     ct_v, ki = [], 0
     for ch in plain_v:
         if "a" <= ch <= "z":
@@ -3805,10 +3881,38 @@ def main():
     r = run("tests/bench.py", "--only", "nope")
     check("bench unknown case", r.returncode == 2, f"rc={r.returncode}")
 
+    # rsа related: Franklin-Reiter при одном n (e=3 и e=5), большой e — отказ
+    try:
+        from Crypto.Util.number import getPrime as _get_prime
+        _p, _q = _get_prime(128), _get_prime(128)
+        _n = _p * _q
+        _m = random.Random(SEED).randrange(2, _n)
+        for _e, _a, _b in ((3, 3, 7), (5, 2, -1)):
+            _c1 = pow(_m, _e, _n)
+            _c2 = pow((_a * _m + _b) % _n, _e, _n)
+            r = run("crypto/rsa_tool.py", "related", "--n", str(_n),
+                    "--e", str(_e), "--c1", str(_c1), "--c2", str(_c2),
+                    "--rel", f"{_a},{_b}")
+            check(f"rsa related e={_e}", str(_m) in r.stdout,
+                  r.stdout[-400:] + r.stderr)
+        r = run("crypto/rsa_tool.py", "related", "--n", str(_n), "--e", "65537",
+                "--c1", str(_c1), "--c2", str(_c2))
+        check("rsa related refuses big e", "не для таких" in r.stdout,
+              r.stdout[-300:])
+    except Exception as exc:
+        check("rsa related (setup)", False, repr(exc))
+
     # 139-145. свойства, дифференциал, фаззинг и мета-проверки
     property_and_meta_checks(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
+    if SHOW_TIMING and TIMINGS:
+        total = sum(t for t, _ in TIMINGS)
+        print(f"[=] инструментов запущено: {len(TIMINGS)}, суммарно {total:.1f} с")
+        slow = sorted(TIMINGS, reverse=True)[:10]
+        print("[=] самые долгие вызовы:")
+        for seconds, label in slow:
+            print(f"    {seconds:6.2f} с  {label}")
     sys.exit(1 if failed else 0)
 
 

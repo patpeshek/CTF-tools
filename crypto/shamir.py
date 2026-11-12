@@ -144,10 +144,16 @@ def describe(value):
 
 
 def _best_modular(shares, k, prime):
-    """Секрет по k долям + сколько долей с ним согласны (голосование)."""
+    """Лучший секрет по k долям + согласие ближайшего конкурента.
+
+    Голосуем не за наборы, а за секреты: разные наборы могут давать один и
+    тот же полином (это нормально), а вот два РАЗНЫХ секрета с равным
+    согласием — это неоднозначность, её нельзя разрешать угадыванием.
+    """
     if k >= len(shares):
-        return lagrange_at_zero(shares, prime), len(shares), []
-    best = (-1, None, [])
+        return lagrange_at_zero(shares, prime), len(shares), -1, []
+
+    scores, agree_sets = {}, {}
     for combo in itertools.combinations(range(len(shares)), k):
         subset = [shares[i] for i in combo]
         try:
@@ -156,9 +162,15 @@ def _best_modular(shares, k, prime):
                      if lagrange_eval(subset, x, prime) == y % prime]
         except (ValueError, ZeroDivisionError):
             continue
-        if len(agree) > best[0]:
-            best = (len(agree), cand, agree)
-    return best[1], best[0], best[2]
+        if cand not in scores or len(agree) > scores[cand]:
+            scores[cand] = len(agree)
+            agree_sets[cand] = agree
+
+    if not scores:
+        return None, -1, -1, []
+    leader = max(scores, key=lambda secret: scores[secret])
+    runner_up = max((v for s, v in scores.items() if s != leader), default=-1)
+    return leader, scores[leader], runner_up, agree_sets[leader]
 
 
 def solve_shamir(shares, prime=None, k=None, robust=False):
@@ -191,13 +203,13 @@ def solve_shamir(shares, prime=None, k=None, robust=False):
 
     for p in primes:
         try:
-            cand, agree, agree_idx = _best_modular(shares, k, p)
+            cand, agree, second, agree_idx = _best_modular(shares, k, p)
         except (ValueError, ZeroDivisionError):
             continue
         if cand is None:
             continue
         candidates.append(dict(prime=p, secret=cand, agree=agree,
-                               agree_idx=agree_idx))
+                               second=second, agree_idx=agree_idx))
 
     if not prime and not primes:
         raise ValueError(
@@ -207,18 +219,29 @@ def solve_shamir(shares, prime=None, k=None, robust=False):
         # Модуль определяется только по согласию долей.
         if not candidates:
             raise ValueError("не сходится: ни одно поле не подошло — проверь доли")
-        candidates.sort(key=lambda c: c["agree"], reverse=True)
+        candidates.sort(key=lambda c: (c["agree"], c["prime"]), reverse=True)
         best = candidates[0]
         need = max(k, len(shares) // 2 + 1)
         if best["agree"] < need:
             raise ValueError(
                 f"не сходится: максимум согласных долей {best['agree']} "
                 f"из {len(shares)} (нужно {need})")
+        # Однозначность: иначе второй набор даёт другой секрет, и выбирать
+        # «на глаз» нельзя — честно просим ещё долей.
+        if best["second"] >= best["agree"]:
+            raise ValueError(
+                f"неоднозначно: два набора долей дают одинаковое согласие "
+                f"({best['agree']} из {len(shares)}). Нужны лишние доли "
+                f"(не меньше k+2), иначе ошибку не отличить от правды")
         chosen, secret = best["prime"], best["secret"]
         note = ""
         if robust and best["agree"] < len(shares):
             bad = [i for i in range(len(shares)) if i not in best["agree_idx"]]
             note = f"отброшены несогласованные доли: {bad}"
+        same_secret = [c for c in candidates if c["secret"] == secret]
+        if len(same_secret) > 1 and not note:
+            note = ("поле не определено: подходит несколько, но секрет от поля "
+                    "не зависит")
         if rational is not None:
             note = note or "рациональная интерполяция совпала с модульной"
         return dict(shares=len(shares), k=k, prime=chosen, secret=secret,

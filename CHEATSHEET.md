@@ -177,6 +177,8 @@ python crypto/rsa_tool.py dp-leak --n ... --e 65537 --dp <d mod p-1> --cipher ..
 python crypto/rsa_tool.py coppersmith --n ... --e 3 --c ... --known-high ... --unknown-bits 40
 python crypto/rsa_tool.py partial-p --n ... --p-high ... --unknown-bits 40 --e 65537 --cipher ...
 python crypto/rsa_tool.py boneh-durfee --n ... --e ... --m 3 --t 1
+python crypto/rsa_tool.py related --n ... --e 3 --c1 ... --c2 ... --rel "3,7"
+python crypto/rsa_tool.py related --n ... --e 3 --c1 ... --c2 ... --auto   # m2 = m1+1, -m1, 2*m1, ...
 python crypto/rsa_tool.py lsb-oracle --n ... --e 65537 --c ... --oracle-cmd "python parity.py"
 python crypto/block_oracles.py ecb-recover --oracle-cmd "python o.py" --secret-len 32
 python crypto/block_oracles.py padding-oracle --oracle-cmd "python p.py" --iv ... --ct ...
@@ -374,7 +376,20 @@ python triage.py dump --any-prefix
 
 ## Порядок работы
 
+- Перед изменением кита: `python tests/selftest.py` — базовая линия.
 - Сначала просмотри все задачи и отметь, что понятно с первого взгляда.
 - Бери то, что решается быстро, независимо от категории.
 - Два разных подхода не сработали — переключись.
 - Перед отправкой проверь формат ответа (регистр, обёртка, пробелы).
+
+## Проверка кита (selftest)
+
+```bash
+python tests/selftest.py                 # всё; в конце — PASS/FAIL и 10 самых долгих вызовов
+python tests/selftest.py --quick         # меньше итераций фаззинга
+python tests/selftest.py --fail-fast     # остановиться на первом FAIL
+python tests/selftest.py --timeout 60    # таймаут на один вызов инструмента
+python tests/selftest.py --no-timing     # без отчёта о времени
+python tests/selftest.py --seed 7 --fuzz 3
+python tests/bench.py --strict           # скорость важных путей vs baseline
+```

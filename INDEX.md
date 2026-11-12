@@ -97,7 +97,7 @@
 | `ecb` | детект/расшифровка ECB | `python toolbox.py ecb c.hex --hex --key K --decrypt` |
 | `hash_id` | тип хеша | `python toolbox.py hash_id 5f4dcc...` |
 | `hashcat` | подбор пароля: авто-режим, словарь/маска/правила, реальный запуск если hashcat установлен | `python toolbox.py hashcat <hash> --attack 3 --mask "?d?d?d?d"` |
-| `rsa` | gcd/Ферма/малая e/Винер/CRT/dp-утечка/Coppersmith/частичный p/Boneh-Durfee/LSB-оракул + `auto`: числа из текста, ключи, все атаки | `python toolbox.py rsa auto task.txt` |
+| `rsa` | gcd/Ферма/малая e/Винер/CRT/dp-утечка/Coppersmith/частичный p/Boneh-Durfee/LSB-оракул/связанные сообщения (Franklin-Reiter) + `auto`: числа из текста, ключи, все атаки | `python toolbox.py rsa auto task.txt` |
 | `oracles` | атаки через оракулы: ECB byte-at-a-time, padding oracle, CBC bit-flip, детект ECB | `python toolbox.py oracles padding-oracle --oracle-cmd "python o.py" --iv ... --ct ...` |
 | `hashext` | length extension MD5/SHA1/SHA256 и повтор nonce в GCM (H, E(J0), подделка тега) | `python toolbox.py hashext length-extend --alg sha256 --sig ... --key-len 16 --append "&admin=1"` |
 | `otp` | two-time pad | `python toolbox.py otp --c1 ... --c2 ... --crib "the "` |

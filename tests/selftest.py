@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import zlib
 import atexit
 import base64
 import hashlib
@@ -250,6 +251,1458 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
         if comment:
             z.comment = comment
     return buf.getvalue()
+
+
+def checks_ctb(tmp):
+    """ctb: recon по локальным фейковым сервисам, plan, log, разбор privesc."""
+    import http.server
+    import secrets
+    import socket
+    import threading
+
+    flag = "CTF{ctb_" + secrets.token_hex(4) + "}"
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/robots.txt":
+                body = f"User-agent: *\nDisallow: /{flag}\n".encode()
+            else:
+                body = b"<html><head><title>CtbLab</title></head></html>"
+            self.send_response(200)
+            self.send_header("Server", "LabHTTP/1.0")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), H)
+    hport = httpd.server_address[1]
+    ftp = socket.socket()
+    ftp.bind(("127.0.0.1", 0))
+    ftp.listen(5)
+    fport = ftp.getsockname()[1]
+    stop = threading.Event()
+
+    def ftp_loop():
+        ftp.settimeout(0.3)
+        while not stop.is_set():
+            try:
+                c, _ = ftp.accept()
+            except OSError:
+                continue
+            try:
+                c.sendall(b"220 (vsFTPd 2.3.4)\r\n")
+            except OSError:
+                pass
+            c.close()
+
+    ts = [threading.Thread(target=httpd.serve_forever, daemon=True),
+          threading.Thread(target=ftp_loop, daemon=True)]
+    for t in ts:
+        t.start()
+    try:
+        rep_path = os.path.join(tmp, "ctb_report.json")
+        r = run("ctb/ctb.py", "recon", "127.0.0.1", "--ports",
+                f"{fport},{hport}", "--timeout", "1", "--out", rep_path)
+        check("ctb recon: баннер FTP", "vsFTPd 2.3.4" in r.stdout, r.stdout[-500:] + r.stderr)
+        check("ctb recon: title/Server", "CtbLab" in r.stdout and "LabHTTP" in r.stdout,
+              r.stdout[-500:] + r.stderr)
+        check("ctb recon: флаг из robots.txt", flag in r.stdout, r.stdout[-500:] + r.stderr)
+        check("ctb recon: заметка по версии", "бэкдор" in r.stdout, r.stdout[-500:])
+        r = run("ctb/ctb.py", "recon", "127.0.0.0/24")
+        check("ctb recon: диапазоны отвергаются", "[-]" in r.stdout and '"open"' not in r.stdout,
+              r.stdout + r.stderr)
+        r = run("ctb/ctb.py", "plan", rep_path)
+        check("ctb plan", "Чек-лист" in r.stdout and "ftp" in r.stdout.lower(),
+              r.stdout + r.stderr)
+    finally:
+        stop.set()
+        httpd.shutdown()
+        httpd.server_close()
+        ftp.close()
+        for t in ts:
+            t.join(2)
+
+    # журнал
+    logf = os.path.join(tmp, "ctb_log.jsonl")
+    env = {"CTB_LOG": logf}
+    run("ctb/ctb.py", "log", "add", "ftp anon", "--result", "ok", "--note", "n1", env=env)
+    r = run("ctb/ctb.py", "log", "show", env=env)
+    rec = json.loads(open(logf, encoding="utf-8").readline())
+    check("ctb log", "ftp anon" in r.stdout and rec["result"] == "ok" and rec["note"] == "n1",
+          r.stdout + r.stderr)
+
+    # privesc
+    sample = os.path.join(tmp, "privesc_sample.txt")
+    open(sample, "w", encoding="utf-8").write(
+        "===== 1. Кто я =====\nuid=1000(bob)\n"
+        "Linux box 4.4.0-31-generic #50 SMP x86_64 GNU/Linux\n\n"
+        "===== 2. sudo =====\n"
+        "User bob may run the following commands on box:\n"
+        "    (root) NOPASSWD: /usr/bin/vim\n\n"
+        "===== 3. SUID / SGID =====\n/usr/bin/passwd\n/usr/bin/find\n/bin/su\n"
+        "--- SGID ---\n\n"
+        "===== 4. Capabilities =====\n/usr/bin/python3 = cap_setuid+ep\n")
+    r = run("ctb/ctb.py", "privesc", sample)
+    check("ctb privesc parse",
+          "NOPASSWD: /usr/bin/vim" in r.stdout and "/usr/bin/find" in r.stdout
+          and "cap_setuid" in r.stdout and "4.4.0" in r.stdout
+          and "SUID (необычный): /usr/bin/passwd" not in r.stdout,
+          r.stdout + r.stderr)
+    r = run("ctb/ctb.py", "privesc")
+    check("ctb privesc howto", "privesc.sh" in r.stdout, r.stdout + r.stderr)
+def zipcrypto_zip(name, body, pwd):
+    """Минимальный ZipCrypto-шифратор (stored) для теста."""
+    tab = []
+    for n in range(256):
+        c = n
+        for _ in range(8):
+            c = (c >> 1) ^ 0xEDB88320 if c & 1 else c >> 1
+        tab.append(c)
+
+    def upd(crc, b):
+        return (crc >> 8) ^ tab[(crc ^ b) & 0xFF]
+    k = [0x12345678, 0x23456789, 0x34567890]
+
+    def feed(b):
+        k[0] = upd(k[0], b)
+        k[1] = ((k[1] + (k[0] & 0xFF)) * 134775813 + 1) & 0xFFFFFFFF
+        k[2] = upd(k[2], k[1] >> 24)
+    for ch in pwd:
+        feed(ch)
+    crc = zlib.crc32(body) & 0xFFFFFFFF
+    plain = bytes(range(11)) + bytes([crc >> 24])
+    enc = bytearray()
+    for b in plain + body:
+        t = (k[2] | 2) & 0xFFFF
+        ks = ((t * (t ^ 1)) >> 8) & 0xFF
+        enc.append(b ^ ks)
+        feed(b)
+    nb = name.encode()
+    lh = struct.pack("<4sHHHHHIIIHH", b"PK\x03\x04", 20, 1, 0, 0, 0x21, crc,
+                     len(enc), len(body), len(nb), 0) + nb
+    cd = struct.pack("<4s6H3I5H2I", b"PK\x01\x02", 20, 20, 1, 0, 0, 0x21, crc,
+                     len(enc), len(body), len(nb), 0, 0, 0, 0, 0, 0) + nb
+    eocd = struct.pack("<4s4H2IH", b"PK\x05\x06", 0, 0, 1, 1, len(cd),
+                       len(lh) + len(enc), 0)
+    return lh + bytes(enc) + cd + eocd
+
+
+def checks_zip_tricks(tmp):
+    import random
+    rnd = random.Random(99)
+    flag = "CTF{zt_" + "".join(rnd.choice("abcdefghijklmnop0123456789") for _ in range(10)) + "}"
+    # 1. fakecrypt: бит шифрования стоит, данные открыты
+    buf = bytearray(make_zip_bytes("flag.txt", flag.encode()))
+    lh = buf.find(b"PK\x03\x04")
+    cd = buf.find(b"PK\x01\x02")
+    struct.pack_into("<H", buf, lh + 6, struct.unpack_from("<H", buf, lh + 6)[0] | 1)
+    struct.pack_into("<H", buf, cd + 8, struct.unpack_from("<H", buf, cd + 8)[0] | 1)
+    fz = os.path.join(tmp, "zt_fake.zip")
+    with open(fz, "wb") as f:
+        f.write(buf)
+    out = os.path.join(tmp, "zt_fake_out")
+    r = run("forensic/zip_tricks.py", "fakecrypt", fz, "--out", out)
+    got = ""
+    try:
+        got = open(os.path.join(out, "flag.txt"), encoding="utf-8").read()
+    except OSError:
+        pass
+    check("forensic/zip_tricks.py fakecrypt", got == flag and flag in r.stdout, r.stdout + r.stderr)
+    r = run("forensic/zip_tricks.py", "info", fz)
+    check("forensic/zip_tricks.py info", "flag.txt" in r.stdout and "encCD" in r.stdout,
+          r.stdout + r.stderr)
+    # 2. crc-brute: флаг разрезан на куски по 1-4 байта
+    cut, i = [], 0
+    while i < len(flag):
+        n = rnd.randint(1, 4)
+        cut.append(flag[i:i + n].encode())
+        i += n
+    bz = os.path.join(tmp, "zt_split.zip")
+    with zipfile.ZipFile(bz, "w", zipfile.ZIP_STORED) as z:
+        for j, part in enumerate(cut):
+            z.writestr(f"{j:03d}.txt", part)
+    r = run("forensic/zip_tricks.py", "crc-brute", bz)
+    check("forensic/zip_tricks.py crc-brute", flag in r.stdout, r.stdout[-600:] + r.stderr)
+    # 3. password: ZipCrypto
+    pw = "s3cret" + str(rnd.randint(10, 99))
+    pz = os.path.join(tmp, "zt_pw.zip")
+    with open(pz, "wb") as f:
+        f.write(zipcrypto_zip("f.txt", flag.encode(), pw.encode()))
+    wl = os.path.join(tmp, "zt_words.txt")
+    with open(wl, "w") as f:
+        f.write("nope\nadmin\n" + pw + "\nlast\n")
+    r = run("forensic/zip_tricks.py", "password", pz, "--wordlist", wl)
+    check("forensic/zip_tricks.py password", f"пароль: {pw}" in r.stdout and flag in r.stdout,
+          r.stdout + r.stderr)
+    r = run("forensic/zip_tricks.py", "known-plaintext", pz, "--magic", "png")
+    check("forensic/zip_tricks.py known-plaintext", "bkcrack" in r.stdout, r.stdout + r.stderr)
+def _mk_fat16(flag_live, flag_del):
+    """FAT16 ~2 МБ: normal.txt (живой) и gone.txt (удалён, цепочка FAT обнулена)."""
+    bps, spc, rsv, nf, fsz, rootn = 512, 1, 1, 2, 17, 512
+    ncl = 4100
+    root_secs = rootn * 32 // bps
+    total = rsv + nf * fsz + root_secs + ncl
+    img = bytearray(total * bps)
+    bs = bytearray(512)
+    bs[0:3] = b"\xeb\x3c\x90"
+    bs[3:11] = b"MSDOS5.0"
+    struct.pack_into("<HBHBHHBHHHII", bs, 11, bps, spc, rsv, nf, rootn, total, 0xF8, fsz, 32, 2, 0, 0)
+    bs[54:62] = b"FAT16   "
+    bs[510:512] = b"\x55\xaa"
+    img[0:512] = bs
+    fat0 = rsv * bps
+    struct.pack_into("<HHHH", img, fat0, 0xFFF8, 0xFFFF, 0xFFFF, 0xFFFF)  # кластеры 2 (live)
+    root = (rsv + nf * fsz) * bps
+    data0 = (rsv + nf * fsz + root_secs) * bps
+
+    def ent(name, ext, clu, size, first=None):
+        e = bytearray(32)
+        e[0:8], e[8:11] = name.ljust(8).encode(), ext.ljust(3).encode()
+        e[11] = 0x20
+        struct.pack_into("<H", e, 26, clu)
+        struct.pack_into("<I", e, 28, size)
+        if first is not None:
+            e[0] = first
+        return bytes(e)
+    img[root:root + 32] = ent("NORMAL", "TXT", 2, len(flag_live))
+    img[root + 32:root + 64] = ent("GONE", "TXT", 3, len(flag_del), first=0xE5)
+    img[data0:data0 + len(flag_live)] = flag_live
+    img[data0 + bps:data0 + bps + len(flag_del)] = flag_del  # кластер 3, в FAT не занят
+    return bytes(img)
+
+
+def _mk_mft(flag, ads_flag):
+    """$MFT из 2 записей по 1024: #0 пропускается, #1 — файл с resident $DATA + ADS."""
+    def attr(atype, content, name=""):
+        nm = name.encode("utf-16-le")
+        hdr = 24 + len(nm)
+        hdr += -hdr % 8
+        body = content + b"\0" * (-len(content) % 8)
+        a = bytearray(hdr + len(body))
+        struct.pack_into("<IIBBHHH", a, 0, atype, len(a), 0, len(name), 24, 0, 0)
+        struct.pack_into("<IH", a, 16, len(content), hdr)
+        a[24:24 + len(nm)] = nm
+        a[hdr:hdr + len(body)] = body
+        return bytes(a)
+
+    def record(fname, streams, inuse):
+        r = bytearray(1024)
+        r[0:4] = b"FILE"
+        struct.pack_into("<HH", r, 4, 0x30, 3)
+        struct.pack_into("<H", r, 0x14, 0x38)
+        struct.pack_into("<H", r, 0x16, 1 if inuse else 0)
+        fn = bytearray(0x42) + fname.encode("utf-16-le")
+        struct.pack_into("<Q", fn, 0, 5)
+        fn[0x40], fn[0x41] = len(fname), 1
+        body = attr(0x30, bytes(fn))
+        for nm, d in streams:
+            body += attr(0x80, d, nm)
+        body += b"\xff\xff\xff\xff"
+        r[0x38:0x38 + len(body)] = body
+        r[0x30:0x32] = b"\x01\x00"  # USN
+        for i in (1, 2):  # fixup: хвосты секторов заменены на USN
+            r[0x32 + (i - 1) * 2:0x34 + (i - 1) * 2] = bytes(r[i * 512 - 2:i * 512])
+            r[i * 512 - 2:i * 512] = b"\x01\x00"
+        return bytes(r)
+    return (record("$MFT", [("", b"")], True)
+            + record("secret.txt", [("", b"plain\n"), ("hidden", ads_flag)], False)
+            + record("note.txt", [("", flag)], True))
+
+
+def _mk_ext(flag):
+    """Минимальный ext2 (1 КБ блок): superblock + 1 группа + корень с файлом."""
+    img = bytearray(64 * 1024)
+    sb = 1024
+    struct.pack_into("<IIIII", img, sb, 32, 64, 3, 40, 20)  # inodes, blocks, rsv, free blk, free ino
+    struct.pack_into("<IIII", img, sb + 0x14, 1, 0, 8192, 8192)
+    struct.pack_into("<I", img, sb + 0x28, 32)
+    struct.pack_into("<H", img, sb + 0x38, 0xEF53)
+    struct.pack_into("<HH", img, sb + 0x3A, 1, 1)
+    struct.pack_into("<I", img, sb + 0x4C, 1)
+    struct.pack_into("<H", img, sb + 0x58, 128)
+    img[sb + 0x78:sb + 0x80] = b"CTFEXT\0\0"
+    struct.pack_into("<I", img, 2048 + 8, 5)  # дескриптор группы: inode table в блоке 5
+    it = 5 * 1024
+
+    def put_inode(n, mode, size, blk):
+        o = it + (n - 1) * 128
+        struct.pack_into("<HH", img, o, mode, 0)
+        struct.pack_into("<I", img, o + 4, size)
+        struct.pack_into("<H", img, o + 0x1A, 1)
+        struct.pack_into("<I", img, o + 0x28, blk)
+    put_inode(2, 0x41ED, 1024, 20)
+    put_inode(12, 0x81A4, len(flag), 21)
+    d = bytearray(1024)
+    off = 0
+    for ino, nm in ((2, b"."), (2, b".."), (12, b"flag.txt")):
+        rl = 1024 - off if nm == b"flag.txt" else 12
+        struct.pack_into("<IHBB", d, off, ino, rl, len(nm), 0)
+        d[off + 8:off + 8 + len(nm)] = nm
+        off += rl
+    img[20 * 1024:21 * 1024] = d
+    img[21 * 1024:21 * 1024 + len(flag)] = flag
+    return bytes(img)
+
+
+def checks_disk_image(tmp):
+    d = os.path.join(tmp, "diskimg")
+    os.makedirs(d, exist_ok=True)
+    gone = b"CTF{deleted_fat16_file}"
+    fat = os.path.join(d, "fat16.img")
+    open(fat, "wb").write(_mk_fat16(b"hello world\n", gone))
+    r = run("forensic/disk_image.py", "fat", fat, "--find-flags", "--out", os.path.join(d, "fatout"))
+    check("disk_image fat: удалённый файл и флаг",
+          "FAT16" in r.stdout and "DEL" in r.stdout and "_ONE.TXT" in r.stdout
+          and gone.decode() in r.stdout, r.stdout[-600:] + r.stderr)
+    dd = os.path.join(d, "fatout", "[deleted]")
+    check("disk_image fat: --out", os.path.isdir(dd) and any(
+        open(os.path.join(dd, n), "rb").read().startswith(b"CTF{deleted") for n in os.listdir(dd)))
+
+    mf = os.path.join(d, "mft.bin")
+    mflag, aflag = b"CTF{mft_resident_data}", b"CTF{ads_stream_hidden}"
+    open(mf, "wb").write(_mk_mft(mflag, aflag))
+    r = run("forensic/disk_image.py", "mft", mf, "--find-flags")
+    check("disk_image mft: ADS + resident + deleted",
+          "[ADS]" in r.stdout and "secret.txt:hidden" in r.stdout and "DELETED" in r.stdout
+          and mflag.decode() in r.stdout and aflag.decode() in r.stdout, r.stdout[-600:] + r.stderr)
+
+    ex = os.path.join(d, "ext.img")
+    eflag = b"CTF{ext_file_content}"
+    open(ex, "wb").write(_mk_ext(eflag))
+    r = run("forensic/disk_image.py", "ext", ex, "--find-flags")
+    check("disk_image ext: суперблок и файл",
+          "0xEF53" in r.stdout and "inodes 32" in r.stdout and "blocks 64" in r.stdout
+          and "ext2" in r.stdout and "flag.txt" in r.stdout and eflag.decode() in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # MBR с одним FAT-разделом + scan
+    disk = os.path.join(d, "disk.img")
+    fb = _mk_fat16(b"x", b"CTF{scan_via_mbr_part}")
+    mbr = bytearray(512)
+    mbr[446:462] = bytes([0x80, 0, 2, 0, 0x0E, 0xFF, 0xFF, 0xFF]) + struct.pack("<II", 63, len(fb) // 512)
+    mbr[510:512] = b"\x55\xaa"
+    open(disk, "wb").write(bytes(mbr) + b"\0" * (62 * 512) + fb)
+    r = run("forensic/disk_image.py", "parts", disk)
+    check("disk_image parts: MBR FAT16 LBA", "FAT16 LBA" in r.stdout and " 63 " in r.stdout
+          and "MBR" in r.stdout, r.stdout + r.stderr)
+    r = run("forensic/disk_image.py", "scan", disk, "--find-flags")
+    check("disk_image scan: раздел -> FAT -> флаг", "CTF{scan_via_mbr_part}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+def checks_prng(tmp):
+    import random as _rnd
+    # MT19937: 624 выходов -> клон -> следующие и предыдущие
+    rng = _rnd.Random(20240607)
+    seq = [rng.getrandbits(32) for _ in range(800)]
+    f = os.path.join(tmp, "mt_outs.txt")
+    open(f, "w").write(" ".join(map(str, seq[100:724])))      # окно не с границы блока
+    r = run("crypto/prng_state.py", "mt", f, "--n", "6", "--prev", "4")
+    check("prngstate mt: следующие выходы",
+          str(seq[724:730]) in r.stdout, r.stdout[-500:] + r.stderr)
+    check("prngstate mt: предыдущие выходы",
+          str(seq[96:100]) in r.stdout, r.stdout[-500:] + r.stderr)
+    # шифртекст XOR randbytes -> флаг
+    pt = b"CTF{mt_cloned_ok}"
+    rng2 = _rnd.Random(99)
+    outs2 = [rng2.getrandbits(32) for _ in range(624)]
+    key = rng2.randbytes(len(pt))
+    f2 = os.path.join(tmp, "mt_outs2.txt")
+    open(f2, "w").write(" ".join(map(str, outs2)))
+    r = run("crypto/prng_state.py", "mt", f2, "--cipher", bytes(a ^ b for a, b in zip(pt, key)).hex())
+    check("prngstate mt: --cipher randbytes", "CTF{mt_cloned_ok}" in r.stdout, r.stdout[-500:])
+    # LCG с неизвестными m, a, c
+    m, a, c, x = 2 ** 31 - 1, 1103515245, 12345, 42
+    xs = []
+    for _ in range(12):
+        x = (a * x + c) % m
+        xs.append(x)
+    f3 = os.path.join(tmp, "lcg_outs.txt")
+    open(f3, "w").write(" ".join(map(str, xs[:9])))
+    r = run("crypto/prng_state.py", "lcg", f3, "--n", "3")
+    check("prngstate lcg: m, a, c и следующий",
+          f"m = {m}" in r.stdout and f"a = {a}" in r.stdout and f"c = {c}" in r.stdout
+          and str(xs[9:12]) in r.stdout, r.stdout[-500:] + r.stderr)
+    # LCG с усечёнными выходами (стиль java.util.Random: 48 бит, старшие 32)
+    m, a, c, x = 2 ** 48, 25214903917, 11, 123456789012
+    full = []
+    for _ in range(12):
+        x = (a * x + c) % m
+        full.append(x)
+    f4 = os.path.join(tmp, "lcgt_outs.txt")
+    open(f4, "w").write(" ".join(str(v >> 16) for v in full[:8]))
+    r = run("crypto/prng_state.py", "lcg-trunc", f4, "--m", m, "--a", a, "--c", c,
+            "--shift", 16, "--n", "3")
+    check("prngstate lcg-trunc: состояние и следующие",
+          str([v >> 16 for v in full[8:11]]) in r.stdout, r.stdout[-500:] + r.stderr)
+def checks_forensics(tmp):
+    """Регрессии forensic/* (#67-#74): каждый артефакт строится здесь же."""
+    base = os.path.join(tmp, "forensics_regress")
+    os.makedirs(base, exist_ok=True)
+
+    # #67 git_hunt: dangling-объекты (loose и в pack) читаются, а .git
+    # задачи не меняется (раньше fsck --lost-found писал в .git/lost-found)
+    repo = os.path.join(base, "gitrepo")
+    os.makedirs(repo)
+
+    def _g(*a, data=None):
+        return subprocess.run(["git", "-C", repo, *a], input=data,
+                              capture_output=True, check=True)
+    _g("init", "-q")
+    _g("config", "user.email", "a@b.c")
+    _g("config", "user.name", "a")
+    open(os.path.join(repo, "readme.txt"), "w").write("nothing here\n")
+    _g("add", ".")
+    _g("commit", "-qm", "init")
+    _g("hash-object", "-w", "--stdin", data=b"CTF{git_packed_dangling}\n")
+    _g("repack", "-a", "-d", "-k", "-q")
+    _g("hash-object", "-w", "--stdin", data=b"CTF{git_loose_dangling}\n")
+
+    def _tree(root):
+        return sorted(os.path.relpath(os.path.join(dp, f), root)
+                      for dp, dn, fn in os.walk(root) for f in fn + dn)
+    before = _tree(os.path.join(repo, ".git"))
+    r = run("forensic/git_hunt.py", repo)
+    after = _tree(os.path.join(repo, ".git"))
+    check("git_hunt dangling blobs (#67)",
+          "CTF{git_packed_dangling}" in r.stdout
+          and "CTF{git_loose_dangling}" in r.stdout, r.stdout[-800:] + r.stderr)
+    check("git_hunt read-only (#67)", before == after,
+          str(sorted(set(after) ^ set(before)))[:400])
+
+    # #68 windows_triage: флаг в UTF-16LE и отчёт о файлах сверх --limit
+    hive = os.path.join(base, "SOFTWARE")
+    open(hive, "wb").write(b"regf\x00\x01" + "CTF{utf16_hive}".encode("utf-16-le")
+                           + b"\x00\x00\xff")
+    r = run("forensic/windows_triage.py", hive)
+    check("windows_triage utf16 flag (#68)", "CTF{utf16_hive}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    many = os.path.join(base, "evtx_dump")
+    os.makedirs(many)
+    for i in range(105):
+        open(os.path.join(many, f"log{i:03d}.txt"), "w").write("nothing\n")
+    open(os.path.join(many, "log104.txt"), "w").write("CTF{after_limit}\n")
+    r = run("forensic/windows_triage.py", many)
+    check("windows_triage reports skipped (#68)",
+          "пропущено файлов: 5 " in r.stdout and "--limit" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    r = run("forensic/windows_triage.py", many, "--limit", "0")
+    check("windows_triage --limit 0 (#68)", "CTF{after_limit}" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # #69 docker_image: относительный --out и whiteout в корне слоя
+    def _layer(files):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as t:
+            for n, d in files.items():
+                ti = tarfile.TarInfo(n)
+                ti.size = len(d)
+                t.addfile(ti, io.BytesIO(d))
+        return buf.getvalue()
+    dimg = os.path.join(base, "img.tar")
+    with tarfile.open(dimg, "w") as t:
+        for n, d in (
+                ("manifest.json", json.dumps([{"Config": "c.json",
+                                               "Layers": ["a/layer.tar", "b/layer.tar"]}]).encode()),
+                ("c.json", b'{"config": {}}'),
+                ("a/layer.tar", _layer({"rootflag.txt": b"CTF{docker_root_wh}\n",
+                                        "app/data.txt": b"keep\n",
+                                        ".env": b"MODE=test\n"})),
+                ("b/layer.tar", _layer({".wh.rootflag.txt": b""}))):
+            ti = tarfile.TarInfo(n)
+            ti.size = len(d)
+            t.addfile(ti, io.BytesIO(d))
+    r = subprocess.run([PY, os.path.join(KIT, "forensic", "docker_image.py"), dimg,
+                        "--out", "fsout"], cwd=base, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=ENV)
+    fsout = os.path.join(base, "fsout")
+    check("docker_image relative --out (#69)",
+          os.path.isfile(os.path.join(fsout, "app", "data.txt"))
+          and os.path.isfile(os.path.join(fsout, ".env")),
+          r.stdout[-600:] + r.stderr)
+    check("docker_image root whiteout (#69)",
+          "- rootflag.txt" in r.stdout and "CTF{docker_root_wh}" in r.stdout
+          and not os.path.exists(os.path.join(fsout, "rootflag.txt"))
+          and not os.path.exists(os.path.join(fsout, "wh.rootflag.txt")),
+          r.stdout[-600:] + r.stderr)
+
+    # #70 exif без exiftool (PATH без него): Exif sub-IFD, GPS, COM, XP*
+    jpg = os.path.join(base, "meta.jpg")
+    _ex = Image.Exif()
+    _ex[0x010E] = "CTF{exif_description}"
+    _ex[0x9C9C] = "CTF{exif_xpcomment}".encode("utf-16-le") + b"\x00\x00"
+    _ex.get_ifd(0x8769)[0x9286] = b"ASCII\x00\x00\x00CTF{exif_usercomment}"
+    _gps = _ex.get_ifd(0x8825)
+    _gps[1], _gps[2] = "N", (55.0, 45.0, 0.0)
+    _gps[3], _gps[4] = "E", (37.0, 37.0, 0.0)
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(jpg, exif=_ex, comment=b"CTF{exif_jpeg_com}")
+    r = run("forensic/exif.py", jpg, env={"PATH": base})
+    check("exif without exiftool (#70)",
+          all(x in r.stdout for x in ("CTF{exif_description}", "CTF{exif_xpcomment}",
+                                      "CTF{exif_usercomment}", "CTF{exif_jpeg_com}",
+                                      "55.75")), r.stdout[-800:] + r.stderr)
+
+    # #71 office_docs: сырой поиск по PDF без pypdf (импорт блокируется
+    # через sitecustomize на PYTHONPATH, даже если pypdf установлен)
+    nopypdf = os.path.join(base, "nopypdf")
+    os.makedirs(nopypdf)
+    open(os.path.join(nopypdf, "sitecustomize.py"), "w").write(
+        "import sys\n"
+        "class _NoPypdf:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'pypdf' or name.startswith('pypdf.'):\n"
+        "            raise ImportError('pypdf blocked by selftest')\n"
+        "sys.meta_path.insert(0, _NoPypdf())\n")
+    import zlib as _zlib
+    _flate = _zlib.compress(b"BT /F1 12 Tf (CTF{pdf_flate_search}) Tj ET")
+    pdfp = os.path.join(base, "doc.pdf")
+    open(pdfp, "wb").write(
+        b"%PDF-1.4\n1 0 obj << /Type /Catalog /OpenAction 3 0 R >> endobj\n"
+        b"2 0 obj << /Length 32 >> stream\nBT (CTF{pdf_raw_search}) Tj ET\nendstream endobj\n"
+        b"3 0 obj << /S /JavaScript /JS (app.alert(1)) >> endobj\n"
+        b"4 0 obj << /Filter /FlateDecode >> stream\n" + _flate
+        + b"\nendstream endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n")
+    r = run("forensic/office_docs.py", pdfp, env={"PYTHONPATH": nopypdf})
+    check("office_docs pdf without pypdf (#71)",
+          "CTF{pdf_raw_search}" in r.stdout and "CTF{pdf_flate_search}" in r.stdout
+          and "/JavaScript" in r.stdout, r.stdout[-800:] + r.stderr)
+
+    # #72 cloud_creds: печатается значение, а не имя ключа
+    credp = os.path.join(base, "app.conf")
+    open(credp, "w").write("token = FAKE-test-token-0001\n")
+    r = run("forensic/cloud_creds.py", credp)
+    check("cloud_creds prints value (#72)", "FAKE-test-token-0001" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # #73 android_backup: флаг в shared_prefs XML и SQLite без расширения
+    adump = os.path.join(base, "com.example.app")
+    os.makedirs(os.path.join(adump, "shared_prefs"))
+    os.makedirs(os.path.join(adump, "databases"))
+    open(os.path.join(adump, "shared_prefs", "prefs.xml"), "w").write(
+        "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n"
+        "    <string name=\"note\">CTF{prefs_xml_flag}</string>\n</map>\n")
+    import sqlite3 as _sqlite3
+    _con = _sqlite3.connect(os.path.join(adump, "databases", "appdata"))
+    _con.execute("create table notes(body text)")
+    _con.execute("insert into notes values('CTF{sqlite_noext_flag}')")
+    _con.commit()
+    _con.close()
+    r = run("forensic/android_backup.py", adump)
+    check("android_backup xml/sqlite flags (#73)",
+          "CTF{prefs_xml_flag}" in r.stdout and "CTF{sqlite_noext_flag}" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+    # #73 apk_info: resources.arsc (UTF-16 пул строк) и assets/
+    apkp = os.path.join(base, "res.apk")
+    with zipfile.ZipFile(apkp, "w") as z:
+        z.writestr("AndroidManifest.xml",
+                   b"\x03\x00\x08\x00" + "com.example.res".encode("utf-16-le"))
+        z.writestr("resources.arsc", b"\x02\x00\x0c\x00"
+                   + "CTF{arsc_string_flag}".encode("utf-16-le") + b"\x00\x00")
+        z.writestr("assets/blob.bin", b"\x00\x01CTF{apk_asset_flag}\x00")
+    r = run("forensic/apk_info.py", apkp)
+    check("apk_info resources.arsc/assets (#73)",
+          "CTF{arsc_string_flag}" in r.stdout and "CTF{apk_asset_flag}" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+
+    # #74 flag_hunt --pattern glob, artifact_hunt --context и скорость,
+    # volatility_text --keys (API_KEY) и --grep
+    hunt = os.path.join(base, "hunt")
+    os.makedirs(hunt)
+    open(os.path.join(hunt, "server.key"), "w").write("-----BEGIN TEST KEY-----\n")
+    r = run("forensic/flag_hunt.py", hunt, "--pattern", "*.key")
+    check("flag_hunt --pattern glob (#74)",
+          "server.key" in r.stdout and "Traceback" not in r.stderr,
+          r.stdout[-600:] + r.stderr[-600:])
+    ctxf = os.path.join(base, "ctx.log")
+    open(ctxf, "w").write("ctxbefore" + " ." * 40 + "\n"
+                          "secret: fake-test-value-01\n"
+                          + " ." * 40 + " ctxafter\n")
+    r = run("forensic/artifact_hunt.py", ctxf, "--context", "1")
+    check("artifact_hunt --context (#74)",
+          "fake-test-value-01" in r.stdout and "ctxbefore" in r.stdout
+          and "ctxafter" in r.stdout, r.stdout[-600:] + r.stderr)
+    nlf = os.path.join(base, "newlines.txt")
+    open(nlf, "wb").write(b"\n" * 100_000)
+    try:
+        r = subprocess.run([PY, os.path.join(KIT, "forensic", "artifact_hunt.py"), nlf],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=ENV, timeout=30)
+        ok, detail = r.returncode == 0, r.stderr[-400:]
+    except subprocess.TimeoutExpired:
+        ok, detail = False, "timeout 30s: квадратичный разбор"
+    check("artifact_hunt 100KB newlines fast (#74)", ok, detail)
+    envf = os.path.join(base, "windows.envars.txt")
+    open(envf, "w").write(
+        "PID\tProcess\tBlock\tVariable\tValue\n"
+        "1234\tagent.exe\t0x1\tPATH\tC:\\Windows\n"
+        "1234\tagent.exe\t0x1\tAPI_KEY\tzz-test-0001\n"
+        "1234\tagent.exe\t0x1\tLAB_HOST\tlab-host-01\n"
+        "5678\tother.exe\t0x2\tPATH\tC:\\Other\n")
+    r = run("forensic/volatility_text.py", envf, "--keys")
+    check("volatility_text --keys API_KEY (#74)", "zz-test-0001" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+    r = run("forensic/volatility_text.py", envf, "--grep", "lab-host")
+    check("volatility_text --grep (#74)",
+          "lab-host-01" in r.stdout and "other.exe" not in r.stdout
+          and "C:\\Windows" not in r.stdout, r.stdout[-600:] + r.stderr)
+
+def checks_stego_audio(tmp):
+    # audio_spectrum: низкие частоты внизу картинки (#60)
+    low_wav = os.path.join(tmp, "spec_low.wav")
+    with wave.open(low_wav, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+        w.writeframes(b"".join(
+            struct.pack("<h", int(8000 * math.sin(2 * math.pi * 300 * i / 8000)))
+            for i in range(8000)))
+    low_png = os.path.join(tmp, "spec_low.png")
+    r = run("stego/audio_spectrum.py", low_wav, "--out", low_png,
+            "--width", "100", "--height", "100")
+    row = -1
+    if os.path.exists(low_png):
+        _im = Image.open(low_png).convert("L")
+        _rows = [sum(_im.getpixel((x, y)) for x in range(_im.width))
+                 for y in range(_im.height)]
+        row = _rows.index(max(_rows))
+    check("stego/audio_spectrum.py low freq at bottom", row >= 80,
+          f"brightest row={row}\n" + r.stdout + r.stderr)
+
+    keys = {"1": (697, 1209), "2": (697, 1336), "3": (697, 1477), "A": (697, 1633),
+            "4": (770, 1209), "5": (770, 1336), "6": (770, 1477), "B": (770, 1633),
+            "7": (852, 1209), "8": (852, 1336), "9": (852, 1477), "C": (852, 1633),
+            "*": (941, 1209), "0": (941, 1336), "#": (941, 1477), "D": (941, 1633)}
+
+    def _dtmf(digits, rate, tone_s, gap_s, amp):
+        out = []
+        for d in digits:
+            f1, f2 = keys[d]
+            out += [amp * (math.sin(2 * math.pi * f1 * i / rate) +
+                           math.sin(2 * math.pi * f2 * i / rate))
+                    for i in range(int(rate * tone_s))]
+            out += [0.0] * int(rate * gap_s)
+        return out
+
+    def _wav(path, samples, rate, width):
+        lim = (1 << (8 * width - 1)) - 1
+        with wave.open(path, "w") as w:
+            w.setnchannels(1); w.setsampwidth(width); w.setframerate(rate)
+            w.writeframes(b"".join(
+                max(-lim, min(lim, int(v))).to_bytes(width, "little", signed=True)
+                for v in samples))
+
+    # audio_tools: 24-битный WAV (3 байта на сэмпл) (#61)
+    p24 = os.path.join(tmp, "dtmf24.wav")
+    _wav(p24, _dtmf("1234", 8000, 0.2, 0.1, 2_000_000), 8000, 3)
+    r = run("stego/audio_tools.py", p24, "--mode", "dtmf")
+    check("stego/audio_tools.py dtmf 24-bit", "DTMF: 1234" in r.stdout,
+          r.stdout + r.stderr)
+
+    # audio_tools: быстрый DTMF 50 мс тон / 50 мс пауза в белом шуме,
+    # с повторами цифр (#62)
+    import random
+    _rnd = random.Random(62)
+    fast = "1123581321345589"
+    pfast = os.path.join(tmp, "dtmf_fast.wav")
+    _wav(pfast, [v + _rnd.gauss(0, 4000) for v in _dtmf(fast, 8000, 0.05, 0.05, 8000)],
+         8000, 2)
+    r = run("stego/audio_tools.py", pfast, "--mode", "dtmf")
+    check("stego/audio_tools.py dtmf fast+noise", f"DTMF: {fast}\n" in r.stdout,
+          r.stdout + r.stderr)
+
+    # audio_tools: морзе только из тире — точку нельзя брать из длины тонов (#63)
+    def _morse(text, rate=22050, dot_s=0.08):
+        table = {"M": "--", "O": "---", "T": "-"}
+        dot = int(rate * dot_s)
+        out = []
+        for ch in text:
+            for sym in table[ch]:
+                out += [6000 * math.sin(2 * math.pi * 700 * i / rate)
+                        for i in range(dot if sym == "." else dot * 3)]
+                out += [0.0] * dot
+            out += [0.0] * (dot * 2)
+        return out
+
+    for word in ("MOO", "TTT"):
+        pm = os.path.join(tmp, f"morse_{word}.wav")
+        _wav(pm, _morse(word), 22050, 2)
+        r = run("stego/audio_tools.py", pm, "--mode", "morse", "--raw")
+        check(f"stego/audio_tools.py morse dashes {word}", f"MORSE: {word}\n" in r.stdout,
+              r.stdout + r.stderr)
+
+    # qr_scan: два QR на одной картинке и прозрачный фон (#64)
+    try:
+        import cv2
+        import numpy as np
+
+        def _qr(text):
+            q = cv2.QRCodeEncoder_create().encode(text)
+            if isinstance(q, tuple):
+                q = q[0]
+            return cv2.resize(q, None, fx=6, fy=6, interpolation=cv2.INTER_NEAREST)
+
+        qa, qb, qc = _qr("CTF{qr_left}"), _qr("CTF{qr_right}"), _qr("CTF{qr_alpha}")
+    except Exception as e:
+        qa = None
+        print(f"[SKIP] stego/qr_scan.py multi/alpha: нет генератора QR в cv2 ({e})")
+    if qa is not None:
+        two = np.full((max(qa.shape[0], qb.shape[0]) + 40,
+                       qa.shape[1] + qb.shape[1] + 80), 255, np.uint8)
+        two[20:20 + qa.shape[0], 20:20 + qa.shape[1]] = qa
+        two[20:20 + qb.shape[0], 60 + qa.shape[1]:60 + qa.shape[1] + qb.shape[1]] = qb
+        p_two = os.path.join(tmp, "qr_two.png")
+        Image.fromarray(two).save(p_two)
+        r = run("stego/qr_scan.py", p_two)
+        check("stego/qr_scan.py two codes",
+              "CTF{qr_left}" in r.stdout and "CTF{qr_right}" in r.stdout,
+              r.stdout + r.stderr)
+        # тёмные модули непрозрачные, фон прозрачный (RGB под ним = 0)
+        rgba = np.zeros((qc.shape[0], qc.shape[1], 4), np.uint8)
+        rgba[:, :, 3] = np.where(qc < 128, 255, 0)
+        p_alpha = os.path.join(tmp, "qr_alpha.png")
+        Image.fromarray(rgba, "RGBA").save(p_alpha)
+        r = run("stego/qr_scan.py", p_alpha)
+        check("stego/qr_scan.py transparent bg", "CTF{qr_alpha}" in r.stdout,
+              r.stdout + r.stderr)
+
+    # ooxml: --strings печатает строки из всех частей, не только media (#66)
+    p_docx = os.path.join(tmp, "strings.docx")
+    with zipfile.ZipFile(p_docx, "w") as z:
+        z.writestr("word/document.xml",
+                   '<?xml version="1.0" encoding="UTF-8"?><w:document><w:body><w:p>'
+                   '<w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden_part_text</w:t></w:r>'
+                   '</w:p></w:body></w:document>')
+        z.writestr("docProps/core.xml",
+                   "<cp:coreProperties><dc:subject>subject_part_text</dc:subject>"
+                   "</cp:coreProperties>")
+        z.writestr("customXml/item1.bin", b"\x00\x01binary_part_text\x02")
+    r = run("stego/ooxml.py", p_docx, "--strings")
+    marks = ("hidden_part_text", "subject_part_text", "binary_part_text")
+    check("stego/ooxml.py --strings", all(m in r.stdout for m in marks),
+          r.stdout[-800:] + r.stderr)
+def checks_reverse(tmp):
+    """Регрессии reverse/*: ghidra_decomp, disasm, megarev, lang_info, py_pack, xor_scan."""
+    import time
+    # #51 ghidra_decomp: имя файла не попадает в cmd.exe (поддельный analyzeHeadless.bat)
+    if os.name == "nt":
+        fake = os.path.join(tmp, "fake_ghidra")
+        os.makedirs(fake, exist_ok=True)
+        with open(os.path.join(fake, "analyzeHeadless.bat"), "w", newline="\r\n") as f:
+            f.write("@echo off\necho /* ==== fake_func @ 0 */\necho ARGS: %*\n")
+        inj_dir = os.path.join(tmp, "inj51")
+        os.makedirs(inj_dir, exist_ok=True)
+        inj = os.path.join(inj_dir, "a&echo.INJMARK51&.bin")  # без пробелов: не в кавычках
+        open(inj, "wb").write(b"MZ" + b"\x00" * 62)
+        r = run("reverse/ghidra_decomp.py", inj, env={"GHIDRA_HOME": fake})
+        lines = [ln.strip() for ln in r.stdout.splitlines()]
+        args_line = next((ln for ln in lines if ln.startswith("ARGS:")), "")
+        check("ghidra_decomp: имя файла не уходит в cmd.exe",
+              "fake_func" in r.stdout and "INJMARK51" not in lines
+              and "input_" in args_line and "a&" not in args_line,
+              r.stdout[-800:] + r.stderr)
+
+        # #79 --keep-project оставляет проект и печатает путь
+        okbin = os.path.join(inj_dir, "ok.bin")
+        open(okbin, "wb").write(b"MZ" + b"\x00" * 62)
+        r = run("reverse/ghidra_decomp.py", okbin, "--keep-project", env={"GHIDRA_HOME": fake})
+        kept = [ln.rsplit(": ", 1)[-1].strip() for ln in r.stdout.splitlines()
+                if ln.startswith("[+]") and "ghidra_proj_" in ln]
+        check("ghidra_decomp --keep-project",
+              bool(kept) and os.path.isdir(kept[0]), r.stdout[-800:] + r.stderr)
+        for d in kept:
+            if "ghidra_proj_" in os.path.basename(d):
+                shutil.rmtree(d, True)
+
+        # #79 --timeout гасит всё дерево (bat -> ping), а не ждёт его конца
+        slow = os.path.join(tmp, "fake_ghidra_slow")
+        os.makedirs(slow, exist_ok=True)
+        with open(os.path.join(slow, "analyzeHeadless.bat"), "w", newline="\r\n") as f:
+            f.write("@echo off\necho started\nping -n 20 127.0.0.1 >nul\n"
+                    "echo /* ==== late @ 0 */\n")
+        t0 = time.time()
+        r = run("reverse/ghidra_decomp.py", okbin, "--timeout", "2", env={"GHIDRA_HOME": slow})
+        took = time.time() - t0
+        check("ghidra_decomp --timeout kills tree",
+              took < 10 and "late" not in r.stdout, f"{took:.1f}s\n" + r.stdout[-600:] + r.stderr)
+    else:
+        print("[SKIP] ghidra_decomp cmd.exe: только Windows")
+
+    # #75 disasm: ELF32 (i386) — секции читаются по 32-битной раскладке
+    def elf32_i386(code, addr=0x08049000):
+        shstr = b"\x00.text\x00.shstrtab\x00"
+        code_off = 0x60
+        shstr_off = code_off + len(code)
+        shoff = (shstr_off + len(shstr) + 3) & ~3
+        ehdr = struct.pack("<16sHHIIIIIHHHHHH", b"\x7fELF\x01\x01\x01" + b"\x00" * 9,
+                           2, 3, 1, addr, 0, shoff, 0, 52, 0, 0, 40, 3, 2)
+        shdrs = (struct.pack("<10I", *([0] * 10))
+                 + struct.pack("<10I", 1, 1, 6, addr, code_off, len(code), 0, 0, 16, 0)
+                 + struct.pack("<10I", 7, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0))
+        blob = ehdr.ljust(code_off, b"\x00") + code + shstr
+        return blob.ljust(shoff, b"\x00") + shdrs
+
+    try:
+        import capstone  # noqa: F401
+        have_cs = True
+    except Exception:
+        have_cs = False
+    # mov eax,0x41; cmp eax,0x42; (ff ff — не инструкция); mov ecx,0x1337; ret;
+    # push ebp; mov ebp,esp; xor eax,eax; ret
+    i386_code = (bytes.fromhex("b841000000" "83f842") + b"\xff\xff"
+                 + bytes.fromhex("b937130000" "c3" "5589e5" "31c0" "c3"))
+    elf32 = os.path.join(tmp, "i386.elf")
+    open(elf32, "wb").write(elf32_i386(i386_code))
+    if have_cs:
+        r = run("reverse/disasm.py", elf32, "--all")
+        check("disasm ELF32 i386", "0x08049000" in r.stdout and "eax, 0x41" in r.stdout,
+              r.stdout[-600:] + r.stderr)
+        # #76 imm-операнд подписан, мусорный байт не обрывает листинг, --func работает
+        check("disasm imm + skipdata",
+              "eax, 0x41 ; 'A'" in r.stdout and "ecx, 0x1337" in r.stdout,
+              r.stdout[-600:] + r.stderr)
+        r = run("reverse/disasm.py", elf32, "--func", "0x08049010")
+        check("disasm --func",
+              "push ebp" in r.stdout and "xor eax, eax" in r.stdout
+              and "eax, 0x41" not in r.stdout and r.returncode == 0,
+              r.stdout[-600:] + r.stderr)
+    else:
+        print("[SKIP] disasm ELF32/--func: нет capstone")
+
+    # #77 megarev: pyc чужой версии — по magic (без расширения), строки из кортежей
+    import importlib.util
+    import py_compile
+    src77 = os.path.join(tmp, "m77.py")
+    open(src77, "w").write("T = ('tup_alpha_77', 'tup_beta_77')\n")
+    pyc77 = os.path.join(tmp, "m77.pyc")
+    py_compile.compile(src77, cfile=pyc77, doraise=True)
+    blob = open(pyc77, "rb").read()
+    noext = os.path.join(tmp, "m77_noext")
+    open(noext, "wb").write(struct.pack("<H", 3413) + b"\r\n" + blob[4:])  # magic 3.8
+    r = run("reverse/megarev.py", noext, "--no-crypto")
+    check("megarev pyc foreign magic, no ext, tuple",
+          "const: tup_alpha_77" in r.stdout and "const: tup_beta_77" in r.stdout,
+          r.stdout[-800:] + r.stderr)
+
+    # pyc старого формата (code-объекты 3.8 и 2.7) собирается здесь же, байтами
+    def m_str(s):
+        b = s.encode()
+        return b"\xfa" + bytes([len(b)]) + b  # 'z' | FLAG_REF
+
+    def m_bytes(b):
+        return b"s" + struct.pack("<I", len(b)) + b
+
+    def m_tuple(items):
+        return b")" + bytes([len(items)]) + b"".join(items)
+
+    code38 = (b"\xe3" + struct.pack("<6i", 0, 0, 0, 0, 1, 64)
+              + m_bytes(b"d\x00S\x00")
+              + m_tuple([b"N", m_tuple([m_str("old38_tuple_str"), b"i" + struct.pack("<i", 77)])])
+              + m_tuple([m_str("old38_name")]) + m_tuple([]) + m_tuple([]) + m_tuple([])
+              + m_str("x.py") + m_str("<module>") + struct.pack("<i", 1) + m_bytes(b""))
+    pyc38 = os.path.join(tmp, "old38.pyc")
+    open(pyc38, "wb").write(struct.pack("<H", 3413) + b"\r\n" + b"\x00" * 12 + code38)
+    code27 = (b"c" + struct.pack("<4i", 0, 1, 1, 64) + m_bytes(b"d\x00\x00S")
+              + b"(" + struct.pack("<I", 1) + m_bytes(b"py2_const_str")
+              + m_tuple([]) + m_tuple([]) + m_tuple([]) + m_tuple([])
+              + m_bytes(b"y.py") + b"t" + struct.pack("<I", 8) + b"<module>"
+              + struct.pack("<i", 1) + m_bytes(b""))
+    pyc27 = os.path.join(tmp, "old27.pyc")
+    open(pyc27, "wb").write(struct.pack("<H", 62211) + b"\r\n" + b"\x00" * 4 + code27)
+    r = run("reverse/megarev.py", pyc38, pyc27, "--no-crypto")
+    check("megarev pyc 3.8/2.7 without marshal.loads",
+          "const: old38_tuple_str" in r.stdout and "const: py2_const_str" in r.stdout
+          and importlib.util.MAGIC_NUMBER != open(pyc38, "rb").read(4),
+          r.stdout[-800:] + r.stderr)
+
+    # #78 megarev: случайные 00 00 01 00 не считаются ICO и не вытесняют
+    # настоящие вложения; настоящий ICO находится; --time соблюдается
+    import random
+    rnd = random.Random(78)
+    png_buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (9, 9, 9)).save(png_buf, "PNG")
+    ico_buf = io.BytesIO()
+    Image.new("RGB", (16, 16), (200, 10, 10)).save(ico_buf, "ICO", sizes=[(16, 16)])
+    ico_body = (b"MZ" + rnd.randbytes(200) + struct.pack("<20I", *([0x10000] * 20))
+                + rnd.randbytes(3000) + png_buf.getvalue() + rnd.randbytes(100)
+                + make_zip_bytes("inner.txt", b"hello") + rnd.randbytes(64)
+                + ico_buf.getvalue())
+    ico_noise = os.path.join(tmp, "ico_noise.bin")
+    open(ico_noise, "wb").write(ico_body)
+    r = run("reverse/megarev.py", ico_noise, "--no-crypto")
+    check("megarev ICO false positives",
+          "PNG @0x" in r.stdout and "ZIP @0x" in r.stdout and r.stdout.count("ICO @0x") == 1,
+          r.stdout[-800:] + r.stderr)
+    words = b" ".join(b"word%03dkey" % i for i in range(300))
+    slow_bin = os.path.join(tmp, "slow_rev.bin")
+    open(slow_bin, "wb").write(b"\x7fELF" + rnd.randbytes(150_000) + words + rnd.randbytes(20_000))
+    t0 = time.time()
+    r = run("reverse/megarev.py", slow_bin, "--time", "2")
+    took = time.time() - t0
+    check("megarev --time respected", took < 6 and r.returncode == 0,
+          f"{took:.1f}s\n" + r.stdout[-400:] + r.stderr)
+
+    # #80 lang_info: PNG с «logo1.png» в метаданных — не Go
+    from PIL import PngImagePlugin
+    logo = os.path.join(tmp, "logo1.png")
+    meta = PngImagePlugin.PngInfo()
+    meta.add_text("Title", "logo1.png")
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(logo, pnginfo=meta)
+    r = run("reverse/lang_info.py", logo)
+    lang_line = next((ln for ln in r.stdout.splitlines() if "language:" in ln), "")
+    check("lang_info: PNG is not Go", lang_line and "Go" not in lang_line,
+          r.stdout[-400:] + r.stderr)
+
+    # #80 py_pack: zipapp со строкой #! перед zip
+    import zipapp
+    za_src = os.path.join(tmp, "za_src")
+    os.makedirs(za_src, exist_ok=True)
+    open(os.path.join(za_src, "__main__.py"), "w").write("print('hi')\n")
+    pyz = os.path.join(tmp, "app.pyz")
+    zipapp.create_archive(za_src, pyz, interpreter="/usr/bin/env python3")
+    r = run("reverse/py_pack.py", pyz)
+    check("py_pack zipapp with shebang",
+          open(pyz, "rb").read(2) == b"#!" and "zipapp" in r.stdout and "__main__.py" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    # #80 xor_scan: 3-байтовый ключ по префиксу флага, флаг не в начале файла
+    xflag = b"CTF{three_byte_key_xor}"
+    xplain = b"header text before the flag: " + xflag + b" tail"
+    xk = b"KEY"
+    xbin = os.path.join(tmp, "xor3.bin")
+    open(xbin, "wb").write(bytes(c ^ xk[i % 3] for i, c in enumerate(xplain)))
+    outs = [run("reverse/xor_scan.py", xbin, *a).stdout
+            for a in (("--known", "CTF{"), ("--keylen", "3"), ())]
+    check("xor_scan 3-byte key from flag prefix",
+          all("key=b'KEY'" in o and xflag.decode() in o for o in outs), "\n".join(outs)[-900:])
+def checks_admin(tmp):
+    """admin/*: образы ВМ, логи, Windows, триаж. Артефакты — tests/gen_admin.py."""
+    sys.path.insert(0, os.path.join(KIT, "tests"))
+    import gen_admin
+    base = os.path.join(tmp, "admin")
+
+    # #85 vm_image: QCOW2 (zlib-кластер), VDI, VMDK sparse/stream, OVA
+    vms = gen_admin.write_vm_set(os.path.join(base, "vm"))
+    for kind, (p, flag, raw) in vms.items():
+        r = run("admin/vm_image.py", p)
+        check(f"admin/vm_image.py {kind} flag", flag in r.stdout and "MBR 0x83" in r.stdout,
+              r.stdout[-700:] + r.stderr[-400:])
+        out = p + ".raw"
+        r = run("admin/vm_image.py", p, "--raw", out)
+        same = os.path.exists(out) and open(out, "rb").read() == raw
+        check(f"admin/vm_image.py {kind} --raw", same, r.stdout[-500:] + r.stderr[-400:])
+    r = run("admin/vm_image.py", vms["vmdk_sparse"][0], "--find", "flag.txt")
+    check("admin/vm_image.py --find", "0x000000050010" in r.stdout, r.stdout[-500:])
+    r = run("solve.py", vms["qcow2"][0], "--time", "40")
+    check("solve.py vm image", vms["qcow2"][1] in r.stdout and "vm" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
+    # #86 log_analyze: auth.log, nginx, journald JSON, zsh history, таймлайн
+    logs = gen_admin.write_log_set(os.path.join(base, "logs"))
+    p, flag = logs["auth"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py auth",
+          flag in r.stdout and "брутфорс удался" in r.stdout and "UID 0" in r.stdout
+          and "download-exec" in r.stdout and "backdoor → group sudo" in r.stdout,
+          r.stdout[-900:] + r.stderr[-400:])
+    p, flag = logs["access"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py web",
+          flag in r.stdout and "слепая SQLi" in r.stdout and "lfi/traversal" in r.stdout
+          and "nikto" in r.stdout and "user=guest;role=admin" in r.stdout
+          and "всплеск 4xx/5xx" in r.stdout, r.stdout[-900:] + r.stderr[-400:])
+    p, flag = logs["journal"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py journald",
+          flag in r.stdout and "journal_json" in r.stdout and "192.0.2.44" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    p, flag = logs["history"]
+    r = run("admin/log_analyze.py", p)
+    check("admin/log_analyze.py history",
+          flag in r.stdout and "reverse-shell" in r.stdout and "password-arg" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/log_analyze.py", logs["auth"][0], logs["history"][0], logs["journal"][0],
+            "--timeline", "--year", "2024")
+    tl = r.stdout.split("=== таймлайн", 1)[-1]
+    i1, i2, i3 = tl.find("192.0.2.44"), tl.find("wget http"), tl.find("203.0.113.7: 12")
+    check("admin/log_analyze.py --timeline", 0 <= i1 < i2 < i3, tl[:900] + r.stderr[-300:])
+    r = run("solve.py", logs["access"][0], "--time", "40")
+    check("solve.py logs", logs["access"][1] in r.stdout and "«logs»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
+    # #87 win_admin: regf (SYSTEM/NTUSER), службы, Run, удалённое, задачи, PS-история
+    win_root = os.path.join(base, "win")
+    win = gen_admin.write_win_set(win_root)
+    p, flag = win["ntuser"]
+    r = run("admin/win_admin.py", "reg", p)
+    check("admin/win_admin.py reg", flag in r.stdout and "NTUSER" in r.stdout
+          and "checksum ok" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", "reg", p, "--deleted")
+    check("admin/win_admin.py reg --deleted", win["deleted"][1] in r.stdout
+          and "удалённое значение" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", "run", p)
+    check("admin/win_admin.py run", "Updater" in r.stdout and "RunOnce" in r.stdout
+          and "[!] Updater" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["system"]
+    r = run("admin/win_admin.py", "services", p)
+    check("admin/win_admin.py services", flag in r.stdout and "[!] UpdSvc" in r.stdout
+          and "-EncodedCommand" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["task"]
+    r = run("admin/win_admin.py", "tasks", os.path.dirname(p))
+    check("admin/win_admin.py tasks", flag in r.stdout and "WIN-TEST\\admin" in r.stdout
+          and "Hidden" in r.stdout and "PT15M" in r.stdout, r.stdout[-700:] + r.stderr[-400:])
+    p, flag = win["pshistory"]
+    r = run("admin/win_admin.py", "pshistory", p)
+    check("admin/win_admin.py pshistory", flag in r.stdout and "defense-evasion" in r.stdout,
+          r.stdout[-700:] + r.stderr[-400:])
+    r = run("admin/win_admin.py", win_root)
+    check("admin/win_admin.py auto dir", all(win[k][1] in r.stdout for k in win),
+          r.stdout[-900:] + r.stderr[-400:])
+    r = run("solve.py", win["system"][0], "--time", "40")
+    check("solve.py winadm", win["system"][1] in r.stdout and "«winadm»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+
+    # #84 admin_triage: дамп ФС с ошибками конфигов + раздача vm/logs/winadm
+    dump = os.path.join(base, "fsdump")
+    dflags = gen_admin.write_linux_dump(dump)
+    r = run("admin/admin_triage.py", dump)
+    out = r.stdout
+    must = ["toor с UID 0", "NOPASSWD /usr/bin/find — GTFOBins", "LD_PRELOAD", "wildcard-инъекция",
+            "/tmp/cleanup.sh", "reverse-shell", "PermitEmptyPasswords", "no_root_squash",
+            ".git-credentials: bob:", "docker.sock", "/opt/tools/backup — нестандартный",
+            "cap_setuid", "sha512crypt, hashcat -m 1800", "yescrypt", "у toor пустой пароль",
+            "group docker: bob", "удалён /home/bob/notes.txt"]
+    miss = [m for m in must if m not in out]
+    check("admin/admin_triage.py checks", not miss, f"нет: {miss}\n" + out[-900:] + r.stderr[-400:])
+    check("admin/admin_triage.py dispatch", all(f in out for f in dflags.values()),
+          out[-900:] + r.stderr[-400:])
+    r = run("admin/admin_triage.py", os.path.join(dump, "etc", "sudoers"))
+    check("admin/admin_triage.py file", "NOPASSWD" in r.stdout and "GTFOBins" in r.stdout,
+          r.stdout[-600:] + r.stderr[-300:])
+    r = run("solve.py", os.path.join(dump, "opt", "app", "k8s", "secret.yaml"), "--time", "40")
+    check("solve.py admin config", dflags["k8s"] in r.stdout and "«admin»" in r.stdout,
+          r.stdout[-700:] + r.stderr[-300:])
+    r = run("solve.py", dump, "--plan")
+    check("solve.py admin dir plan", "admin " in r.stdout, r.stdout[-700:] + r.stderr[-300:])
+def checks_stego_img(tmp):
+    """Регрессии stego: LSB-каналы, эзотерика, carve/jpeg_tail, png_chunks,
+    враждебный ввод (Deadfish, bitmap_font)."""
+
+    # lsb: классический R,G,B,R,G,B… (без альфы) находится без опций
+    def _rgb_lsb_png(path, msg, mode):
+        im = Image.new(mode, (64, 16), (100, 150, 200, 255)[:len(mode)])
+        px = im.load()
+        bits = [(b >> (7 - i)) & 1 for b in msg for i in range(8)]
+        k = 0
+        for y in range(im.height):
+            for x in range(im.width):
+                p = list(px[x, y])
+                for c in range(3):
+                    if k < len(bits):
+                        p[c] = (p[c] & 0xFE) | bits[k]
+                        k += 1
+                px[x, y] = tuple(p)
+        im.save(path)
+
+    for mode in ("RGB", "RGBA"):
+        want = "CTF{rgb_lsb_" + mode.lower() + "}"
+        p = os.path.join(tmp, f"rgb_lsb_{mode}.png")
+        _rgb_lsb_png(p, want.encode(), mode)
+        r = run("stego/lsb.py", p)
+        check(f"lsb rgb sequence {mode}", want in r.stdout, r.stdout[:500] + r.stderr)
+
+    # esolang: Hello World на Ook! и COW — переводим Brainfuck по спецификациям
+    bf_hello = ("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---."
+                "+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.")
+    ook_of = {">": "Ook. Ook?", "<": "Ook? Ook.", "+": "Ook. Ook.", "-": "Ook! Ook!",
+              ".": "Ook! Ook.", ",": "Ook. Ook!", "[": "Ook! Ook?", "]": "Ook? Ook!"}
+    cow_of = {">": "moO", "<": "mOo", "+": "MoO", "-": "MOo",
+              ".": "Moo", "[": "MOO", "]": "moo"}
+    for lang, table in (("ook", ook_of), ("cow", cow_of)):
+        p = os.path.join(tmp, f"hello.{lang}")
+        with open(p, "w") as f:
+            f.write("\n".join(table[c] for c in bf_hello))
+        r = run("stego/esolang.py", p)
+        check(f"esolang {lang} hello world",
+              f"похоже на: {lang}" in r.stdout and "Hello World!" in r.stdout,
+              r.stdout[-400:] + r.stderr)
+    # COW без аналогов в BF: MMM (регистр), OOM/oom (числа), OOO (обнуление)
+    p = os.path.join(tmp, "ops.cow")
+    with open(p, "w") as f:
+        f.write("MoO " * 5 + "MMM moO MMM OOM OOO OOM oom OOM")
+    r = run("stego/esolang.py", p, "--input", "-42\n")
+    check("esolang cow MMM/OOM/oom", "'5\\n0\\n-42\\n'" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    # whitespace: куча, цикл, call/ret, арифметика и ввод — по спецификации
+    S, T, L = " ", "\t", "\n"
+
+    def _num(v):
+        return (S if v >= 0 else T) + "".join(T if b == "1" else S
+                                              for b in bin(abs(v))[2:]) + L
+
+    def _lab(s):
+        return "".join(T if b == "1" else S for b in s) + L
+
+    def push(v):
+        return S + S + _num(v)
+
+    dup, discard, swap = S + L + S, S + L + L, S + L + T
+    add, sub, mod = T + S + S + S, T + S + S + T, T + S + T + T
+    store, retrieve = T + T + S, T + T + T
+    outc, outn, readc = T + L + S + S, T + L + S + T, T + L + T + S
+
+    def mark(lb):
+        return L + S + S + _lab(lb)
+
+    def call(lb):
+        return L + S + T + _lab(lb)
+
+    def jump(lb):
+        return L + S + L + _lab(lb)
+
+    def jz(lb):
+        return L + T + S + _lab(lb)
+
+    ws_text = "CTF{ws_heap_loop}"
+    prog = ""
+    for k, ch in enumerate(ws_text + "\0"):          # строка в куче с адреса 100
+        prog += push(100 + k) + push(ord(ch)) + store
+    prog += push(100) + call("1") + push(7) + push(-3) + swap + sub + outn
+    prog += push(17) + push(5) + mod + outn + push(0) + readc
+    prog += push(0) + retrieve + outc + L + L + L
+    # подпрограмма: печатать кучу с адреса на стеке до нуля
+    prog += mark("1") + mark("10") + dup + retrieve + dup + jz("11")
+    prog += outc + push(1) + add + jump("10") + mark("11") + discard + discard + L + T + L
+    wsp = os.path.join(tmp, "heap_loop.ws")
+    with open(wsp, "w", newline="") as f:
+        f.write(prog)
+    r = run("stego/whitespace.py", wsp, "--input", "!")       # без --mode: auto
+    check("whitespace heap/loop/call", ws_text + "-102!" in r.stdout,
+          r.stdout[-600:] + r.stderr)
+
+    # carve: PCAP режется по записям, голые сигнатуры не плодят гигабайты
+    def _dir_size(d):
+        return sum(os.path.getsize(os.path.join(d, f)) for f in os.listdir(d)) \
+            if os.path.isdir(d) else 0
+
+    spam = os.path.join(tmp, "pcap_spam.bin")
+    with open(spam, "wb") as f:
+        f.write(b"HEAD" + b"\xd4\xc3\xb2\xa1" * 5000 + b"\x0a\x0d\x0d\x0a" * 500)
+    out = os.path.join(tmp, "carve_spam")
+    r = run("stego/carve.py", spam, "--out", out)
+    check("carve pcap signature spam bounded",
+          _dir_size(out) <= 2 * os.path.getsize(spam),
+          f"carved {_dir_size(out)} bytes\n" + r.stdout[-300:] + r.stderr)
+
+    pcap = struct.pack("<IHHiIII", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1)
+    for k, payload in enumerate([b"A" * 60, b"CTF{pcap_records}" + b"B" * 30]):
+        pcap += struct.pack("<IIII", 1000 + k, 0, len(payload), len(payload)) + payload
+    host = os.path.join(tmp, "host_pcap.bin")
+    with open(host, "wb") as f:
+        f.write(b"JUNK" * 10 + pcap + b"\xff" * 5000)
+    out = os.path.join(tmp, "carve_pcap")
+    r = run("stego/carve.py", host, "--out", out)
+    got = [f for f in os.listdir(out) if f.endswith(".pcap")] if os.path.isdir(out) else []
+    check("carve pcap by records",
+          len(got) == 1 and open(os.path.join(out, got[0]), "rb").read() == pcap,
+          r.stdout[-400:] + r.stderr)
+
+    # jpeg_tail: конец JPEG по маркерам, а не последнее FF D9
+    def _jpg(color, size=(16, 16)):
+        b = io.BytesIO()
+        Image.new("RGB", size, color).save(b, "JPEG")
+        return b.getvalue()
+
+    zb = io.BytesIO()
+    with zipfile.ZipFile(zb, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("ffd9.bin", b"AA\xff\xd9BB" + b"CTF{jpeg_tail_zip}")
+    zip_ffd9 = zb.getvalue()
+    first = _jpg((1, 2, 3))
+    p = os.path.join(tmp, "jpeg_jpeg.jpg")
+    with open(p, "wb") as f:
+        f.write(first + _jpg((200, 9, 9)))
+    r = run("stego/jpeg_tail.py", p)
+    check("jpeg_tail jpeg+jpeg",
+          f"на смещении: {len(first)}" in r.stdout and ".jpg" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+    p = os.path.join(tmp, "jpeg_zip_ffd9.jpg")
+    with open(p, "wb") as f:
+        f.write(first + zip_ffd9)
+    out = os.path.join(tmp, "jpeg_zip_out")
+    r = run("stego/jpeg_tail.py", p, "--extract", out)
+    check("jpeg_tail zip with ffd9", os.path.exists(os.path.join(out, "ffd9.bin")),
+          r.stdout[-400:] + r.stderr)
+    # два скана, FF00/RST/FF-заполнитель в данных, COM с FFD9 между сканами
+    sos = b"\xff\xda" + (8).to_bytes(2, "big") + b"\x01\x01\x00\x00\x3f\x00"
+    com = b"\xff\xfe" + (6).to_bytes(2, "big") + b"\xff\xd9\xff\xd9"
+    scans = (b"\xff\xd8" + sos + b"\x12\xff\x00\x34\xff\xd0\x56\xff\xff\x00"
+             + com + sos + b"\x77\xff\x00" + b"\xff\xd9")
+    p = os.path.join(tmp, "jpeg_scans.jpg")
+    with open(p, "wb") as f:
+        f.write(scans + zip_ffd9)
+    r = run("stego/jpeg_tail.py", p)
+    check("jpeg_tail scans/RST/FF00",
+          f"на смещении: {len(scans)}" in r.stdout and ".zip" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    # png_chunks --fix: высоту уменьшили, CRC IHDR оставили — размер из CRC
+    im = Image.new("RGB", (37, 23), (0, 0, 0))
+    for x in range(37):
+        im.putpixel((x, 22), (255, 255, 255))
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    raw = bytearray(b.getvalue())
+    raw[20:24] = struct.pack(">I", 10)            # IHDR height, CRC прежний
+    p = os.path.join(tmp, "ihdr_short.png")
+    with open(p, "wb") as f:
+        f.write(raw)
+    fixed = os.path.join(tmp, "ihdr_fixed.png")
+    r = run("stego/png_chunks.py", p, "--fix", fixed)
+    try:
+        with Image.open(fixed) as im2:
+            im2.load()
+            size = im2.size
+    except Exception as e:
+        size = repr(e)
+    check("png_chunks --fix dims from crc", size == (37, 23),
+          f"size={size}\n" + r.stdout[-400:] + r.stderr)
+
+    # png_chunks: zTXt-бомба распаковывается с пределом, короткий IHDR не падает
+    import contextlib
+    import importlib.util
+    import tracemalloc
+    import zlib
+
+    def _chunk(t, d):
+        return (struct.pack(">I", len(d)) + t + d
+                + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF))
+
+    png_sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    comp = zlib.compressobj(9)                    # 150 МБ нулей -> ~150 КБ
+    bomb = comp.compress(b"CTF{ztxt_bomb}")
+    zeros = b"\x00" * (1 << 20)
+    for _ in range(150):
+        bomb += comp.compress(zeros)
+    bomb += comp.flush()
+    p = os.path.join(tmp, "ztxt_bomb.png")
+    with open(p, "wb") as f:
+        f.write(png_sig + _chunk(b"IHDR", ihdr) + _chunk(b"zTXt", b"k\x00\x00" + bomb)
+                + _chunk(b"IDAT", zlib.compress(b"\x00" * 4)) + _chunk(b"IEND", b""))
+    spec = importlib.util.spec_from_file_location(
+        "png_chunks_selftest", os.path.join(KIT, "stego", "png_chunks.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    buf = io.StringIO()
+    old_argv = sys.argv
+    sys.argv = ["png_chunks.py", p]
+    tracemalloc.start()
+    try:
+        with contextlib.redirect_stdout(buf):
+            mod.main()
+        peak = tracemalloc.get_traced_memory()[1]
+    except Exception as e:
+        peak = None
+        buf.write(repr(e))
+    finally:
+        tracemalloc.stop()
+        sys.argv = old_argv
+    check("png_chunks ztxt bomb limited",
+          peak is not None and peak < 64 << 20 and "CTF{ztxt_bomb}" in buf.getvalue(),
+          f"peak={peak}\n" + buf.getvalue()[-300:])
+    bad = []
+    for n in (8, 9, 12):
+        p = os.path.join(tmp, f"ihdr_{n}.png")
+        with open(p, "wb") as f:
+            f.write(png_sig + _chunk(b"IHDR", ihdr[:n]) + _chunk(b"IEND", b""))
+        r = run("stego/png_chunks.py", p)
+        if "Traceback" in r.stderr or r.returncode != 0:
+            bad.append(f"{n}: {r.stderr[-200:]}")
+    check("png_chunks short IHDR", not bad, "\n".join(bad))
+
+    # враждебный ввод: время работы ограничено (без предела — зависание)
+    def _run_limited(rel, *args, timeout=60):
+        try:
+            return subprocess.run([PY, os.path.join(KIT, rel), *map(str, args)],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", env=ENV, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+
+    p = os.path.join(tmp, "deadfish_huge.txt")
+    with open(p, "w") as f:
+        f.write("iiisdo" + "s" * 40 + "o")          # 8, затем 8^(2^40)
+    r = _run_limited("stego/esolang.py", p, "--lang", "deadfish", timeout=20)
+    check("esolang deadfish huge numbers bounded",
+          r is not None and "out: '8" in r.stdout,
+          "timeout" if r is None else r.stdout[-300:] + r.stderr[-300:])
+
+    rows = [".####", "#....", "#....", "#....", ".####"]
+    glyph_c = "".join(f"{x},{y}\n" for y, row in enumerate(rows)
+                      for x, ch in enumerate(row) if ch == "#")
+    bad = []
+    # далёкая точка (раньше холст 20000001x5 — сотни МБ и секунды) и
+    # совсем огромные/inf координаты (раньше OverflowError)
+    for tag, extra in (("far", "20000000,2\n"),
+                       ("huge", f"{10 ** 30},0\n1e400,0\n0,1e300\n")):
+        p = os.path.join(tmp, f"bitmap_{tag}.csv")
+        with open(p, "w") as f:
+            f.write("x,y\n" + glyph_c + extra)
+        r = _run_limited("stego/bitmap_font.py", p, "--decode", timeout=60)
+        if r is None:
+            bad.append(f"{tag}: timeout")
+        elif not ("холст: 9x" in r.stdout and "decode: C" in r.stdout
+                  and "Traceback" not in r.stderr):
+            bad.append(f"{tag}: " + r.stdout[-300:] + r.stderr[-300:])
+    check("bitmap_font huge coordinates", not bad, "\n".join(bad))
+def checks_core(tmp):
+    """Ядро solve: условие задачи (#81), JSON/события (#82), цепочки (#83)."""
+    import re as _re
+    sys.path.insert(0, KIT)
+    import solve as _solve
+
+    # 81. parse_statement: категория, подсказки, формат флага, пароль, адрес
+    st = _solve.parse_statement(
+        "Категория: Crypto\nСообщение прогнали через XOR, а потом в base64. "
+        "Формат флага: QWE{...}. Пароль: \"pa55word\". Сервер: nc 127.0.0.1 31337")
+    check("solve parse_statement ru",
+          st["category"] == "crypto" and st["hints"][:2] == ["xor", "base64"]
+          and st["flag_prefixes"] == ["QWE"] and "pa55word" in st["passwords"]
+          and "127.0.0.1:31337" in st["hosts"],
+          json.dumps(st, ensure_ascii=False))
+    st = _solve.parse_statement(
+        "The message is hidden in the least significant bits of the picture. "
+        "Flag format: flag{[a-z_]+}. Source: http://chall.local:8080/")
+    check("solve parse_statement en",
+          st["category"] == "stego" and st["hints"][:1] == ["lsb"]
+          and st["urls"] == ["http://chall.local:8080/"],
+          json.dumps(st, ensure_ascii=False))
+
+    # 81b. --desc меняет порядок плана и добавляет префикс флага
+    ddir = os.path.join(tmp, "core_desc")
+    os.makedirs(ddir, exist_ok=True)
+    dflag = "QWE{" + hashlib.sha1(b"core-desc").hexdigest()[:12] + "}"
+    note = os.path.join(ddir, "note.txt")
+    with open(note, "w", encoding="utf-8") as f:
+        f.write("some note text with numbers 12345\n" + dflag + "\n")
+
+    def _plan_pos(text, tool):
+        for i, line in enumerate(text.splitlines()):
+            if _re.match(r"\s+\d+\. " + tool + r"\b", line):
+                return i
+        return 10 ** 6
+
+    r0 = run("solve.py", note, "--plan")
+    r1 = run("solve.py", note, "--plan", "--desc",
+             "Подсказка: brainfuck. Формат флага: QWE{...}")
+    check("solve --desc plan order",
+          _plan_pos(r0.stdout, "xorknown") < _plan_pos(r0.stdout, "esolang")
+          and _plan_pos(r1.stdout, "esolang") < _plan_pos(r1.stdout, "xorknown")
+          and "--known QWE{" in r1.stdout and "QWE{…}" in r1.stdout,
+          r0.stdout[-800:] + "\n----\n" + r1.stdout[-1200:] + r1.stderr)
+    r2 = run("solve.py", note, "--time", "40", "--desc", "flag format: QWE{...}")
+    check("solve --desc flag prefix", dflag in r2.stdout, r2.stdout[-800:] + r2.stderr)
+    desc_file = os.path.join(ddir, "statement.md")
+    with open(desc_file, "w", encoding="utf-8") as f:
+        f.write("Ответь на 100 раундов: nc 127.0.0.1 31337\n")
+    r3 = run("solve.py", "--desc-file", desc_file)
+    check("solve --desc-file target",
+          "127.0.0.1:31337" in r3.stdout and "game --connect" in r3.stdout,
+          r3.stdout[-800:] + r3.stderr)
+
+    # 82. --json: в stdout один JSON с шагами и флагом; --events: поток событий
+    jdir = os.path.join(tmp, "core_json")
+    os.makedirs(jdir, exist_ok=True)
+    jflag = "CTF{" + hashlib.sha1(b"core-json").hexdigest()[:12] + "}"
+    jfile = os.path.join(jdir, "blob.txt")
+    with open(jfile, "w", encoding="utf-8") as f:
+        f.write(base64.b64encode(jflag.encode()).decode() + "\n")
+    r = run("solve.py", jfile, "--time", "40", "--json")
+    try:
+        doc = json.loads(r.stdout)
+    except ValueError:
+        doc = {}
+    step_keys = {"n", "tool", "args", "why", "timeout", "status", "rc", "seconds",
+                 "output_tail", "flags", "leads"}
+    steps = doc.get("steps") or []
+    check("solve --json",
+          r.stdout.strip().count("\n") == 0 and doc.get("flag") == jflag
+          and doc.get("status") == "solved" and doc.get("plan") and steps
+          and all(step_keys <= set(s) for s in steps)
+          and any(jflag in s["flags"] for s in steps)
+          and all(s["status"] in ("ok", "fail", "timeout", "killed", "skipped") for s in steps)
+          and "[+] тип" in r.stderr,
+          r.stdout[-800:] + r.stderr[-400:])
+    evfile = os.path.join(jdir, "events.jsonl")
+    r = run("solve.py", jfile, "--time", "40", "--jobs", "1", "--events", evfile)
+    try:
+        with open(evfile, encoding="utf-8") as f:
+            evs = [json.loads(line) for line in f if line.strip()]
+    except (OSError, ValueError):
+        evs = []
+    names = [e.get("event") for e in evs]
+    fl = next((e for e in evs if e.get("event") == "flag"), {})
+    fn = fl.get("n")
+    ordered = False
+    if names and fn is not None:
+        i_start = next((i for i, e in enumerate(evs)
+                        if e["event"] == "step_start" and e.get("n") == fn), -1)
+        i_end = next((i for i, e in enumerate(evs)
+                      if e["event"] == "step_end" and e.get("n") == fn), -1)
+        i_flag = names.index("flag")
+        ordered = (names[0] == "plan" and names[-1] == "done"
+                   and 0 < i_start < i_end < i_flag < len(names) - 1
+                   and evs[-1].get("flag") == jflag and fl.get("flag") == jflag)
+    check("solve --events order", ordered and "ФЛАГ" in r.stdout,
+          " ".join(map(str, names)) + "\n" + r.stdout[-400:] + r.stderr[-400:])
+    r = run("solve.py", base64.b64encode(jflag.encode()).decode(), "--events", "-")
+    try:
+        evs = [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
+    except ValueError:
+        evs = []
+    check("solve --events - stdout",
+          evs and evs[0]["event"] == "plan" and evs[-1]["event"] == "done"
+          and evs[-1]["flag"] == jflag and "[+] цель: строка" in r.stderr,
+          r.stdout[-600:] + r.stderr[-300:])
+
+    # 83. цепочка из 4 слоёв: base64 → hex → ROT13 → однобайтовый XOR
+    up, lo = bytes(range(65, 91)), bytes(range(97, 123))
+    rot13 = bytes.maketrans(up + lo, up[13:] + up[:13] + lo[13:] + lo[:13])
+    cflag = ("CTF{multi_layer_chain_" + hashlib.sha1(b"core-chain").hexdigest()[:6]
+             + "}").encode()
+    ckey = hashlib.sha1(b"core-chain-key").digest()[0] | 1
+    while cflag.translate(bytes(b ^ ckey for b in range(256))).translate(rot13) == \
+            cflag.translate(bytes(b ^ ckey for b in range(256))):
+        ckey = (ckey + 2) % 256 or 1      # ROT13 должен реально менять слой
+    xored = bytes(b ^ ckey for b in cflag)
+    layered = base64.b64encode(xored.translate(rot13).hex().encode()).decode()
+    r = run("crypto/chain.py", layered)
+    check("crypto/chain.py 4 layers",
+          ("ФЛАГ: " + cflag.decode()) in r.stdout
+          and "base64 → hex → rot13 → xor:0x%02x" % ckey in r.stdout,
+          r.stdout[-800:] + r.stderr[-400:])
+    # обратный порядок: XOR → ROT13 → hex → base64, бинарный файл
+    rev = bytes(b ^ ckey for b in base64.b64encode(cflag).hex().encode().translate(rot13))
+    cdir = os.path.join(tmp, "core_chain")
+    os.makedirs(cdir, exist_ok=True)
+    rev_path = os.path.join(cdir, "layers.bin")
+    with open(rev_path, "wb") as f:
+        f.write(rev)
+    r = run("crypto/chain.py", "--file", rev_path)
+    check("crypto/chain.py reverse order",
+          ("ФЛАГ: " + cflag.decode()) in r.stdout, r.stdout[-800:] + r.stderr[-400:])
+    # solve сам доходит до цепочки на текстовом файле
+    lay_path = os.path.join(cdir, "layers.txt")
+    with open(lay_path, "w", encoding="utf-8") as f:
+        f.write(layered + "\n")
+    r = run("solve.py", lay_path, "--time", "60")
+    check("solve chain 4 layers", cflag.decode() in r.stdout and "chain" in r.stdout,
+          r.stdout[-900:] + r.stderr[-400:])
+    r = run("crypto/chain.py", "--file", os.path.join(cdir, "missing.bin"))
+    r2 = run("crypto/chain.py", "--file", cdir)
+    check("crypto/chain.py no file",
+          r.returncode == 1 and r2.returncode == 1 and "не могу прочитать" in r.stdout
+          and "Traceback" not in r.stderr + r2.stderr,
+          r.stdout[-300:] + r.stderr[-300:] + r2.stderr[-300:])
 
 
 def main():
@@ -993,7 +2446,7 @@ def main():
         return "  " + sign + "".join("\t" if b == "1" else " " for b in bits) + "\n"
 
     def ws_out():
-        return "\t\t  "
+        return "\t\n  "     # IMP [Tab][LF] (I/O) + [Space][Space] = outchar
 
     ws_flag = "CTF{ws}"
     wsp = os.path.join(tmp, "w.ws")
@@ -1248,7 +2701,8 @@ def main():
 
     # 84. lang info (Go)
     gop = os.path.join(tmp, "go.bin")
-    open(gop, "wb").write(b"junk .go.buildinfo go1.22.0 path\tmain")
+    open(gop, "wb").write(b"\x7fELF\x02\x01\x01" + b"\x00" * 9
+                          + b"junk .go.buildinfo go1.22.0 path\tmain")
     r = run("reverse/lang_info.py", gop)
     check("reverse/lang_info.py", "Go" in r.stdout, r.stdout + r.stderr)
 
@@ -2140,6 +3594,16 @@ def main():
           "CTF{pickle_scan}" in r.stdout and "eval" in r.stdout,
           r.stdout[-600:] + r.stderr)
 
+    checks_ctb(tmp)
+    checks_zip_tricks(tmp)
+    checks_disk_image(tmp)
+    checks_prng(tmp)
+    checks_forensics(tmp)
+    checks_stego_audio(tmp)
+    checks_reverse(tmp)
+    checks_admin(tmp)
+    checks_stego_img(tmp)
+    checks_core(tmp)
     # 131. rsa coppersmith: часть m известна, e=3
     from Crypto.Util.number import getPrime as _get_prime
     _p, _q = _get_prime(256), _get_prime(256)

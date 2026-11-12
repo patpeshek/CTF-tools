@@ -21,7 +21,9 @@ import argparse
 import glob
 import re
 
-KEY_RX = re.compile(r"(?i)\b(key|secret|token|pass|seed|nonce|flag|role|slot)\b")
+# не \b: в API_KEY / DB_PASSWORD перед словом стоит `_`, а это тоже \w
+KEY_RX = re.compile(r"(?i)(?<![a-z])(key|secret|token|pass(?:word|wd|phrase)?|pwd|seed|"
+                    r"nonce|flag|role|slot)s?(?![a-z])")
 
 
 def blocks_from_envars(lines):
@@ -86,6 +88,11 @@ def main():
             for (pid, name), block in env.items():
                 if args.name and args.name.lower() not in name.lower():
                     continue
+                if args.grep:
+                    # envars: строка = переменная, оставляем только совпавшие
+                    block = [x for x in block if args.grep.lower() in x.lower()]
+                    if not block:
+                        continue
                 print(f"\n=== {path}: PID {pid} {name} ===")
                 show_block(block, args)
                 printed = True

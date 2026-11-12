@@ -194,6 +194,335 @@ def g_captcha(_i):
     return f"Введите слово с картинки (captcha): {b64}", word
 
 
+# ---- алгоритмические задачи категории MATH (ticket #89) --------------------
+# Ответы считаются независимо (hashlib/math/самостоятельные алгоритмы), а не
+# вызовом решателя, иначе тест проверял бы сам себя.
+
+
+def _rand_word():
+    import string
+    return "".join(random.choices(string.ascii_lowercase, k=random.randint(4, 8)))
+
+
+def g_hash_md5(_i):
+    import hashlib
+    w = _rand_word()
+    return f"md5 of '{w}'", hashlib.md5(w.encode()).hexdigest()
+
+
+def g_hash_sha1(_i):
+    import hashlib
+    w = _rand_word()
+    return f"sha1 of '{w}'", hashlib.sha1(w.encode()).hexdigest()
+
+
+def g_hash_sha256(_i):
+    import hashlib
+    w = _rand_word()
+    return f"sha256 of '{w}'", hashlib.sha256(w.encode()).hexdigest()
+
+
+def g_hash_sha512(_i):
+    import hashlib
+    w = _rand_word()
+    return f"sha512 of '{w}'", hashlib.sha512(w.encode()).hexdigest()
+
+
+def g_hash_crc32(_i):
+    import zlib
+    w = _rand_word()
+    return f"crc32 of '{w}'", format(zlib.crc32(w.encode()) & 0xFFFFFFFF, "08x")
+
+
+def g_modexp(_i):
+    a = random.randint(2, 50)
+    b = random.randint(2, 40)
+    m = random.randint(100, 9999)
+    return f"Compute {a}^{b} mod {m}", str(pow(a, b, m))
+
+
+def g_modinv(_i):
+    m = random.choice([97, 101, 103, 107, 109, 113, 1009, 10007])
+    a = random.randint(2, m - 1)
+    return f"Find the modular inverse of {a} mod {m}", str(pow(a, -1, m))
+
+
+def g_crt(_i):
+    mods = random.sample([3, 5, 7, 11, 13], 3)   # различные простые -> попарно взаимно просты
+    res = [random.randint(0, mm - 1) for mm in mods]
+    prod = 1
+    for mm in mods:
+        prod *= mm
+    x = next(v for v in range(prod)
+             if all(v % mm == r for mm, r in zip(mods, res)))
+    parts = ", ".join(f"x ≡ {r} mod {mm}" for r, mm in zip(res, mods))
+    return f"Solve the system: {parts}", str(x)
+
+
+def g_factmod(_i):
+    n = random.randint(5, 40)
+    m = random.choice([1000000007, 998244353, 10007])
+    return f"Compute {n}! mod {m}", str(math.factorial(n) % m)
+
+
+def g_fibmod(_i):
+    n = random.randint(10, 90)
+    m = random.choice([1000000007, 998244353, 10007])
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return f"The {n}th Fibonacci number mod {m}", str(a % m)
+
+
+def g_binom(_i):
+    n = random.randint(5, 30)
+    k = random.randint(0, n)
+    p = random.choice([1000000007, 998244353, 10007])
+    return f"Compute C({n}, {k}) mod {p}", str(math.comb(n, k) % p)
+
+
+def _mr(n):
+    """Детерминированный Miller–Rabin для n < 3.3e24 (независимая реализация)."""
+    if n < 2:
+        return False
+    for pr in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n % pr == 0:
+            return n == pr
+    d, r = n - 1, 0
+    while d % 2 == 0:
+        d //= 2
+        r += 1
+    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        x = pow(a, d, n)
+        if x in (1, n - 1):
+            continue
+        for _ in range(r - 1):
+            x = x * x % n
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def g_prime_big(_i):
+    def rand_prime(lo, hi):
+        x = random.randint(lo, hi)
+        while not _mr(x):
+            x += 1
+        return x
+    if random.random() < 0.5:
+        n = rand_prime(10 ** 8, 10 ** 9) * rand_prime(10 ** 8, 10 ** 9)  # < 2^64
+        return f"Is {n} prime? Answer YES or NO", "NO"
+    n = rand_prime(10 ** 14, 10 ** 15)
+    return f"Is {n} prime? Answer YES or NO", "YES"
+
+
+def g_select_kth(_i):
+    xs = random.sample(range(1, 99), random.randint(5, 8))
+    k = random.randint(1, len(xs))
+    suf = {1: "st", 2: "nd", 3: "rd"}.get(k if k < 20 else k % 10, "th")
+    want = str(sorted(xs)[k - 1])
+    return f"Find the {k}{suf} smallest of: " + ", ".join(map(str, xs)), want
+
+
+def g_median(_i):
+    xs = [random.randint(1, 99) for _ in range(random.choice([5, 7]))]
+    s = sorted(xs)
+    return "Median of: " + ", ".join(map(str, xs)), str(s[len(s) // 2])
+
+
+def g_brackets(_i):
+    pairs = "()[]{}"
+    closes = {"(": ")", "[": "]", "{": "}"}
+    if random.random() < 0.5:
+        out, stack = [], []
+        for _ in range(random.randint(2, 6)):
+            if stack and random.random() < 0.5:
+                out.append(closes[stack.pop()])
+            else:
+                o = random.choice("([{")
+                stack.append(o)
+                out.append(o)
+        while stack:
+            out.append(closes[stack.pop()])
+        s = "".join(out) or "()"
+    else:
+        s = "".join(random.choice(pairs) for _ in range(random.randint(3, 7)))
+    stack, ok = [], True
+    for ch in s:
+        if ch in "([{":
+            stack.append(ch)
+        elif not stack or closes[stack.pop()] != ch:
+            ok = False
+            break
+    ok = ok and not stack
+    return (f"Is '{s}' a balanced bracket string? Answer YES or NO",
+            "YES" if ok else "NO")
+
+
+def g_matmul(_i):
+    def mat():
+        return [[random.randint(0, 9) for _ in range(2)] for _ in range(2)]
+
+    def fmt(m):
+        return "[[" + "],[".join(",".join(map(str, r)) for r in m) + "]]"
+    a, b = mat(), mat()
+    p = random.choice([97, 1000, 1000000007])
+    c = [[sum(a[i][k] * b[k][j] for k in range(2)) % p for j in range(2)]
+         for i in range(2)]
+    flat = " ".join(str(x) for row in c for x in row)
+    return f"Multiply matrices {fmt(a)} and {fmt(b)} mod {p}", flat
+
+
+def g_det(_i):
+    def det(m):
+        k = len(m)
+        if k == 1:
+            return m[0][0]
+        if k == 2:
+            return m[0][0] * m[1][1] - m[0][1] * m[1][0]
+        tot = 0
+        for c in range(k):
+            minor = [row[:c] + row[c + 1:] for row in m[1:]]
+            tot += ((-1) ** c) * m[0][c] * det(minor)
+        return tot
+
+    def fmt(m):
+        return "[[" + "],[".join(",".join(map(str, r)) for r in m) + "]]"
+    n = random.choice([2, 3])
+    mat = [[random.randint(-5, 9) for _ in range(n)] for _ in range(n)]
+    p = random.choice([97, 1000003, 1000000007])
+    return f"Determinant of {fmt(mat)} mod {p}", str(det(mat) % p)
+
+
+def _connected_edges(nodes, extra):
+    """Связный граф: остовное дерево + несколько лишних рёбер (список пар)."""
+    perm = random.sample(range(1, nodes + 1), nodes)
+    edges = [(perm[i], perm[random.randint(0, i - 1)]) for i in range(1, nodes)]
+    for _ in range(extra):
+        a, b = random.randint(1, nodes), random.randint(1, nodes)
+        if a != b:
+            edges.append((a, b))
+    random.shuffle(edges)
+    return edges
+
+
+def g_sp_unweighted(_i):
+    import collections
+    n = random.randint(5, 8)
+    edges = _connected_edges(n, random.randint(1, 3))
+    s = random.randint(1, n)
+    t = random.randint(1, n)
+    while t == s:
+        t = random.randint(1, n)
+    adj = collections.defaultdict(list)
+    for u, v in edges:
+        adj[u].append(v)
+        adj[v].append(u)
+    dist = {s: 0}
+    dq = collections.deque([s])
+    while dq:
+        u = dq.popleft()
+        for v in adj[u]:
+            if v not in dist:
+                dist[v] = dist[u] + 1
+                dq.append(v)
+    estr = " ".join(f"{u}-{v}" for u, v in edges)
+    return (f"Unweighted graph edges: {estr}. "
+            f"Shortest path length from {s} to {t}?"), str(dist[t])
+
+
+def g_sp_weighted(_i):
+    import collections
+    import heapq
+    n = random.randint(5, 8)
+    base = _connected_edges(n, random.randint(1, 3))
+    edges = [(u, v, random.randint(1, 9)) for (u, v) in base]
+    s = random.randint(1, n)
+    t = random.randint(1, n)
+    while t == s:
+        t = random.randint(1, n)
+    adj = collections.defaultdict(list)
+    for u, v, w in edges:
+        adj[u].append((v, w))
+        adj[v].append((u, w))
+    dist = {s: 0}
+    pq = [(0, s)]
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist.get(u, math.inf):
+            continue
+        for v, w in adj[u]:
+            nd = d + w
+            if nd < dist.get(v, math.inf):
+                dist[v] = nd
+                heapq.heappush(pq, (nd, v))
+    estr = " ".join(f"{u}-{v}:{w}" for u, v, w in edges)
+    return (f"Weighted graph edges: {estr}. "
+            f"Shortest path length from {s} to {t}?"), str(dist[t])
+
+
+def g_components(_i):
+    n = random.randint(5, 9)
+    edges = []
+    for _ in range(random.randint(2, n)):
+        a, b = random.randint(1, n), random.randint(1, n)
+        if a != b:
+            edges.append((a, b))
+    parent = list(range(n + 1))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for a, b in edges:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    comps = len({find(v) for v in range(1, n + 1)})
+    estr = " ".join(f"{u}-{v}" for u, v in edges) if edges else "none"
+    return (f"Graph with {n} nodes and edges: {estr}. "
+            f"How many connected components?"), str(comps)
+
+
+def g_topo(_i):
+    import collections
+    import heapq
+    n = random.randint(4, 7)
+    labels = random.sample(range(1, n + 1), n)
+    edges = [(labels[i], labels[j]) for i in range(n) for j in range(i + 1, n)
+             if random.random() < 0.4]            # i<j в порядке labels -> DAG
+    if not edges:
+        edges = [(labels[0], labels[1])]
+    random.shuffle(edges)
+    adj = collections.defaultdict(list)
+    indeg = {}
+    nodes = set()
+    for u, v in edges:
+        nodes.add(u)
+        nodes.add(v)
+        adj[u].append(v)
+        indeg[v] = indeg.get(v, 0) + 1
+        indeg.setdefault(u, indeg.get(u, 0))
+    for v in nodes:
+        indeg.setdefault(v, 0)
+    heap = [v for v in nodes if indeg[v] == 0]
+    heapq.heapify(heap)
+    order = []
+    while heap:
+        u = heapq.heappop(heap)
+        order.append(u)
+        for v in sorted(adj[u]):
+            indeg[v] -= 1
+            if indeg[v] == 0:
+                heapq.heappush(heap, v)
+    estr = " ".join(f"{u}->{v}" for u, v in edges)
+    return f"Directed graph edges: {estr}. Topological order?", \
+           " ".join(map(str, order))
+
+
 TASKS = {
     "arith": g_arith, "missing": g_missing, "coprime_en": g_coprime_en,
     "coprime_ru": g_coprime_ru, "vowels": g_vowels, "prime": g_prime,
@@ -202,6 +531,17 @@ TASKS = {
     "sort": g_sort, "seq": g_seq, "base": g_base, "date": g_date,
     "avg": g_avg, "logic": g_logic, "count": g_count, "max": g_max,
     "captcha": g_captcha,
+    # --- алгоритмические (ticket #89) ---
+    "hash_md5": g_hash_md5, "hash_sha1": g_hash_sha1,
+    "hash_sha256": g_hash_sha256, "hash_sha512": g_hash_sha512,
+    "hash_crc32": g_hash_crc32,
+    "modexp": g_modexp, "modinv": g_modinv, "crt": g_crt,
+    "factmod": g_factmod, "fibmod": g_fibmod, "binom": g_binom,
+    "prime_big": g_prime_big,
+    "select_kth": g_select_kth, "median": g_median,
+    "brackets": g_brackets, "matmul": g_matmul, "det": g_det,
+    "sp_bfs": g_sp_unweighted, "sp_dijkstra": g_sp_weighted,
+    "components": g_components, "topo": g_topo,
 }
 
 

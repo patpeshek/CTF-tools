@@ -62,7 +62,8 @@ def to_image(spec, width, height):
     f, t = spec.shape
     ti = np.linspace(0, t - 1, width).astype(int)
     fi = np.linspace(0, f - 1, height).astype(int)
-    img = spec[np.ix_(fi, ti)]
+    # строка 0 картинки — верх; низкие частоты должны быть внизу
+    img = spec[np.ix_(fi[::-1], ti)]
     img = img - img.min()
     if img.max() > 0:
         img = img / img.max() * 255

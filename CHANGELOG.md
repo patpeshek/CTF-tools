@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## 2026-11-12 — 0.48
+
+Пакет из 41 тикета (доска patpeshek/CTF-tools, карточки #51–100 без #56).
+selftest 304/0, ppc_bench 41/42 (единственный минус — `captcha`, нужен
+Tesseract; падает и на чистом HEAD).
+
+- **core/solve (#81–83):** разбор условия задачи — `--desc`/`--desc-file`,
+  `parse_statement()` (категория, подсказки, формат флага, пароли, адреса),
+  переупорядочивание плана по подсказкам; машиночитаемый вывод `--json` и
+  поток событий `--events` (JSON Lines, схема в `MANUAL.md §14`); новый
+  `crypto/chain.py` — beam-поиск многослойных цепочек (base64/hex/ROT/XOR/
+  zlib…) с оценкой читаемости и защитой от взрыва.
+- **reverse (#51,75–80):** `ghidra_decomp` — инъекция имени файла в cmd.exe
+  закрыта (копия со случайным именем, фильтр метасимволов), `--timeout`
+  убивает дерево процессов, `--keep-project` работает; `disasm` — ELF32,
+  типы операндов, skipdata, `--func`; `megarev` — pyc разных версий без
+  исполнения, валидация ICO, соблюдение `--time`; `lang_info`/`py_pack`/
+  `xor_scan` — ложные определения.
+- **stego (#52–55,57–66):** `lsb` RGB-последовательность; таблицы Ook/COW;
+  Whitespace (стек/куча/переходы/ввод-вывод); `carve` — границы PCAP по
+  записям + лимиты; `jpeg_tail` по маркерам; `png_chunks` `--fix` размеров и
+  лимит zTXt/iTXt; `audio_spectrum` ориентация; 24-битный WAV; DTMF в шуме;
+  морзе из одних тире; QR (несколько кодов, прозрачный фон); `ooxml --strings`;
+  лимиты Deadfish/bitmap_font.
+- **forensics (#67–74):** `git_hunt` висячие объекты и read-only; UTF-16 в
+  `windows_triage`; относительный `--out` в `docker_image`; EXIF без exiftool
+  (GPS/UserComment/COM); сырой поиск в PDF без pypdf; значение ключа в
+  `cloud_creds`; XML/SQLite/arsc в android/apk; опции и O(n²) в
+  `flag_hunt`/`artifact_hunt`/`volatility_text`.
+- **Новые категории и инструменты:** `admin/` (#84–87) — `vm` (OVA/VMDK/
+  QCOW2/VDI/VHD), `logs`, `winadm` (regf/службы/задачи/PS-история),
+  `admin` (триаж); `ctb/ctb.py` (#88) — разведка одного хоста, план, журнал,
+  privesc; `crypto/prng_state.py` (#92) — MT19937/LCG/truncated;
+  `forensic/zip_tricks.py` (#99) — фейк-шифрование, CRC-перебор, bkcrack;
+  `forensic/disk_image.py` (#100) — MBR/GPT, FAT/NTFS($MFT,ADS)/ext, удалённые
+  файлы; PPC MATH (#89) — 12 решателей (хеши, сортировки, модулярка, графы),
+  ppc_bench 21→42.
+- Всё новое подключено к `solve` по типу данных, добавлено в `REGISTRY`,
+  `INDEX.md`, `CHEATSHEET.md`; по ходу работы заведён тикет #160
+  (`volatility_text` правило 5).
 ## 2026-11-10 — 0.47.0
 
 - **Расширенные атаки на RSA (#90), `crypto/rsa_tool.py`:**

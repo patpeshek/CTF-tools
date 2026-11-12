@@ -27,9 +27,18 @@ python stego/jpeg_tail.py pic.jpg --extract out
 
 ```bash
 python forensic/zipmeta.py a.zip --decode
+python forensic/zip_tricks.py info a.zip                 # заголовки, бит шифрования, CRC
+python forensic/zip_tricks.py fakecrypt a.zip --out d    # бит шифрования есть, шифрования нет
+python forensic/zip_tricks.py crc-brute a.zip            # флаг разрезан на файлы по 1-6 байт
+python forensic/zip_tricks.py password a.zip --password P  # ZipCrypto по словарю
+python forensic/zip_tricks.py known-plaintext a.zip --magic png  # команда bkcrack
 python forensic/ipa_info.py app.ipa --out app      # iOS: Info.plist, строки
 python forensic/geo_photo.py photo.jpg --json r.json  # EXIF/GPS + ссылки
 sudo bash forensic/disk_triage.sh disk.img
+python forensic/disk_image.py parts disk.img       # MBR/GPT (без sleuthkit)
+python forensic/disk_image.py scan disk.img --out out --find-flags   # FAT/NTFS/ext, удалённые, ADS
+python forensic/disk_image.py mft '$MFT' --find-flags                 # сырой $MFT: ADS, удалённые
+python forensic/disk_image.py ext ext.img --find-flags                # суперблок, дерево, журнал jbd2 (частично)
 photorec disk.img                 # восстановление удалённых
 testdisk disk.img                 # разделы
 cryptsetup luksOpen disk.img secure && mount /dev/mapper/secure /mnt
@@ -63,6 +72,7 @@ python crypto/aes_file.py enc.bin --auto --from-bin encryptor   # ключ/IV и
 python crypto/hash_id.py 5f4dcc3b5aa765d61d8327deb882cf99
 python enc.py "Q1RGe2ZsYWd9"                              # все базовые декоды
 python enc.py --file utf16.txt                            # utf-16/32, cp1251, base36/58/85/z85...
+python toolbox.py chain "<строка>"                        # несколько слоёв подряд (enc — один)
 python toolbox.py solve file                              # enc уже включён в автопилот
 ```
 
@@ -116,6 +126,11 @@ python misc/wordle_bot.py play --connect h:p --words F:\dev\wordlists\russian5.t
 python misc/game_bot.py --connect h:p --auto --explore   # какие клавиши реагируют
 python misc/formats.py --list                        # кэш разметок
 python toolbox.py ppc "12 ? 5 = 17"                     # что движок понял
+python toolbox.py ppc "md5 of 'hello'"                  # хеши md5/sha1/sha256/sha512/crc32
+python toolbox.py ppc "Find the modular inverse of 7 mod 11"   # обратный / CRT / n! mod m / Fib mod m / C(n,k) mod p
+python toolbox.py ppc "Is 1000000007 prime? YES or NO"  # простота большого числа (Miller-Rabin)
+python toolbox.py ppc "Unweighted graph edges: 1-2 2-3 3-4. Shortest path length from 1 to 4?"  # графы: путь/компоненты/топосорт
+python toolbox.py ppc "Determinant of [[2,3],[1,4]] mod 7"     # матрицы: умножение/определитель mod p
 python tests/ppc_bench.py --only arith,captcha       # локальный стенд PPC
 python misc/formats.py --set "ГЖС" --green Г --yellow Ж --gray С
 python misc/ocr.py pic.png --variants                  # текст с картинки
@@ -134,6 +149,9 @@ python crypto/rsa_tool.py common-modulus --n ... --e1 3 --c1 ... --e2 65537 --c2
 python crypto/rsa_tool.py small-e --n ... --e 3 --c ...
 python crypto/rsa_tool.py factor --n ... --p ...
 
+python crypto/prng_state.py mt outs.txt --n 5 --prev 3 --cipher <hex>
+python crypto/prng_state.py lcg outs.txt --n 5            # неизвестные m,a,c
+python crypto/prng_state.py lcg-trunc outs.txt --m <m> --a <a> --c <c> --shift 16
 python crypto/stream_sha256.py --cipher <hex> --key <...> --nonce <...>
 python crypto/stream_sha256.py --cipher <hex> --key <...> --nonce <...> --brute
 python crypto/otp_reuse.py --c1 <hex> --c2 <hex> --crib "the "
@@ -152,6 +170,8 @@ python crypto/hash_ext.py length-extend --alg sha256 --sig ... --key-len 16 --ap
 python crypto/hash_ext.py gcm-nonce-reuse --ct1 ... --tag1 ... --ct2 ... --tag2 ... --pt1 ...
 python crypto/rsa_tool.py auto public.pem --cipher cipher.bin
 python crypto/rsa_tool.py auto task.txt          # n/e/c, dp, d, p,q — что найдёт
+python crypto/chain.py "<строка>"                   # base64→hex→ROT13→XOR… сам найдёт цепочку
+python crypto/chain.py blob.bin --depth 8 --beam 60 --time 30   # глубже/шире
 python crypto/autocrack.py --text "..."
 python crypto/autocrack.py --hex ... --deep
 python crypto/autocrack.py --hash <hash> --wordlist auto
@@ -177,6 +197,16 @@ python blockchain/evm_decode.py --sig "transfer(address,uint256)"
 python ai/pickle_scan.py model.pkl                     # опасные глобалы, без запуска
 ```
 
+## CTB: практические машины (свой стенд)
+
+```bash
+python ctb/ctb.py recon 10.10.10.5 --out r.json   # один хост, топ-порты, баннеры, HTTP
+python ctb/ctb.py plan r.json                     # чек-лист
+python ctb/ctb.py log add "ftp anon" --result ok  # журнал (ctb_log.jsonl)
+python ctb/ctb.py log show
+python ctb/ctb.py privesc privesc.txt             # без файла — как залить privesc.sh
+```
+
 ## Linux: разведка и privesc
 
 ```bash
@@ -184,6 +214,31 @@ bash linux/privesc.sh | tee privesc.txt
 python linux/gtfobins.py --check "find,base64,vim,tar"
 python linux/gtfobins.py --from-sudo sudo.txt
 python linux/script_audit.py /usr/local/sbin/reconcile --check-writable
+```
+
+## Admin: образы ВМ, логи, Windows, конфиги
+
+```bash
+python admin/vm_image.py disk.qcow2                 # формат, разделы, флаги внутри диска
+python admin/vm_image.py disk.vmdk --raw disk.raw   # QCOW2/VMDK/VDI/VHD → raw (потоково)
+python admin/vm_image.py vm.ova --extract out       # OVA: .ovf/.mf/диски
+python admin/vm_image.py disk.vdi --find flag.txt   # строка ASCII/UTF-16 в диске
+python admin/vm_image.py disk.vhd --mount           # qemu-nbd/guestmount/7z/VBoxManage
+python admin/log_analyze.py auth.log                # брутфорс, вход после неудач, sudo, uid 0, cron
+python admin/log_analyze.py access.log --top 15     # SQLi/LFI/сканеры, 4xx-всплески, слепая SQLi
+python admin/log_analyze.py journal.json audit.log  # journalctl -o json/export, auditd (hex)
+python admin/log_analyze.py .bash_history           # подозрительные команды, креды, base64/-enc
+python admin/log_analyze.py var/log --timeline --year 2024   # всё в одну хронологию
+python admin/win_admin.py dump/                     # авто: кусты, Tasks, ConsoleHost_history
+python admin/win_admin.py reg NTUSER.DAT --deleted  # сводка + флаги + удалённые ключи/значения
+python admin/win_admin.py reg SOFTWARE --key "Microsoft\Windows\CurrentVersion\Run"
+python admin/win_admin.py services SYSTEM           # службы: ImagePath/Start/ServiceDll
+python admin/win_admin.py run SOFTWARE NTUSER.DAT   # Run/RunOnce/Winlogon/IFEO/AppInit
+python admin/win_admin.py tasks Windows/System32/Tasks   # задачи + раскодирование -enc
+python admin/admin_triage.py fs_dump/               # всё админское: конфиги, логи, кусты, ВМ
+python admin/admin_triage.py etc/sudoers            # один конфиг (sudoers/shadow/crontab/...)
+python admin/admin_triage.py suid.txt               # find / -perm -4000 / getcap -r / → GTFOBins
+python admin/admin_triage.py fs_dump/ --no-dispatch # только конфиги, без vm/logs/winadm
 ```
 
 ## Артефакты и текстовые выгрузки
@@ -202,6 +257,10 @@ python forensic/volatility_text.py windows.pstree.txt --grep lab --keys
 python toolbox.py auto <файл|строка>
 python toolbox.py solve <файл>              # прогнать всё самому до флага
 python toolbox.py solve <файл> --deep --time 180
+python toolbox.py solve <файл> --desc "текст условия"    # подсказки/формат флага/пароли → план
+python toolbox.py solve --desc-file task.txt            # цель (URL, host:port) — из условия
+python toolbox.py solve <файл> --json > result.json     # итог JSON (лог — в stderr)
+python toolbox.py solve <файл> --events events.jsonl    # события plan/step_*/lead/flag/done (MANUAL §14)
 python toolbox.py hint <файл>               # объяснить, что это и почему
 python toolbox.py index
 

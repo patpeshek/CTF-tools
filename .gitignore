@@ -40,3 +40,6 @@ tools/
 *.exe
 *.dll
 *.so
+
+# agent worktrees / local project notes
+.claude/

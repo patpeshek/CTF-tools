@@ -183,15 +183,37 @@ def solve_missing_operator(q):
 # ---------------------------------------------------------------- числа
 
 def is_prime(n: int) -> bool:
+    """Miller–Rabin: детерминированно для n < 3.3e24 (покрывает 64 бита),
+    для бОльших добавляем случайные свидетели (вероятностно)."""
+    n = int(n)
     if n < 2:
         return False
-    if n % 2 == 0:
-        return n == 2
-    d = 3
-    while d * d <= n:
-        if n % d == 0:
+    # первые простые как быстрый отсев и как детерминированные свидетели
+    small = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)
+    for p in small:
+        if n % p == 0:
+            return n == p
+    d, r = n - 1, 0
+    while d % 2 == 0:
+        d //= 2
+        r += 1
+    witnesses = list(small)
+    if n >= 3_317_044_064_679_887_385_961_981:
+        import random as _random
+        witnesses += [_random.randrange(2, n - 1) for _ in range(16)]
+    for a in witnesses:
+        a %= n
+        if a < 2:
+            continue
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(r - 1):
+            x = x * x % n
+            if x == n - 1:
+                break
+        else:
             return False
-        d += 2
     return True
 
 
@@ -638,6 +660,418 @@ def solve_ocr(q):
     return out or None
 
 
+# ---------------------------------------------------------------- хеши
+
+def _hash_subject(text: str):
+    """Строка, от которой берём хеш: из кавычек или после of/для/строки."""
+    s = quoted(text)
+    if s is not None:
+        return s
+    m = re.search(r"\b(?:of|для|строк[иауе]|from|hash\s+of)\s+['\"]?"
+                  r"([^'\"\n]+?)['\"]?\s*$", text, re.I)
+    return m.group(1).strip() if m else None
+
+
+def solve_hash(q):
+    text = q["text"]
+    low = text.lower()
+    s = _hash_subject(text)
+    if s is None:
+        return None
+    import hashlib
+    import zlib
+    data = s.encode("utf-8")
+    if re.search(r"sha-?512", low):
+        return hashlib.sha512(data).hexdigest()
+    if re.search(r"sha-?384", low):
+        return hashlib.sha384(data).hexdigest()
+    if re.search(r"sha-?256", low):
+        return hashlib.sha256(data).hexdigest()
+    if re.search(r"sha-?224", low):
+        return hashlib.sha224(data).hexdigest()
+    if re.search(r"sha-?1\b", low):
+        return hashlib.sha1(data).hexdigest()
+    if re.search(r"\bmd5\b", low):
+        return hashlib.md5(data).hexdigest()
+    if re.search(r"crc-?32", low):
+        return format(zlib.crc32(data) & 0xFFFFFFFF, "08x")
+    return None
+
+
+# ---------------------------------------------------------------- модулярка
+
+def _find_mod(text: str):
+    m = re.search(r"(?:mod(?:ulo)?|по\s+модул\w*)\s*(\d+)", text, re.I)
+    return int(m.group(1)) if m else None
+
+
+def solve_modinv(q):
+    """Обратный по модулю: a^{-1} mod m."""
+    text = q["text"]
+    m = re.search(r"(\d+)\D+?(?:mod(?:ulo)?|по\s+модул\w*)\s*(\d+)", text, re.I)
+    if m:
+        a, mod = int(m.group(1)), int(m.group(2))
+    else:
+        ns = [int(x) for x in re.findall(r"\d+", text)]
+        if len(ns) < 2:
+            return None
+        a, mod = ns[0], ns[-1]
+    if mod <= 1:
+        return None
+    if math.gcd(a, mod) != 1:
+        return "none"
+    return str(pow(a, -1, mod))
+
+
+def solve_crt(q):
+    """Китайская теорема об остатках: система x ≡ r_i (mod m_i)."""
+    text = q["text"]
+    pairs = re.findall(r"(?:≡|=)\s*(-?\d+)\s*\(?\s*"
+                       r"(?:mod(?:ulo)?|по\s+модул\w*)\s*(\d+)", text, re.I)
+    if len(pairs) < 2:
+        pairs = re.findall(r"(-?\d+)\s*(?:mod(?:ulo)?|по\s+модул\w*)\s*(\d+)",
+                           text, re.I)
+    if len(pairs) < 2:
+        return None
+    r0, m0 = 0, 1
+    for rs, ms in pairs:
+        m = int(ms)
+        if m <= 0:
+            return None
+        r = int(rs) % m
+        g = math.gcd(m0, m)
+        if (r - r0) % g != 0:
+            return "none"
+        lcm = m0 // g * m
+        diff = (r - r0) // g
+        inv = pow(m0 // g, -1, m // g)
+        t = (diff * inv) % (m // g)
+        r0 = (r0 + m0 * t) % lcm
+        m0 = lcm
+    return str(r0 % m0)
+
+
+def solve_factorial_mod(q):
+    """n! mod m (итеративно, не храня огромное n!)."""
+    text = q["text"]
+    mod = _find_mod(text)
+    if mod is None or mod <= 0:
+        return None
+    m = re.search(r"(\d+)\s*!", text)
+    if not m:
+        m = re.search(r"(?:факториал\w*|factorial)\D+(\d+)", text, re.I)
+    if not m:
+        return None
+    n = int(m.group(1))
+    if not 0 <= n <= 5_000_000:
+        return None
+    acc = 1 % mod
+    for i in range(2, n + 1):
+        acc = acc * i % mod
+    return str(acc)
+
+
+def _fib_pair_mod(n: int, mod: int):
+    """Быстрое удвоение: (F(n), F(n+1)) mod m."""
+    if n == 0:
+        return (0, 1 % mod)
+    a, b = _fib_pair_mod(n >> 1, mod)
+    c = a * ((2 * b - a) % mod) % mod
+    d = (a * a + b * b) % mod
+    if n & 1:
+        return (d, (c + d) % mod)
+    return (c, d)
+
+
+def solve_fibonacci_mod(q):
+    """n-е число Фибоначчи по модулю m (быстрое удвоение)."""
+    text = q["text"]
+    mod = _find_mod(text)
+    if mod is None or mod <= 0:
+        return None
+    m = re.search(r"(\d+)\s*(?:-?(?:й|е|го|ое|ый|ой)|st|nd|rd|th)?\s*"
+                  r"(?:число\s+|number\s+)?(?:фибоначч\w*|fibonacci)", text, re.I)
+    if not m:
+        m = re.search(r"(?:фибоначч\w*|fibonacci)\D+(\d+)", text, re.I)
+    if not m:
+        return None
+    n = int(m.group(1))
+    if not 0 <= n <= 10 ** 18:
+        return None
+    return str(_fib_pair_mod(n, mod)[0] % mod)
+
+
+def solve_binomial(q):
+    """Биномиальный коэффициент C(n, k), опционально по модулю p."""
+    text = q["text"]
+    m = re.search(r"\bC\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)", text, re.I)
+    if not m:
+        m = re.search(r"(?:binomial|сочетани\w*|choose)\D*(\d+)\D+(\d+)",
+                      text, re.I)
+    if not m:
+        return None
+    n, k = int(m.group(1)), int(m.group(2))
+    if k < 0 or n < 0 or k > n or n > 2_000_000:
+        return None
+    val = math.comb(n, k)
+    mod = _find_mod(text)
+    if mod and mod > 0:
+        val %= mod
+    return str(val)
+
+
+# ---------------------------------------------------------------- выбор/порядок
+
+def solve_select(q):
+    """k-й по возрастанию/убыванию элемент списка и медиана."""
+    text = q["text"]
+    low = text.lower()
+    tail = text.split(":", 1)[1] if ":" in text else text
+    xs = [int(x) for x in re.findall(r"-?\d+", tail)]
+    if len(xs) < 2:
+        return None
+    if re.search(r"median|медиан", low):
+        s = sorted(xs)
+        n = len(s)
+        if n % 2:
+            return str(s[n // 2])
+        return _fmt((s[n // 2 - 1] + s[n // 2]) / 2)
+    mk = re.search(r"(\d+)\s*(?:st|nd|rd|th|-?(?:й|е|го|ое|ый|ой))?\s*"
+                   r"(?:по\s+\w+\s+)?"
+                   r"(smallest|largest|наименьш\w*|наибольш\w*)", low)
+    if not mk:
+        return None
+    k = int(mk.group(1))
+    desc = bool(re.search(r"largest|наибольш", mk.group(2)))
+    s = sorted(xs, reverse=desc)
+    if 1 <= k <= len(s):
+        return str(s[k - 1])
+    return None
+
+
+# ---------------------------------------------------------------- структуры данных
+
+def solve_brackets(q):
+    """Проверка сбалансированности скобок ()[]{}."""
+    text = q["text"]
+    s = quoted(text)
+    if s is None:
+        m = re.search(r"[()\[\]{}][()\[\]{}\s]*[()\[\]{}]", text)
+        s = m.group(0) if m else None
+    if s is None:
+        return None
+    s = re.sub(r"\s+", "", s)
+    if not s or set(s) - set("()[]{}"):
+        return None
+    close = {")": "(", "]": "[", "}": "{"}
+    stack = []
+    for ch in s:
+        if ch in "([{":
+            stack.append(ch)
+        else:
+            if not stack or stack.pop() != close[ch]:
+                return "NO"
+    return "YES" if not stack else "NO"
+
+
+def _parse_matrices(text: str):
+    out = []
+    for m in re.finditer(r"\[\s*\[.*?\]\s*\]", text):
+        rows = []
+        for row in re.findall(r"\[([^\[\]]*)\]", m.group(0)):
+            vals = [int(x) for x in re.findall(r"-?\d+", row)]
+            if vals:
+                rows.append(vals)
+        if rows:
+            out.append(rows)
+    return out
+
+
+def _matmul(a, b, mod=None):
+    n, k, m = len(a), len(b), len(b[0])
+    c = [[0] * m for _ in range(n)]
+    for i in range(n):
+        for j in range(m):
+            s = sum(a[i][t] * b[t][j] for t in range(k))
+            c[i][j] = s % mod if mod else s
+    return c
+
+
+def _det_int(mat):
+    """Целочисленный определитель методом Барейса (без дробей)."""
+    n = len(mat)
+    m = [row[:] for row in mat]
+    sign, prev = 1, 1
+    for i in range(n - 1):
+        if m[i][i] == 0:
+            piv = next((r for r in range(i + 1, n) if m[r][i] != 0), None)
+            if piv is None:
+                return 0
+            m[i], m[piv] = m[piv], m[i]
+            sign = -sign
+        for j in range(i + 1, n):
+            for k in range(i + 1, n):
+                m[j][k] = (m[j][k] * m[i][i] - m[j][i] * m[i][k]) // prev
+        prev = m[i][i]
+    return sign * m[n - 1][n - 1]
+
+
+def solve_matrix(q):
+    """Умножение матриц и определитель, опционально по модулю p."""
+    text = q["text"]
+    low = text.lower()
+    mats = _parse_matrices(text)
+    if not mats:
+        return None
+    mod = _find_mod(text)
+    if re.search(r"determinant|определител", low):
+        a = mats[0]
+        if any(len(r) != len(a) for r in a):
+            return None
+        det = _det_int(a)
+        return str(det % mod if mod else det)
+    if re.search(r"multipl|умнож|произвед|product", low):
+        if len(mats) < 2:
+            return None
+        a, b = mats[0], mats[1]
+        if len(a[0]) != len(b):
+            return None
+        c = _matmul(a, b, mod)
+        return " ".join(str(x) for row in c for x in row)
+    return None
+
+
+# ---------------------------------------------------------------- графы
+
+def _parse_weighted_edges(text: str):
+    """Рёбра u-v:w (взвешенные) или u-v (единичные). Второе значение — есть ли веса."""
+    weighted = [(int(a), int(b), int(w)) for a, b, w in
+                re.findall(r"(\d+)\s*-\s*(\d+)\s*:\s*(\d+)", text)]
+    if weighted:
+        return weighted, True
+    plain = [(int(a), int(b)) for a, b in
+             re.findall(r"(\d+)\s*-\s*(\d+)", text)]
+    return plain, False
+
+
+def _sp_query(text: str):
+    m = re.search(r"(?:from|из|от)\s+(\d+)\s+(?:to|в|до)\s+(\d+)", text, re.I)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def solve_shortest_path(q):
+    """Длина кратчайшего пути: BFS (без весов) или Дейкстра (с весами)."""
+    text = q["text"]
+    edges, weighted = _parse_weighted_edges(text)
+    if not edges:
+        return None
+    query = _sp_query(text)
+    if not query:
+        return None
+    src, dst = query
+    adj = {}
+    for e in edges:
+        u, v = e[0], e[1]
+        w = e[2] if weighted else 1
+        adj.setdefault(u, []).append((v, w))
+        adj.setdefault(v, []).append((u, w))
+    if src == dst:
+        return "0"
+    if weighted:
+        import heapq
+        dist = {src: 0}
+        pq = [(0, src)]
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist.get(u, math.inf):
+                continue
+            if u == dst:
+                return str(d)
+            for v, w in adj.get(u, []):
+                nd = d + w
+                if nd < dist.get(v, math.inf):
+                    dist[v] = nd
+                    heapq.heappush(pq, (nd, v))
+        return "-1"
+    from collections import deque
+    dist = {src: 0}
+    dq = deque([src])
+    while dq:
+        u = dq.popleft()
+        for v, _w in adj.get(u, []):
+            if v not in dist:
+                dist[v] = dist[u] + 1
+                if v == dst:
+                    return str(dist[v])
+                dq.append(v)
+    return str(dist.get(dst, -1))
+
+
+def solve_components(q):
+    """Число компонент связности неориентированного графа."""
+    text = q["text"]
+    edges, _ = _parse_weighted_edges(text)
+    verts = set()
+    for e in edges:
+        verts.add(e[0])
+        verts.add(e[1])
+    m = re.search(r"(\d+)\s*(?:nodes|vertices|вершин\w*|узл\w*)", text, re.I)
+    if m:
+        verts |= set(range(1, int(m.group(1)) + 1))
+    if not verts:
+        return None
+    parent = {v: v for v in verts}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for e in edges:
+        ra, rb = find(e[0]), find(e[1])
+        if ra != rb:
+            parent[ra] = rb
+    return str(len({find(v) for v in verts}))
+
+
+def solve_topo(q):
+    """Топологический порядок (лексикографически минимальный) или 'cycle'."""
+    text = q["text"]
+    edges = [(int(a), int(b)) for a, b in
+             re.findall(r"(\d+)\s*(?:->|=>|→)\s*(\d+)", text)]
+    if not edges:
+        edges = [(int(a), int(b)) for a, b in
+                 re.findall(r"(\d+)\s*-\s*(\d+)", text)]
+    if not edges:
+        return None
+    nodes = set()
+    adj = {}
+    indeg = {}
+    for u, v in edges:
+        nodes.add(u)
+        nodes.add(v)
+        adj.setdefault(u, []).append(v)
+        indeg[v] = indeg.get(v, 0) + 1
+        indeg.setdefault(u, indeg.get(u, 0))
+    for v in nodes:
+        indeg.setdefault(v, 0)
+    import heapq
+    heap = [v for v in nodes if indeg[v] == 0]
+    heapq.heapify(heap)
+    order = []
+    while heap:
+        u = heapq.heappop(heap)
+        order.append(u)
+        for v in sorted(adj.get(u, [])):
+            indeg[v] -= 1
+            if indeg[v] == 0:
+                heapq.heappush(heap, v)
+    if len(order) != len(nodes):
+        return "cycle"
+    return " ".join(map(str, order))
+
+
 # ---------------------------------------------------------------- реестр
 
 def _kw(pattern):
@@ -647,6 +1081,14 @@ def _kw(pattern):
 SOLVERS = [
     # (имя, ключевые слова, функция)
     ("missing_operator", _kw(r"\?\s*=|=.*\?|какой оператор|which operator|пропущен"), solve_missing_operator),
+    # хеши — очень специфичны, идут раньше encoding/hex
+    ("hash", _kw(r"\bmd5\b|sha[\- ]?\d|crc[\- ]?32|\bхеш\w*|\bhash\b|дайджест|digest"), solve_hash),
+    # модулярка со словом mod — раньше power_mod (его «mod» слишком широк)
+    ("crt", _kw(r"≡|congruen\w*|сравнени\w*|китайск\w*|chinese\s+remainder|\bcrt\b"), solve_crt),
+    ("modinv", _kw(r"обратн\w*|\binverse\b"), solve_modinv),
+    ("binomial", _kw(r"binomial|сочетани\w*|\bchoose\b|\bC\s*\("), solve_binomial),
+    ("fibonacci_mod", _kw(r"(?:фибоначч\w*|fibonacci).*(?:mod|модул)"), solve_fibonacci_mod),
+    ("factorial_mod", _kw(r"(?:факториал\w*|factorial|\d\s*!).*(?:mod|модул)"), solve_factorial_mod),
     ("date", _kw(r"день недели|weekday|day of week|какой день|дат[аеу]|\bdate\b|дней"), solve_date),
     ("power_mod", _kw(r"степен|power|\^|mod|модул"), solve_power_mod),
     ("base", _kw(r"двоичн|binary|шестнадцат|hex|восьмерич|octal|систем[аеы] счислен"), solve_base),
@@ -659,6 +1101,13 @@ SOLVERS = [
     ("gcd", _kw(r"нод|нок|gcd|lcm"), solve_gcd),
     ("fibonacci", _kw(r"фибоначч|fibonacci"), solve_fibonacci),
     ("digits", _kw(r"цифр|digit|переверн|reverse|палиндром|palindrome"), solve_digits),
+    # графы и структуры данных — специфичные ключевые слова, раньше numbers/string
+    ("shortest_path", _kw(r"кратчайш\w*|shortest\s*path|shortest\s+distance"), solve_shortest_path),
+    ("components", _kw(r"компонент\w*|connected\s+component|components?\b|связност"), solve_components),
+    ("topo", _kw(r"топологическ\w*|topological|topolog"), solve_topo),
+    ("matrix", _kw(r"\bmatri|матриц\w*|determinant|определител\w*"), solve_matrix),
+    ("brackets", _kw(r"balanced|сбалансир\w*|скобк\w*|brackets?"), solve_brackets),
+    ("select", _kw(r"smallest|largest|наименьш\w*|наибольш\w*|median|медиан\w*|\bk-?th\b"), solve_select),
     ("encoding", _kw(r"base64|\bhex\b|закодир|encode|декодир|decode"), solve_encoding),
     ("ocr", _kw(r"captcha|капча|\bocr\b|картинк|image"), solve_ocr),
     ("replace", _kw(r"замени|replace"), solve_replace),

@@ -74,6 +74,9 @@ REGISTRY = [
     ("forensic", "office", "forensic/office_docs.py", "Office/PDF: макросы, JS, вложенное"),
     ("forensic", "cloud", "forensic/cloud_creds.py", "AWS/GCP/Azure ключи и metadata"),
     ("forensic", "flaghunt", "forensic/flag_hunt.py", "файлы-флаги по имени и содержимому"),
+    ("forensic", "ziptricks", "forensic/zip_tricks.py", "ZIP: фейковое шифрование, CRC-перебор, bkcrack"),
+    ("forensic", "disk_image", "forensic/disk_image.py",
+     "образы: MBR/GPT, FAT/NTFS $MFT/ext, удалённые, ADS, журнал"),
 
     ("network", "pcap", "network/pcap_report.py", "сводка по PCAP"),
     ("network", "reasm", "network/tcp_reassemble.py", "сборка TCP по seq"),
@@ -96,6 +99,8 @@ REGISTRY = [
     ("crypto", "classical", "crypto/classical.py", "классические шифры"),
     ("crypto", "genetic", "crypto/genetic.py", "триплеты → аминокислоты"),
     ("crypto", "xorknown", "crypto/xor_known.py", "XOR с known plaintext"),
+    ("crypto", "chain", "crypto/chain.py",
+     "многослойные цепочки: base64→hex→ROT13→XOR… (поиск лучом)"),
     ("crypto", "prng", "crypto/prng_seed.py", "random по seed-timestamp"),
     ("crypto", "aes", "crypto/aes_file.py", "AES-CBC из бинарника"),
     ("crypto", "ecb", "crypto/aes_ecb.py", "детект/расшифровка ECB"),
@@ -109,6 +114,7 @@ REGISTRY = [
      "length extension MD5/SHA1/SHA256, GCM nonce reuse"),
     ("crypto", "otp", "crypto/otp_reuse.py", "two-time pad"),
     ("crypto", "stream", "crypto/stream_sha256.py", "SHA256-поток XOR"),
+    ("crypto", "prngstate", "crypto/prng_state.py", "состояние ГПСЧ: MT19937, LCG, усечённый LCG"),
 
     ("linux", "privesc", "linux/privesc.sh", "разведка прав"),
     ("linux", "gtfo", "linux/gtfobins.py", "GTFObins оффлайн"),
@@ -118,6 +124,17 @@ REGISTRY = [
     ("linux", "flaghunt", "linux/flag_hunt.sh", "поиск flag/flag.txt/flag_* и CTF{...}"),
     ("linux", "wsl", "linux/wsl.py",
      "запуск ELF в Arch WSL: копирует в Linux, +x, gdb/pwntools"),
+
+    ("ctb", "ctb", "ctb/ctb.py",
+     "boot2root: recon одного хоста, план, журнал, разбор privesc.sh"),
+    ("admin", "vm", "admin/vm_image.py",
+     "образ ВМ QCOW2/VMDK/VDI/VHD/OVA: raw, разделы, флаги внутри"),
+    ("admin", "logs", "admin/log_analyze.py",
+     "auth/nginx/journald/auditd/history: атаки, брутфорс, таймлайн"),
+    ("admin", "winadm", "admin/win_admin.py",
+     "реестр regf, службы, Run-ключи, задачи, PS-история (-enc)"),
+    ("admin", "admin", "admin/admin_triage.py",
+     "дамп ФС/конфигов: sudo/SUID/cron/секреты + раздача vm/logs/winadm"),
 
     ("web", "recon", "web/recon.py", "разведка страницы: ссылки/формы/JS/куки/robots"),
     ("web", "jwt", "web/jwt_tool.py", "JWT decode/forge"),
@@ -464,6 +481,31 @@ def _plan_file(path):
                 for how, val in cands[:4]:
                     print(f"    {how}: {val[:120]}")
 
+    # admin: образ ВМ / куст реестра / логи — тип по данным (admin/adminlib.py)
+    try:
+        sys.path.insert(0, os.path.join(HERE, "admin"))
+        import adminlib
+        adm, adm_detail = adminlib.detect(path, full[:4096])
+    except Exception:
+        adm, adm_detail = None, None
+    if adm:
+        print(f"[+] admin-тип: {adm}" + (f" ({adm_detail})" if adm_detail else ""))
+    if adm in ("QCOW2", "VMDK", "VDI", "VHD", "VHDX", "OVA", "OVF"):
+        act(1, "vm", f"образ ВМ {adm}: разделы, флаги внутри, --raw для ФС")
+    elif adm in ("LOG", "SHELLHISTORY", "PSHISTORY"):
+        act(1, "logs", "лог/история: входы, атаки, команды, раскодирование, --timeline")
+    elif adm in ("REGF", "TASKXML"):
+        act(1, "winadm", "куст реестра/задача: ключи, службы, автозапуск, удалённое, -enc")
+    else:
+        try:
+            import admin_triage
+            cfg = admin_triage.classify(path, None)[0]
+        except Exception:
+            cfg = None
+        if cfg and cfg not in ("BACKUP",):
+            print(f"[+] admin-конфиг: {cfg}")
+            act(1, "admin", f"конфиг {cfg}: sudo/SUID/cron/хеши/секреты")
+
     if kind == "SQLite":
         act(2, "android", "SQLite: таблицы, чаты, токены")
         act(3, "hunt", "строки из базы")
@@ -573,6 +615,13 @@ def _plan_dir(path):
     print(f"    python toolbox.py solve {path} --deep")
     print(f"    python toolbox.py flaghunt {path}       # файлы flag/user/root")
     print(f"    python toolbox.py triage {path}         # отчёт по каждому")
+    try:
+        sys.path.insert(0, os.path.join(HERE, "admin"))
+        import adminlib
+        if adminlib.looks_admin_dir(path):
+            print(f"    python toolbox.py admin {path}          # похоже на дамп ФС/конфигов")
+    except Exception:
+        pass
 
 
 def cmd_auto(args):

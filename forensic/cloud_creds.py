@@ -43,8 +43,14 @@ PATTERNS = [
 def scan_text(text, source, out):
     for kind, rx in PATTERNS:
         for m in rx.finditer(text):
-            out.append({"source": source, "kind": kind,
-                        "value": m.group(0)[:200] if m.lastindex is None else m.group(1)[:200]})
+            if m.lastindex is None:
+                value = m.group(0)
+            elif m.lastindex >= 2:
+                # generic_secret: группа 1 — имя ключа, 2 — значение
+                value = f"{m.group(1)}={m.group(2)}"
+            else:
+                value = m.group(1)
+            out.append({"source": source, "kind": kind, "value": value[:200]})
 
 
 def scan_file(path, out):

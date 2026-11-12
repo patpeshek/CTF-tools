@@ -18,6 +18,7 @@ python toolbox.py solve <файл|папка|строка|URL|host:port> --deep
 | **Крипто: непонятный файл/строка** | `python toolbox.py solve cipher.bin --deep` |
 | Крипто: только понять, что это | `python toolbox.py auto cipher.bin` |
 | XOR, известен формат флага | `python toolbox.py xorknown cipher.bin --known "CTF{"` |
+| Строка в несколько слоёв (base64→hex→ROT13→XOR…) | `python toolbox.py chain "<строка>"` (`solve` зовёт его сам) |
 | RSA (`n,e,c`, PEM, «утечка») | `python toolbox.py rsa auto key.pem --cipher c.txt` |
 | AES-файл, ключ где-то рядом | `python toolbox.py aes secret.enc --auto --from-bin encryptor` |
 | Классика: Цезарь/Виженер/замена | `python toolbox.py classical "текст"` |

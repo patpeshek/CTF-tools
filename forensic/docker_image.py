@@ -45,10 +45,19 @@ FLAG_RE = common.FLAG_RE
 MAX_TOTAL = 200 * 1024 * 1024
 
 
+def norm_member(name: str) -> str:
+    """Имя в tar -> путь в ФС слоя. Срезаем только префиксы `./` и `/`:
+    lstrip("./") съедал точки у `.wh.x` в корне и у `.env`."""
+    name = name.replace("\\", "/")
+    while name.startswith("./"):
+        name = name[2:]
+    return name.lstrip("/")
+
+
 def safe_path(root: str, name: str):
-    name = name.lstrip("./")
-    p = os.path.normpath(os.path.join(root, name))
-    if not p.startswith(os.path.abspath(root) + os.sep) and p != os.path.abspath(root):
+    root = os.path.abspath(root)      # относительный --out тоже должен работать
+    p = os.path.normpath(os.path.join(root, norm_member(name)))
+    if not p.startswith(root + os.sep) and p != root:
         return None
     return p
 
@@ -75,16 +84,16 @@ def apply_layers(tf, layer_paths, findings, flags, max_total=MAX_TOTAL):
         for m in lt.getmembers():
             if not m.isfile():
                 continue
-            name = m.name.lstrip("./")
-            base = os.path.basename(name)
+            name = norm_member(m.name)
+            base = name.rsplit("/", 1)[-1]
+            parent = name.rsplit("/", 1)[0] if "/" in name else ""
             if base.startswith(".wh."):
                 if base == ".wh..wh..opq":
-                    prefix = os.path.dirname(name).replace(os.sep, "/")
                     for p in list(fs):
-                        if p == prefix or p.startswith(prefix + "/"):
+                        if not parent or p == parent or p.startswith(parent + "/"):
                             deleted.append((p, fs.pop(p)))
                 else:
-                    target = os.path.join(os.path.dirname(name), base[4:]).replace(os.sep, "/")
+                    target = (parent + "/" if parent else "") + base[4:]
                     if target in fs:
                         deleted.append((target, fs.pop(target)))
                 continue
@@ -222,7 +231,7 @@ def main():
         total = 0
         for m in tf.getmembers():
             if m.isfile():
-                name = m.name.lstrip("./")
+                name = norm_member(m.name)
                 content = tf.extractfile(m).read()
                 if total + len(content) <= args.max_size * 1024 * 1024:
                     fs[name] = content
@@ -262,13 +271,23 @@ def main():
 
     if args.out:
         os.makedirs(args.out, exist_ok=True)
+        written, failed = 0, []
         for name, content in fs.items():
             p = safe_path(args.out, name)
             if not p:
+                failed.append(name)
                 continue
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            open(p, "wb").write(content)
-        print(f"\n[+] ФС распакована: {args.out}")
+            try:
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "wb") as fh:
+                    fh.write(content)
+                written += 1
+            except OSError:
+                failed.append(name)
+        print(f"\n[+] ФС распакована: {os.path.abspath(args.out)}"
+              f" (файлов: {written} из {len(fs)})")
+        if failed:
+            print(f"[!] не записано {len(failed)}: {', '.join(failed[:5])}")
 
     report["findings"] = findings
     report["flags"] = sorted(flags)

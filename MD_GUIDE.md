@@ -41,7 +41,7 @@
 | `linux/DOCKER.md` | побег из контейнера: docker.sock, privileged, release_agent, core_pattern, nsenter, API, форензика образа | дан контейнер или `image.tar` |
 | `linux/SSH.md` | подключение: `ssh`, ключи, `ProxyCommand` + `openssl s_client`, туннели, `ssh2john` | надо подключиться/пробросить порт |
 | `linux/TRANSFER.md` | как залить скрипт на сервер и забрать файл: HTTP, curl/wget/python, base64, nc, scp, docker/kubectl cp | есть шелл, но нет файлов на цели |
-| `MANUAL.md` | ручная работа: чтение условия, OSINT, web, crypto, reverse, network, forensic, pwn, тайминг, журнал | не хватает «как думать», а не команды |
+| `MANUAL.md` | ручная работа: чтение условия (и `solve --desc`), OSINT, web, crypto, reverse, network, forensic, pwn, тайминг, журнал; §14 — схема `solve --json`/`--events` | не хватает «как думать», а не команды; интеграция solve с сайтом/агентом |
 
 ### Справочники
 

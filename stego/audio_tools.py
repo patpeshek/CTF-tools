@@ -66,6 +66,12 @@ def read_wav(path):
         data = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128
     elif width == 2:
         data = np.frombuffer(raw, dtype="<i2").astype(np.float32)
+    elif width == 3:
+        # 24 бита: 3 байта little-endian, знак из старшего бита
+        b = np.frombuffer(raw[:len(raw) - len(raw) % 3], dtype=np.uint8)
+        b = b.reshape(-1, 3).astype(np.int32)
+        v = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
+        data = np.where(v >= 1 << 23, v - (1 << 24), v).astype(np.float32)
     else:
         data = np.frombuffer(raw, dtype="<i4").astype(np.float32)
     if ch > 1:
@@ -73,48 +79,75 @@ def read_wav(path):
     return data, rate
 
 
-def nearest(freq, table, tol=0.04):
-    for i, f in enumerate(table):
-        if abs(freq - f) / f <= tol:
-            return i
-    return None
+def dtmf_frames(data, rate, frame_ms=25, hop_ms=10):
+    """Цифра (или None) для каждого окна frame_ms с шагом hop_ms.
 
-
-def decode_dtmf(data, rate, frame_ms=40):
-    n = int(rate * frame_ms / 1000)
-    out = []
-    last = None
-    for start in range(0, len(data) - n, n):
-        seg = data[start:start + n] * np.hanning(n)
-        spec = np.abs(np.fft.rfft(seg))
-        freqs = np.fft.rfftfreq(n, 1 / rate)
-        mag = spec.max()
-        if mag <= 0:
-            last = None
+    Мощность считается ровно на 8 частотах DTMF (как Гёрцель) и
+    сравнивается с мощностью полосы DTMF в этом же окне, а не с максимумом
+    спектра: в паузе максимум — это сам шум, и порог от него ловит шум
+    как цифру.
+    """
+    data = np.asarray(data)
+    n = max(32, int(rate * frame_ms / 1000))
+    hop = max(1, int(rate * hop_ms / 1000))
+    if len(data) < n:
+        return []
+    win = np.hanning(n)
+    freqs = np.array(ROWS + COLS, dtype=np.float64)
+    basis = np.exp(-2j * np.pi * np.outer(np.arange(n) / rate, freqs))
+    norm = 2.0 / win.sum() ** 2               # |X|^2 -> мощность синусоиды
+    bins = np.fft.rfftfreq(n, 1 / rate)
+    band = (bins >= ROWS[0] - 100) & (bins <= COLS[-1] + 100)
+    bnorm = 2.0 / (n * (win ** 2).sum())      # сумма |X_k|^2 -> мощность полосы
+    count = 1 + (len(data) - n) // hop
+    tone = np.empty((count, 8))
+    total = np.empty(count)
+    offs = np.arange(n)
+    for a in range(0, count, 2048):
+        starts = np.arange(a, min(count, a + 2048)) * hop
+        fr = data[starts[:, None] + offs].astype(np.float64) * win
+        tone[a:a + len(starts)] = np.abs(fr @ basis) ** 2 * norm
+        spec = np.abs(np.fft.rfft(fr, axis=1)[:, band]) ** 2
+        total[a:a + len(starts)] = spec.sum(axis=1) * bnorm
+    floor = total.max() * 1e-6
+    labels = []
+    for k in range(count):
+        if total[k] <= floor or total[k] <= 0:
+            labels.append(None)
             continue
-        thr = mag * 0.25
-        peaks = []
-        for table in (ROWS, COLS):
-            best = None
-            for f in table:
-                idx = np.argmin(np.abs(freqs - f))
-                val = spec[max(0, idx - 2):idx + 3].max()
-                if best is None or val > best[1]:
-                    best = (f, val)
-            peaks.append(best)
+        row, col = tone[k, :4], tone[k, 4:]
+        r, c = int(row.argmax()), int(col.argmax())
+        pr, pc = row[r], col[c]
         # нужны ОБА тона: одиночный пик (речь, шум) — не DTMF
-        if peaks[0][1] < thr or peaks[1][1] < thr:
-            last = None
+        ok = (
+            pr + pc >= 0.4 * total[k]                  # тоны — основная мощность полосы
+            and max(pr, pc) <= 10 * min(pr, pc)        # перекос (twist) <= 10 дБ
+            and np.sort(row)[-2] * 4 <= pr             # второй тон группы слабее
+            and np.sort(col)[-2] * 4 <= pc
+        )
+        labels.append(DIGITS[r][c] if ok else None)
+    return labels
+
+
+def decode_dtmf(data, rate, frame_ms=25, hop_ms=10, min_on=2, min_off=2):
+    """Цифра засчитывается после min_on окон подряд; та же цифра снова —
+    только после паузы min_off окон (50 мс тон / 50 мс пауза — ок)."""
+    out = []
+    last = None          # последняя выданная цифра (None — была пауза)
+    cur, cur_len, gap = None, 0, min_off
+    for lab in dtmf_frames(data, rate, frame_ms, hop_ms):
+        if lab is None:
+            cur, cur_len = None, 0
+            gap += 1
+            if gap >= min_off:
+                last = None
             continue
-        r = nearest(peaks[0][0], ROWS)
-        c = nearest(peaks[1][0], COLS)
-        if r is None or c is None:
-            last = None
-            continue
-        d = DIGITS[r][c]
-        if d != last:
-            out.append(d)
-            last = d
+        gap = 0
+        cur_len = cur_len + 1 if lab == cur else 1
+        cur = lab
+        if cur_len >= min_on and lab != last:
+            out.append(lab)
+            last = lab
     return "".join(out)
 
 
@@ -142,20 +175,58 @@ def morse_runs(data, rate):
     ons = [l for s, l in runs if s]
     if not ons:
         return []
-    unit = float(np.percentile(ons, 25))
-    if unit < 1:
-        unit = float(min(ons))
+    # оценка точки — по грубо очищенным отрезкам, потом чистка от точки;
+    # огибающая по окну win удлиняет тоны и укорачивает паузы на ~0.75*win
+    unit = morse_unit(merge_short(runs, 0.2 * float(np.median(ons))), rate,
+                      bias=0.75 * win)
     # глитчи короче половины точки просто съедаем (состояние не меняется)
+    clean = merge_short(runs, 0.5 * unit)
+    return [(bool(s), l / unit) for s, l in clean]
+
+
+def merge_short(runs, limit):
+    """Отрезки короче limit приклеиваются к предыдущему (глитчи)."""
     clean = []
     for state, length in runs:
-        if length < 0.5 * unit and clean:
+        if length < limit and clean:
             clean[-1][1] += length
             continue
         if clean and clean[-1][0] == state:
             clean[-1][1] += length
         else:
             clean.append([state, length])
-    return [(bool(s), l / unit) for s, l in clean]
+    return clean
+
+
+def morse_unit(runs, rate, bias=0.0):
+    """Длительность точки (в сэмплах) по тонам И паузам.
+
+    Если есть и короткие, и длинные тоны (отношение ~1:3) — точка это
+    короткие. Если все тоны одной длины L, это либо точки, либо тире
+    (например «MOO» = «-- --- ---»): паузы должны ложиться на 1/3/7
+    единиц — сравниваем обе гипотезы (единица L или L/3). Полная
+    неоднозначность («TTT» == «S» в другом темпе, одиночный знак)
+    решается темпом: тон длиннее ~0.11 с — тире.
+    """
+    ons = sorted(max(1.0, l - bias) for s, l in runs if s)
+    lo, hi = ons[0], ons[-1]
+    if hi >= 2 * lo:
+        cut = (lo * hi) ** 0.5
+        return float(np.median([x for x in ons if x <= cut]))
+    L = float(np.median(ons))
+    gaps = [l + bias for i, (s, l) in enumerate(runs)
+            if not s and 0 < i < len(runs) - 1]
+
+    def misfit(unit):
+        if not gaps:
+            return 0.0
+        return float(np.mean([min(abs(np.log(g / (unit * k))) for k in (1, 3, 7))
+                              for g in gaps]))
+
+    e_dot, e_dash = misfit(L), misfit(L / 3)
+    if abs(e_dot - e_dash) < 0.1:
+        return L / 3 if L >= 0.11 * rate else L
+    return L if e_dot < e_dash else L / 3
 
 
 def decode_morse(data, rate, want_raw=False):

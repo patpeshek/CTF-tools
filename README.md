@@ -29,6 +29,7 @@ toolbox/
 ├─ network/ ...
 ├─ crypto/ ...
 ├─ linux/ ...
+├─ admin/               # образы ВМ, логи, реестр/службы Windows, конфиги
 ├─ web/ ...
 ├─ pwn/ ...
 ├─ reverse/               # строки, XOR, упаковщики
@@ -79,6 +80,8 @@ python tests/selftest.py
 | «много скобок», повторы символов | `stego/runs.py` |
 | ZIP/архив, «пароль», «комментарий» | `forensic/zipmeta.py` |
 | образ диска, «удалённые файлы» | `forensic/disk_triage.sh` |
+| образ ВМ: OVA/VMDK/QCOW2/VDI/VHD | `admin/vm_image.py` (`--raw` → raw-диск) |
+| логи auth/nginx/journald/auditd, history, «кто вошёл / что сделал» | `admin/log_analyze.py` (`--timeline`) |
 | фото, «где снято / когда» | `forensic/exif.py`, `misc/timeconv.py` |
 | PCAP, «кто атаковал / что украли» | `network/pcap_report.py` |
 | классический шифр | `crypto/classical.py` |
@@ -99,6 +102,7 @@ python tests/selftest.py
 | координаты/пиксель-арт из пакетов | `network/mc_blocks.py` + `stego/bitmap_font.py` |
 | UDP и самодельный протокол `SIG/.../...` | `network/udp_payloads.py` |
 | Linux: sudo/SUID/cron/writable | `linux/privesc.sh`, `linux/gtfobins.py` |
+| дамп ФС/конфигов: sudoers, SUID-список, cron, shadow, секреты | `admin/admin_triage.py` |
 | надо запустить ELF/посмотреть поведение | `linux/wsl.py run .\chall --dir` (Arch WSL) |
 | скрипт от root что-то source-ит | `linux/script_audit.py` |
 | текстовые выгрузки Volatility | `forensic/volatility_text.py` |
@@ -130,6 +134,7 @@ python tests/selftest.py
 | git-репозиторий / `.git` | `forensic/git_hunt.py` |
 | профиль браузера | `forensic/browser_artifacts.py` |
 | Windows dump (hives/EVTX/lnk) | `forensic/windows_triage.py` |
+| куст реестра, службы, Run-ключи, задачи, PS-история | `admin/win_admin.py` |
 | Office/PDF: макросы, JS | `forensic/office_docs.py` |
 | облачные ключи | `forensic/cloud_creds.py` |
 | Kubernetes под | `linux/k8s_audit.sh`, `network/k8s_api.py` |
@@ -149,7 +154,7 @@ python tests/selftest.py
 
 Почти у всех скриптов есть `--help`. Самое частое:
 
-- `lsb.py`: `--channel r|g|b|a|all`, `--bits 1..8`, `--order msb`, `--diff ВТОРАЯ_КАРТИНКА`.
+- `lsb.py`: `--channel all|rgb|rgba|bgr|r|g|b|a` (all = R,G,B подряд + перебор остальных), `--bits 1..8`, `--order msb`, `--diff ВТОРАЯ_КАРТИНКА`.
 - `alpha.py`: `--channel a`, `--only-nonzero`, `--raw` (числа вместо символов).
 - `jpeg_tail.py`: `--extract out` (распакует ZIP-хвост), `--dump tail.bin`.
 - `carve.py`: `--out dir` (вырежет всё, что найдёт).
@@ -167,7 +172,8 @@ python tests/selftest.py
   `scan --connect/--local`, `--deref`.
 - `oracle.py`: `--connect`/`--local`, `--match`, `--expr`, `--send`/`--send-expr`,
   `--repeat`, `--until`, `--peek`, `--delay`, `--log`.
-- `disasm.py`: `--interesting`, `--grep`, `--around`, `--strings`, `--all`, `--limit`.
+- `disasm.py`: `--interesting`, `--grep`, `--around`, `--strings`, `--all`, `--limit`,
+  `--func ADDR` (одна функция до ret).
   `solve.py`: `--jobs` (параллельные шаги), `--plan`, `--deep`, `--time`, `--log`.
 - `strings_filter.py`: `--utf16`, `--grep`, `--flag`, `--url`, `--path`.
 - `xor_scan.py`: `--keylen`, `--known`, `--offset`, `--length`.
@@ -197,14 +203,14 @@ python tests/selftest.py
 - `docker_api.py`: `--host`, `--list`, `--inspect`, `--logs`, `--exec --yes`.
 - `git_hunt.py`: `--all-objects`, `--json`, `--max-objects`.
 - `browser_artifacts.py`: `--json`, `--limit`.
-- `windows_triage.py`: `--json`, `--limit`.
+- `windows_triage.py`: `--json`, `--limit` (0 = все файлы).
 - `office_docs.py`: `--out`, `--json`.
 - `cloud_creds.py`: `--metadata`, `--json`.
 - `k8s_api.py`: `--host`, `--token`, `--ca`, `--insecure`, `--list`, `--secrets`.
 - `audio_tools.py`: `--mode auto|dtmf|morse`.
 - `lang_info.py`: `--json`.
 - `rsa_tool.py`: `wiener --n --e --cipher`, `broadcast --e --pairs "n:c"`.
-- `flag_hunt.py` / `flag_hunt.sh`: `--all`, `--pattern`, `--json`; имена `flag*` и содержимое.
+- `flag_hunt.py` / `flag_hunt.sh`: `--all`, `--pattern` (glob `*.key` или regex), `--json`; имена `flag*` и содержимое.
 - `serve.py`: `--dir`, `--port`, `--bind`, `--upload`, `--token`.
 - `aes_file.py`: `--key`, `--key-xor 42`, `--keylen 32`, `--iv`, `--ivlen 16`.
 - `ret2win.py`: `--offset`, `--addr`, `--align`, `--remote host:port`.

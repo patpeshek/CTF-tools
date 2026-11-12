@@ -11,7 +11,7 @@
 
 | Имя | Что делает | Пример |
 |---|---|---|
-| `solve` | автопилот: сам выбирает шаги по типу, идёт до первого флага | `python toolbox.py solve file.bin` |
+| `solve` | автопилот: сам выбирает шаги по типу, идёт до первого флага; `--desc`/`--desc-file` — условие задачи (категория, подсказки, формат флага, пароли, адреса) меняет план; `--json` — итог одним JSON, `--events FILE\|-` — поток событий (схема: `MANUAL.md` §14) | `python toolbox.py solve file.bin --desc "XOR. Формат флага: ABC{...}"` |
 | `hint` | разбор с объяснением «что вижу → на что похоже → почему» | `python toolbox.py hint file.bin` |
 | `auto` | сам смотрит файл: тип, вложенные сигнатуры, флаги, архивы, DNS, WAV, защиты; даёт план команд | `python toolbox.py auto capture.pcap` |
 | `all` | универсальный перебор: файлы/папки/строки, known-plaintext XOR по префиксу флага | `python toolbox.py all dump.bin` |
@@ -43,6 +43,7 @@
 | Имя | Что делает | Пример |
 |---|---|---|
 | `zipmeta` | комментарии/extra ZIP | `python toolbox.py zipmeta a.zip --decode` |
+| `ziptricks` | ZIP: info, fakecrypt, crc-brute, password, known-plaintext (bkcrack) | `python toolbox.py ziptricks fakecrypt a.zip` |
 | `exif` | метаданные | `python toolbox.py exif photo.jpg` |
 | `disk` | образ диска: mount/photorec/LUKS | `sudo bash forensic/disk_triage.sh disk.img` |
 | `hunt` | ключи/секреты/флаги в файлах и zip | `python toolbox.py hunt dump --zip` |
@@ -58,6 +59,7 @@
 | `office` | Office/PDF: макросы, JS, вложенное | `python toolbox.py office doc.docx --out out` |
 | `cloud` | AWS/GCP/Azure ключи и metadata | `python toolbox.py cloud dump --metadata` |
 | `flaghunt` | файлы-флаги по имени/содержимому | `python toolbox.py flaghunt dump` |
+| `disk_image` | образы: MBR/GPT, FAT/NTFS $MFT/ext, удалённые, ADS, журнал ext | `python toolbox.py disk_image scan disk.img --out out --find-flags` |
 
 ## Network
 
@@ -87,6 +89,7 @@
 | `classical` | классические шифры + `vigenere-crack` | `python toolbox.py classical vigenere-crack --text "..."` |
 | `genetic` | триплеты → аминокислоты | `python toolbox.py genetic "UGUACUUUC"` |
 | `xorknown` | XOR с known plaintext; длину ключа подбирает сам | `python toolbox.py xorknown enc.bin --known "CTF{"` |
+| `chain` | многослойные цепочки кодировок: поиск лучом по base64/32/85, hex, bin/dec/oct, url, zlib/gzip/bz2/xz, ROT13/ROT-N/ROT47, Atbash, реверс, NOT, однобайтовый XOR + все декодеры `enc`; глубина/луч/бюджет, стоп на флаге; `solve` зовёт его сам | `python toolbox.py chain "<строка>"` / `chain blob.bin --depth 8 --time 30` |
 | `prng` | random по seed | `python toolbox.py prng --ts "2026-01-01 12:00:00"` |
 | `aes` | AES-CBC из бинарника | `python toolbox.py aes f.enc --auto --from-bin encryptor` |
 | `ecb` | детект/расшифровка ECB | `python toolbox.py ecb c.hex --hex --key K --decrypt` |
@@ -96,6 +99,7 @@
 | `oracles` | атаки через оракулы: ECB byte-at-a-time, padding oracle, CBC bit-flip, детект ECB | `python toolbox.py oracles padding-oracle --oracle-cmd "python o.py" --iv ... --ct ...` |
 | `hashext` | length extension MD5/SHA1/SHA256 и повтор nonce в GCM (H, E(J0), подделка тега) | `python toolbox.py hashext length-extend --alg sha256 --sig ... --key-len 16 --append "&admin=1"` |
 | `otp` | two-time pad | `python toolbox.py otp --c1 ... --c2 ... --crib "the "` |
+| `prngstate` | состояние ГПСЧ: MT19937 (клон, назад/вперёд), LCG (m,a,c), усечённый LCG (решётка), XOR шифртекста | `python toolbox.py prngstate mt outs.txt --cipher <hex>` |
 | `stream` | SHA256-поток XOR | `python toolbox.py stream --cipher ... --key ... --nonce ... --brute` |
 
 ## Blockchain
@@ -123,6 +127,18 @@
 | `wsl` | запуск ELF в Arch WSL (gdb/pwntools), файлы в `~/inbox` | `python linux/wsl.py run .\chall --dir` / `wsl.py inbox` / `--arch auto` |
 | `audit` | что source-ит root-скрипт | `python toolbox.py audit /usr/local/sbin/x --check-writable` |
 
+## Admin
+
+Системное администрирование: образы ВМ, логи, Windows, конфиги. Чистый Python,
+только чтение; артефакты для тестов — `tests/gen_admin.py`.
+
+| Имя | Что делает | Пример |
+|---|---|---|
+| `vm` | образ ВМ QCOW2/VMDK (sparse/stream/flat)/VDI/VHD/OVA: разделы, флаги внутри (в т.ч. в сжатых кластерах), `--raw` потоково, `--find`, `--mount`, `--next` → `forensic/disk_image.py` | `python toolbox.py vm disk.qcow2 --raw disk.raw` / `vm vm.ova --extract out` |
+| `logs` | логи по содержимому: auth.log/syslog (брутфорс, вход после неудач, sudo/su, новые uid 0, группы, cron), nginx/apache (SQLi/LFI/XSS/RCE/сканеры, всплески 4xx/5xx, base64/hex-параметры, восстановление слепой SQLi), journald JSON/export, auditd (hex EXECVE), bash/zsh/PowerShell history (`-enc`, `base64 -d`, креды); `--timeline` по всем файлам, `.gz` читается сам | `python toolbox.py logs var/log --timeline --year 2024` |
+| `winadm` | Windows оффлайн без regipy: куст regf (nk/vk/lf/lh/li/ri/db, checksum, «грязный» куст) — `reg` (сводка, `--key`, `--search`, `--dump`, `--deleted` из свободных ячеек, флаги ASCII/UTF-16/base64/UserAssist ROT13, пользователи SAM), `services` (ImagePath/Start/ObjectName/ServiceDll, подозрительные пути), `run` (Run/RunOnce/Winlogon/IFEO/AppInit/BootExecute), `tasks` (XML планировщика: команда, триггеры, автор, Hidden), `pshistory` (ConsoleHost_history, `-EncodedCommand`); без подкоманды — авто по файлу/папке | `python toolbox.py winadm dump/` / `winadm services SYSTEM` |
+| `admin` | зонтик ADMIN: папка-дамп ФС/конфигов или один файл → sudoers (NOPASSWD, GTFOBins, LD_PRELOAD, wildcard), SUID/capabilities из `find -perm -4000`/`getcap -r`, cron/systemd (скрипты в /tmp/home/opt, tar `*`, PATH), passwd/shadow/group (лишний uid 0, пустой пароль, тип хеша → hashcat/john, docker/lxd/disk), sshd_config, authorized_keys `command=`, приватные ключи, docker-compose/Dockerfile/kubeconfig/Secret (base64 раскодируется), .env/.git-credentials/.netrc/.pgpass/.my.cnf/wp-config, NFS no_root_squash; раздаёт образы ВМ → `vm`, логи → `logs`, кусты/задачи/PS → `winadm`; восстановление: корзины (trashinfo, `$I`), .swp/.bak, lost+found, .git | `python toolbox.py admin fs_dump/` / `admin etc/sudoers` |
+
 ## Web
 
 | Имя | Что делает | Пример |
@@ -141,7 +157,7 @@
 | `ret2win` | паттерн/оффсет/payload | `python toolbox.py ret2win payload --offset 80 --addr 0x4011a2` |
 | `fmtstr` | format string helper: payload'ы + `scan` по живому сервису | `python toolbox.py fmtstr auto --connect h:p` |
 | `oracle` | TCP-сервис: вопрос → формула → ответ, N раундов | `python toolbox.py oracle --connect h:1 --auto` (или `--preset coprime`) |
-| `ppc` | разбор PPC-вопроса: какие стратегии и ответы видит движок | `python toolbox.py ppc "2+2*2"` |
+| `ppc` | разбор PPC-вопроса: какие стратегии и ответы видит движок (арифметика, хеши md5/sha/crc32, модулярка — обратный/CRT/`n! mod m`/`Fib mod m`/`C(n,k) mod p`, простота по Miller–Rabin, графы — путь/компоненты/топосорт, матрицы, скобки, k-й/медиана) | `python toolbox.py ppc "md5 of 'hello'"` |
 
 ## Reverse
 
@@ -154,6 +170,12 @@
 | `lang` | .NET/Java/Go/Rust/Electron | `python toolbox.py lang app.exe` |
 | `xorscan` | XOR-скан файла | `python toolbox.py xorscan bin --keylen 8` |
 | `pypack` | PyInstaller/pyarmor/Nuitka | `python toolbox.py pypack app.exe` |
+
+## CTB (boot2root, свои стенды)
+
+| Имя | Что делает | Пример |
+|---|---|---|
+| `ctb` | recon одного хоста (порты/баннеры/HTTP), plan, журнал, разбор privesc.sh | `python toolbox.py ctb recon 10.10.10.5` |
 
 ## Misc
 

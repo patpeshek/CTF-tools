@@ -105,7 +105,7 @@ def read_points(path):
                 continue
             try:
                 x, y = int(float(parts[0])), int(float(parts[1]))
-            except ValueError:
+            except (ValueError, OverflowError):     # мусор, nan, inf
                 continue
             v = 1
             if len(parts) > 2:
@@ -116,6 +116,41 @@ def read_points(path):
             if v:
                 pts.add((x, y))
     return pts
+
+
+MAX_CELLS = 4_000_000   # предел холста w*h (сетка списков + проход по всем клеткам)
+GAP = 3                 # столько пустых колонок/строк остаётся от большого разрыва
+
+
+def squeeze(vals, gap=GAP):
+    """Монотонно сжать координаты: разрыв больше gap пустых клеток → gap.
+    Соседство точек и пустые колонки между глифами сохраняются."""
+    m, cur, prev = {}, 0, None
+    for v in sorted(set(vals)):
+        if prev is not None:
+            cur += min(v - prev, gap + 1)
+        m[v] = cur
+        prev = v
+    return m
+
+
+def fit_points(pts, max_cells=MAX_CELLS):
+    """Далёкие/огромные координаты не должны раздувать холст до гигабайт.
+
+    Возвращает (точки, замечание); точки None — не влезло даже после сжатия.
+    """
+    xs = {x for x, _ in pts}
+    ys = {y for _, y in pts}
+    w, h = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+    if w * h <= max_cells:
+        return pts, None
+    mx, my = squeeze(xs), squeeze(ys)
+    w2, h2 = max(mx.values()) + 1, max(my.values()) + 1
+    note = (f"холст {w}x{h} слишком большой — пустые промежутки сжаты "
+            f"до {GAP}: {w2}x{h2}")
+    if w2 * h2 > max_cells:
+        return None, note + f", всё равно больше {max_cells} клеток"
+    return {(mx[x], my[y]) for x, y in pts}, note
 
 
 def build_grid(pts, pad=0, flip_y=False, flip_x=False):
@@ -197,6 +232,11 @@ def main():
     pts = read_points(args.csv)
     if not pts:
         print("[-] точек не найдено")
+        return
+    pts, note = fit_points(pts)
+    if note:
+        print(f"[!] {note}")
+    if pts is None:
         return
     g, x0, y0, w, h = build_grid(pts, flip_y=args.flip_y, flip_x=args.flip_x)
     print(f"[+] холст: {w}x{h}  (x0={x0}, y0={y0}), точек={len(pts)}")

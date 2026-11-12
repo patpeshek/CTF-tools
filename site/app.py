@@ -154,6 +154,12 @@ def _worker(job_id: str):
     tried = []
     try:
         for ev in engine_events(job["path"], job["budget"], job["prefix"]):
+            if ev.get("event") == "done":
+                # НЕ пробрасываем done от solve: страница закрывает поток на нём,
+                # а ИИ отрабатывает ПОЗЖЕ. Терминал потока — наш runner_end.
+                if ev.get("flag"):
+                    job["flag"] = ev["flag"]
+                continue
             q.put(ev)
             if ev.get("event") == "step_end":
                 tried.append(f"{ev.get('tool')}:{ev.get('status')}")

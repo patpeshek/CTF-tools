@@ -266,6 +266,14 @@ def printable_ratio(data) -> float:
 
 
 def sniff(head: bytes) -> str:
+    # растровые форматы, которые Pillow открывает: WEBP (до общего RIFF), TIFF, BMP
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WEBP"
+    if head[:4] in (b"II*\x00", b"MM\x00*"):
+        return "TIFF"
+    if (head[:2] == b"BM" and len(head) >= 18 and head[6:10] == b"\x00\x00\x00\x00"
+            and int.from_bytes(head[14:18], "little") in (12, 40, 52, 56, 64, 108, 124)):
+        return "BMP"
     for sig, name in SIGS:
         if head.startswith(sig):
             return name

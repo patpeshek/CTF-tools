@@ -1703,6 +1703,48 @@ def checks_core(tmp):
           r.returncode == 1 and r2.returncode == 1 and "не могу прочитать" in r.stdout
           and "Traceback" not in r.stderr + r2.stderr,
           r.stdout[-300:] + r.stderr[-300:] + r2.stderr[-300:])
+def _lsb_image(path, fmt, flag, order="rgb", plane=0, w=64, h=64, **save_kw):
+    """Картинка с шумом; флаг+NUL пишется в бит plane каналов по кругу order."""
+    rnd = random.Random(7)
+    arr = [[[rnd.randrange(256) for _ in range(3)] for _ in range(w)] for _ in range(h)]
+    bits = [(b >> (7 - i)) & 1 for b in flag.encode() + b"\0" for i in range(8)]
+    idx = {"rgb": (0, 1, 2), "bgr": (2, 1, 0)}[order]
+    k = 0
+    for y in range(h):
+        for x in range(w):
+            for c in idx:
+                if k < len(bits):
+                    arr[y][x][c] = (arr[y][x][c] & ~(1 << plane)) | (bits[k] << plane)
+                    k += 1
+    im = Image.new("RGB", (w, h))
+    im.putdata([tuple(p) for row in arr for p in row])
+    im.save(path, fmt, **save_kw)
+
+
+def checks_stego_new(tmp):
+    # #95: zsteg-подобный перебор раскладок (BGR, бит 3 — не «классика»)
+    f95 = "CTF{" + "lsb_brute_" + "ok}"
+    p = os.path.join(tmp, "brute_bgr.png")
+    _lsb_image(p, "PNG", f95, order="bgr", plane=2)
+    r = run("toolbox.py", "zsteg", p)
+    check("zsteg bgr plane3", f95 in r.stdout, r.stdout[-500:] + r.stderr)
+    r = run("stego/lsb_brute.py", os.path.join(tmp, "no_such.png"))
+    check("zsteg missing path", "Traceback" not in r.stderr and "[-]" in r.stdout,
+          r.stdout + r.stderr)
+    r = run("stego/lsb_brute.py", tmp)
+    check("zsteg directory", "Traceback" not in r.stderr and "[-]" in r.stdout,
+          r.stdout + r.stderr)
+
+    # #96: классический 1-LSB R,G,B в BMP / TIFF / WEBP(lossless): reader + solve
+    f96 = "CTF{" + "fmt_lsb_ok}"
+    for ext, fmt, kw in (("bmp", "BMP", {}), ("tiff", "TIFF", {}),
+                         ("webp", "WEBP", {"lossless": True, "exact": True})):
+        p = os.path.join(tmp, "classic." + ext)
+        _lsb_image(p, fmt, f96, **kw)
+        r = run("stego/lsb_brute.py", p)
+        check(f"zsteg {ext} reader", f96 in r.stdout, r.stdout[-400:] + r.stderr)
+        r = run("solve.py", p, "--time", 40)
+        check(f"solve {ext} lsb", f96 in r.stdout, r.stdout[-600:] + r.stderr)
 
 
 def main():
@@ -3743,6 +3785,8 @@ def main():
 
     # 139-145. свойства, дифференциал, фаззинг и мета-проверки
     property_and_meta_checks(tmp)
+
+    checks_stego_new(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

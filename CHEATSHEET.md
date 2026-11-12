@@ -17,6 +17,7 @@ steghide extract -sf pic.jpg     # пароль может быть в текс�
 stegsolve                        # GUI: каналы, биты, frame browser
 binwalk --dd='.*' pic.jpg        # вырезать всё
 python stego/lsb.py pic.png --channel r --bits 2
+python stego/lsb_brute.py pic.png    # аналог zsteg -a: все раскладки LSB
 python stego/alpha.py pic.png --channel a
 python stego/jpeg_tail.py pic.jpg --extract out
 ```

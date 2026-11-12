@@ -44,6 +44,7 @@ REGISTRY = [
     ("", "auto", "", "определить тип и предложить действия"),
 
     ("stego", "lsb", "stego/lsb.py", "LSB одного канала / diff двух картинок"),
+    ("stego", "zsteg", "stego/lsb_brute.py", "перебор LSB-раскладок (бит/канал/обход/порядок), PNG/BMP/TIFF/WEBP"),
     ("stego", "alpha", "stego/alpha.py", "значения канала как ASCII"),
     ("stego", "jpeg_tail", "stego/jpeg_tail.py", "хвост после JPEG → ZIP/PNG"),
     ("stego", "carve", "stego/carve.py", "вырезать вложенные файлы по сигнатурам"),

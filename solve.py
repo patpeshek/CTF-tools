@@ -700,6 +700,7 @@ def steps_for(path, deep=False, depth=0):
     if kind == "PNG":
         add(("png_chunks", [path], "нестандартные чанки/текст", 30))
         add(("lsb", [path], "младшие биты", 40))
+        add(("zsteg", [path], "перебор LSB-раскладок", 40))
         add(("alpha", [path], "альфа-канал", 40))
         add(("qr", [path], "QR на картинке", 30))
         add(("ocr", [path], "текст с картинки", 40))
@@ -716,6 +717,12 @@ def steps_for(path, deep=False, depth=0):
         add(("lsb", [path], "младшие биты", 40))
         add(("ocr", [path], "текст с картинки", 40))
         add(("ocr", [path, "--variants"], "текст + правки ошибок OCR", 50))
+        add(("geo", [path], "EXIF/GPS + ссылки для поиска", 30))
+    elif kind in ("BMP", "TIFF", "WEBP"):
+        add(("zsteg", [path], f"перебор LSB-раскладок ({kind})", 40))
+        add(("lsb", [path], "младшие биты", 40))
+        add(("qr", [path], "QR на картинке", 30))
+        add(("ocr", [path], "текст с картинки", 40))
         add(("geo", [path], "EXIF/GPS + ссылки для поиска", 30))
     elif kind == "GIF":
         add(("gif_frames", [path], "кадры/палитра", 30))

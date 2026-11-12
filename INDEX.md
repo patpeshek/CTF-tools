@@ -24,6 +24,7 @@
 | Имя | Что делает | Пример |
 |---|---|---|
 | `lsb` | LSB канала/бит, diff двух картинок | `python toolbox.py lsb a.png --diff b.png --channel r` |
+| `zsteg` | перебор LSB-раскладок: бит 1..8, каналы rgb/bgr/r/g/b/a, обход xy/yx, msb/lsb-first; флаг первым | `python toolbox.py zsteg pic.png --top 10` |
 | `alpha` | значения канала как ASCII | `python toolbox.py alpha a.png --channel a` |
 | `jpeg_tail` | хвост после JPEG → ZIP | `python toolbox.py jpeg_tail a.jpg --extract out` |
 | `carve` | вырезать вложенные файлы по сигнатурам | `python toolbox.py carve a.bin --out out` (ZIP режется по EOCD) |

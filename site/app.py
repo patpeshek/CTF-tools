@@ -112,40 +112,40 @@ def _parse(line: str):
         return None
 
 
-def _ai_assist(job, q, summary: str):
-    """Если кит не нашёл флаг — вызвать ИИ (DeepSeek) и вылить разбор в тот же
-    поток через существующие события (lead/flag/runner_note). Интерфейс не
-    меняется: страница уже умеет показывать lead и flag."""
-    if not deepseek or not os.environ.get("DEEPSEEK_API_KEY"):
+def _ai_agent(job, q):
+    """Агент-цикл: ИИ пишет решатель, он запускается, при неудаче правится и
+    пробует снова. Наружу — только статус (runner_note) и РЕЗУЛЬТАТ (флаг или
+    одна строка-ответ), без рассуждений («скрытый пул»). Запуск кода модели —
+    через agent.run: без Docker локально с таймаутом (для чужих файлов нужна
+    песочница #142)."""
+    if not (deepseek and os.environ.get("DEEPSEEK_API_KEY")):
         q.put({"event": "runner_note", "t": 0.0,
                "note": "ИИ выключен: нет DEEPSEEK_API_KEY в окружении сервера"})
         return
-    q.put({"event": "runner_note", "t": 0.0,
-           "note": "кит не нашёл флаг — подключаю ИИ (DeepSeek)…"})
     try:
-        data = open(job["path"], "rb").read(48000)
+        import agent
+    except Exception as e:  # pragma: no cover
+        q.put({"event": "runner_note", "t": 0.0, "note": f"агент недоступен: {e}"})
+        return
+    try:
+        data = open(job["path"], "rb").read(40000)
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             text = data.decode("latin-1", "replace")
-        ans = deepseek.analyze(text, solve_summary=summary,
-                               filename=os.path.basename(job["path"]))
-    except Exception as e:
-        q.put({"event": "runner_note", "t": 0.0, "note": f"ИИ недоступен: {e}"})
+    except OSError as e:
+        q.put({"event": "runner_note", "t": 0.0, "note": f"файл не прочитан: {e}"})
         return
-    shown = 0
-    for line in ans.splitlines():
-        line = line.rstrip()
-        if not line:
-            continue
-        q.put({"event": "lead", "t": 0.0, "tool": "ИИ", "text": line[:300]})
-        shown += 1
-        if shown >= 60:
-            break
-    m = AI_FLAG.search(ans)
-    if m:
-        job["flag"] = m.group(0)
-        q.put({"event": "flag", "t": 0.0, "tool": "ИИ", "flag": m.group(0)})
+    for ev in agent.run(text, filename=os.path.basename(job["path"]),
+                        file_path=job["path"]):
+        k = ev.get("event")
+        if k == "ai_status":
+            q.put({"event": "runner_note", "t": 0.0, "note": ev["note"]})
+        elif k == "flag":
+            job["flag"] = ev["flag"]
+            q.put({"event": "flag", "t": 0.0, "tool": "ИИ", "flag": ev["flag"]})
+        elif k == "ai_answer":
+            q.put({"event": "lead", "t": 0.0, "tool": "ИИ", "text": ev["text"]})
 
 
 def _worker(job_id: str):
@@ -169,7 +169,7 @@ def _worker(job_id: str):
         q.put({"event": "runner_note", "t": 0.0, "note": f"ошибка запуска: {e}"})
     try:
         if not job.get("flag"):
-            _ai_assist(job, q, "; ".join(tried[:40]))
+            _ai_agent(job, q)
     except Exception as e:  # pragma: no cover
         q.put({"event": "runner_note", "t": 0.0, "note": f"ИИ сбой: {e}"})
     q.put({"event": "runner_end", "t": 0.0, "flag": job.get("flag")})

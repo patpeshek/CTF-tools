@@ -43,3 +43,12 @@ tools/
 
 # agent worktrees / local project notes
 .claude/
+
+# СЕКРЕТЫ: API-ключи и env никогда не коммитить
+.env
+.env.*
+*.env
+secrets.json
+*.key
+*api*key*
+site/ai/.env

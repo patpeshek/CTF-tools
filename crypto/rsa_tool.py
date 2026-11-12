@@ -446,6 +446,124 @@ def isqrt(n: int) -> int:
     return math.isqrt(n)
 
 
+# --- Franklin-Reiter: два сообщения связаны линейно, один модуль n ---
+
+def _poly_trim(p):
+    while len(p) > 1 and p[-1] == 0:
+        p.pop()
+    return p
+
+
+def _poly_mul(a, b, n):
+    out = [0] * (len(a) + len(b) - 1)
+    for i, x in enumerate(a):
+        if not x:
+            continue
+        for j, y in enumerate(b):
+            out[i + j] = (out[i + j] + x * y) % n
+    return out
+
+
+def _poly_mod(a, b, n):
+    """a mod b над Z_n. ValueError, если старший коэффициент b не обратим."""
+    a = _poly_trim(a[:])
+    inv = pow(b[-1], -1, n)
+    while len(a) >= len(b) and not (len(a) == 1 and a[0] == 0):
+        coef = a[-1] * inv % n
+        shift = len(a) - len(b)
+        for i, bc in enumerate(b):
+            a[shift + i] = (a[shift + i] - coef * bc) % n
+        _poly_trim(a)
+    return a
+
+
+def _poly_gcd(a, b, n):
+    a, b = _poly_trim([x % n for x in a]), _poly_trim([x % n for x in b])
+    while not (len(b) == 1 and b[0] == 0):
+        a, b = b, _poly_mod(a, b, n)
+    return a
+
+
+def _poly_linear_pow(a, b, e, n):
+    """(a*x + b)^e по модулю n; коэффициенты от младших к старшим."""
+    result, base = [1], [b % n, a % n]
+    while e:
+        if e & 1:
+            result = _poly_mul(result, base, n)
+        e >>= 1
+        if e:
+            base = _poly_mul(base, base, n)
+    return result
+
+
+def franklin_reiter(n, e, c1, c2, a, b):
+    """m1 из gcd(x^e - c1, (a*x + b)^e - c2). Возвращает (m, множитель n)."""
+    f1 = [(-c1) % n] + [0] * (e - 1) + [1]
+    f2 = _poly_linear_pow(a, b, e, n)
+    f2[0] = (f2[0] - c2) % n
+    g = _poly_gcd(f1, f2, n)
+    if len(g) == 1:
+        return None, None
+    if len(g) == 2:
+        return (-g[0] * pow(g[1], -1, n)) % n, None
+    # старший коэффициент не обратим — заодно нашли множитель n
+    factor = math.gcd(g[-1], n)
+    return None, factor if 1 < factor < n else None
+
+
+def cmd_related(args):
+    e = args.e
+    n = to_int(args.n)
+    c1 = to_int(args.c1)
+    c2 = to_int(args.c2)
+    if e < 2:
+        print("[-] e должно быть >= 2")
+        return
+    if e > 64:
+        print(f"[-] e={e}: степень {e} — Franklin-Reiter не для таких экспонент;")
+        print("    для большого e нужен coppersmith (малый корень) или короткий паддинг")
+        return
+
+    rels = []
+    if args.rel:
+        for item in args.rel.split(";"):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                a_s, b_s = item.replace(",", " ").split()
+                rels.append((to_int(a_s), to_int(b_s)))
+            except ValueError:
+                print(f"[-] не понял связь: {item!r} (нужно 'a,b')")
+                return
+    if args.auto or not rels:
+        rels += [(1, 1), (1, -1), (1, 2), (1, 0), (2, 1), (1, 3), (3, 1)]
+
+    for a, b in rels:
+        try:
+            m, factor = franklin_reiter(n, e, c1, c2, a, b)
+        except ValueError:
+            print(f"[i] a={a}, b={b}: старший коэффициент не обратим — пропускаю")
+            continue
+        if factor:
+            print(f"[+] бонус: множитель n = {factor}")
+            p, q = factor, n // factor
+            m = pow(c1, pow(e, -1, (p - 1) * (q - 1)), n)
+        if m is None:
+            continue
+        if pow(m, e, n) != c1 % n:
+            print(f"[i] a={a}, b={b}: корень не подтвердился (m^e != c1)")
+            continue
+        print(f"[+] связь: m2 = {a}*m1 + {b}")
+        show(m)
+        for flag in common.find_flags(i2b(m)):
+            print("[!!!] ФЛАГ:", flag)
+        return
+
+    print("[-] не сходится: ни одна связь не дала корень")
+    print("[i] проверь, что c1 и c2 от одного n и связь действительно линейная")
+
+
 def pollard_rho(n: int, rounds: int = 200_000):
     if n % 2 == 0:
         return 2
@@ -1213,6 +1331,15 @@ def main():
                     help='строки "n:c", можно несколько через запятую')
     br.add_argument("--file", help="файл со строками n:c")
     br.set_defaults(func=cmd_broadcast)
+
+    rl = sub.add_parser("related", help="Franklin-Reiter: m2 = a*m1 + b при одном n")
+    rl.add_argument("--n", required=True)
+    rl.add_argument("--e", type=int, required=True)
+    rl.add_argument("--c1", required=True)
+    rl.add_argument("--c2", required=True)
+    rl.add_argument("--rel", help='связь "a,b" (несколько — через ";")')
+    rl.add_argument("--auto", action="store_true", help="перебрать типовые связи")
+    rl.set_defaults(func=cmd_related)
 
     cp = sub.add_parser("coppersmith", help="Coppersmith: частично известный m")
     cp.add_argument("--n", required=True)

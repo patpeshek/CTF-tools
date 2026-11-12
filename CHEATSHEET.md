@@ -309,6 +309,8 @@ python reverse/megarev.py --file ./bin --deep
 python web/jwt_brute.py "<token>" --wordlist words.txt
 python web/ssti_probe.py "http://host/?q=1"
 python web/dir_fuzz.py http://host --ext php
+python web/gitdump.py --url http://host/                      # что открыто
+python web/gitdump.py --url http://host/ --dump out --backups # исходники + бекапы
 
 # network
 python network/pcap_creds.py cap.pcap

@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time as _clock
 import zipfile
 import zlib
@@ -3816,6 +3817,56 @@ def main():
           f"{_gh:032x}" in r.stdout and "ATTACK AT DAWN" in r.stdout
           and r.stdout.count("[+] H = ") == 1,
           r.stdout[-600:] + r.stderr)
+
+    # gitdump: открытый .git (loose и pack) → исходники
+    try:
+        import http.server as _http
+        import socketserver as _sock
+
+        class _QuietHTTP(_http.SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+        _gd_root = os.path.join(tmp, "gdsrv")
+        _gd_repo = os.path.join(_gd_root, "repo")
+        os.makedirs(_gd_repo, exist_ok=True)
+
+        def _git(*a):
+            return subprocess.run(["git", *a], cwd=_gd_repo,
+                                  capture_output=True, text=True)
+
+        _git("init", "-q")
+        _git("config", "user.email", "a@b.c")
+        _git("config", "user.name", "t")
+        with open(os.path.join(_gd_repo, "app.py"), "w", encoding="utf-8") as f:
+            f.write("x = 1\n# CTF{gitdump_flag}\n")
+        _git("add", "-A")
+        _git("commit", "-qm", "one")
+
+        _handler = lambda *a, **kw: _QuietHTTP(*a, directory=_gd_root, **kw)
+        _srv = _sock.TCPServer(("127.0.0.1", 0), _handler)
+        _url = f"http://127.0.0.1:{_srv.server_address[1]}/repo/"
+        threading.Thread(target=_srv.serve_forever, daemon=True).start()
+
+        def _gd_ok(out_dir, stdout):
+            path = os.path.join(out_dir, "app.py")
+            if not os.path.isfile(path):
+                return False
+            text = open(path, encoding="utf-8", errors="replace").read()
+            return "CTF{gitdump_flag}" in text and "CTF{gitdump_flag}" in stdout
+
+        _out1 = os.path.join(tmp, "gd_loose")
+        r = run("web/gitdump.py", "--url", _url, "--dump", _out1, "--quiet")
+        check("gitdump loose", _gd_ok(_out1, r.stdout), r.stdout[-500:] + r.stderr)
+
+        _git("repack", "-adq")
+        _out2 = os.path.join(tmp, "gd_pack")
+        r = run("web/gitdump.py", "--url", _url, "--dump", _out2, "--quiet")
+        check("gitdump packed", _gd_ok(_out2, r.stdout), r.stdout[-500:] + r.stderr)
+        _srv.shutdown()
+        _srv.server_close()
+    except Exception as exc:
+        check("gitdump (setup)", False, repr(exc))
 
     # shamir: доли, битая доля, CRT, флаг
     _p = (1 << 521) - 1

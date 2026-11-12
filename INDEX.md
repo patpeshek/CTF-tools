@@ -151,6 +151,7 @@
 | `ssti` | поиск SSTI | `python toolbox.py ssti "http://h/?q=1"` |
 | `param` | payload'ы по параметрам (SQLi/XSS/траверсал) + поиск флага в ответах | `python toolbox.py param "http://h/?q=0"` |
 | `dirfuzz` | перебор директорий | `python toolbox.py dirfuzz http://h` |
+| `gitdump` | открытый `.git` → исходники (loose и pack, без запуска git), бекапы | `python toolbox.py gitdump --url http://h/ --dump out` |
 
 ## PWN
 

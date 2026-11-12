@@ -146,6 +146,8 @@ REGISTRY = [
     ("web", "ssti", "web/ssti_probe.py", "поиск SSTI"),
     ("web", "param", "web/param_probe.py", "payload'ы по параметрам"),
     ("web", "dirfuzz", "web/dir_fuzz.py", "перебор директорий"),
+    ("web", "gitdump", "web/gitdump.py",
+     "открытый .git → исходники (loose и pack, без запуска git)"),
 
     ("pwn", "checksec", "pwn/checksec.py", "защиты ELF/PE"),
     ("pwn", "ret2win", "pwn/ret2win.py", "паттерн/оффсет/payload"),

@@ -37,6 +37,7 @@
 | `audio` | спектрограмма WAV + пики | `python toolbox.py audio a.wav --peaks` |
 | `audiotools` | DTMF и морзе из WAV (проверка `.-` через `--raw`, код в нижнем регистре) | `python toolbox.py audiotools a.wav --raw` |
 | `qr` | найти и прочитать QR | `python toolbox.py qr a.png` |
+| `stegopass` | перебор паролей steghide/outguess/stegseek (пароли из условия + словарь) | `python toolbox.py stegopass a.jpg --desc "пароль: s3cr3t"` |
 
 ## Forensic
 

@@ -253,6 +253,8 @@ paru -Syu                                          # обновить репы +
 python stego/audio_spectrum.py sound.wav --peaks
 python stego/carve.py blob.bin --out carved        # ZIP ищется по EOCD и распаковывается
 python stego/qr_scan.py pic.png
+python stego/stego_crack.py pic.jpg --desc "пароль: s3cr3t"   # steghide/outguess/stegseek перебором
+python stego/stego_crack.py pic.jpg --wordlist rockyou.txt --max 20000
 python stego/whitespace.py file.txt
 python stego/esolang.py file.bf
 python crypto/obscure.py auto --text "..."

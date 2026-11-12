@@ -551,6 +551,12 @@ def steps_for(path, deep=False, depth=0):
         add(("audio", [path], "спектрограмма", 60))
         add(("audiotools", [path, "--raw"], "морзе/DTMF", 40))
 
+    # steghide/outguess берут пароль из текста задачи: быстрый перебор для
+    # контейнеров, которые они поддерживают (JPEG/BMP/WAV). Полный словарь —
+    # только при явном вызове stegopass --wordlist.
+    if kind in ("JPEG", "RIFF") or ext in (".wav", ".bmp") or data[:2] == b"BM":
+        add(("stegopass", [path], "steghide/outguess: пароли из условия задачи", 40))
+
     # ключ/IV могут лежать в соседней подсказке (hint.txt)
     hint = hint_params(path)
     if hint.get("key") and data and len(data) % 16 == 0 and len(data) >= 32:

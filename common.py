@@ -15,7 +15,7 @@ import re
 import sys
 import urllib.parse
 
-FLAG_CONTENT = r"[\x20-\x7a\x7c\x7e]{1,300}"
+FLAG_CONTENT = r"[^\x00-\x1f{}]{1,300}"
 DEFAULT_PREFIXES = ["ctf", "flag", "nto", "innopolis", "innoctf", "vosh", "npc"]
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flags.json")
 
@@ -41,12 +41,17 @@ def load_flag_sets(path=CONFIG_PATH):
         return {}
 
 
-def build_flag_regex(prefixes, any_prefix=False):
-    if any_prefix or not prefixes:
-        pre = r"[A-Za-z][A-Za-z0-9_]{1,20}"
-    else:
-        pre = "(?:" + "|".join(re.escape(p) for p in sorted(set(prefixes), key=len, reverse=True)) + ")"
-    return re.compile((pre + r"\{" + FLAG_CONTENT + r"\}").encode(), re.IGNORECASE)
+def build_flag_regex(prefixes=None, any_prefix=False):
+    """Регулярка ловит ПОЛНОЕ слово-префикс перед `{` (не обрезая его до
+    известной подстроки: picoCTF не должен превращаться в CTF) и любую
+    непустую внутренность без управляющих символов и скобок — в том числе
+    не-ASCII (кириллица) и символы вроде `+ = < > ~ |`. Решение «настоящий
+    ли это флаг» принимает find_flags по _PREFIXES и _ANY_PREFIX, а не regex.
+    Аргументы сохранены ради совместимости с вызовами."""
+    word = r"[A-Za-z][A-Za-z0-9_]{1,31}"
+    return re.compile(
+        (r"(?<![A-Za-z0-9_])(" + word + r")\{(" + FLAG_CONTENT + r")\}").encode(),
+        re.IGNORECASE)
 
 
 def _from_env():
@@ -62,12 +67,13 @@ def _from_env():
 
 
 _PREFIXES = _from_env() or DEFAULT_PREFIXES
-FLAG_RE = build_flag_regex(_PREFIXES, os.environ.get("FLAG_ANY") == "1")
+_ANY_PREFIX = os.environ.get("FLAG_ANY") == "1"
+FLAG_RE = build_flag_regex(_PREFIXES, _ANY_PREFIX)
 
 
 def configure(prefixes=None, flag_set=None, any_prefix=False, path=CONFIG_PATH):
     """Переопределить набор префиксов на время запуска."""
-    global _PREFIXES, FLAG_RE
+    global _PREFIXES, FLAG_RE, _ANY_PREFIX
     if prefixes:
         _PREFIXES = list(dict.fromkeys(prefixes))
     elif flag_set:
@@ -80,6 +86,7 @@ def configure(prefixes=None, flag_set=None, any_prefix=False, path=CONFIG_PATH):
     else:
         env = _from_env()
         _PREFIXES = env or DEFAULT_PREFIXES
+    _ANY_PREFIX = bool(any_prefix)
     FLAG_RE = build_flag_regex(_PREFIXES, any_prefix)
     return _PREFIXES
 
@@ -153,25 +160,36 @@ def _flag_prefix_ok(prefix: str) -> bool:
 
 
 def find_flags(data: bytes) -> list[str]:
+    known_set = {p.lower() for p in _PREFIXES}
     out = []
     for m in FLAG_RE.finditer(data):
         try:
-            s = m.group().decode("ascii")
+            s = m.group(0).decode("utf-8")
+            prefix = m.group(1).decode("ascii")
         except UnicodeDecodeError:
             continue
-        brace = s.find("{")
-        prefix = s[:brace]
-        inner = s[brace + 1:-1]
+        inner = s[len(prefix) + 1:-1]
         if len(inner) < 3:
             continue
-        if not _flag_prefix_ok(prefix):
-            continue
-        if re.search(r"[^A-Za-z0-9_!@#$%^&*()\-.,:;?/\[\] ]", inner):
-            continue
+        low = prefix.lower()
+        # Обычный режим: слово-префикс должно совпадать с известным префиксом
+        # или оканчиваться им (picoCTF, DUCTF, bcactf) — так префикс отдаётся
+        # целиком, а не обрезается. --any-prefix: любой правдоподобный префикс.
+        if _ANY_PREFIX:
+            if not _flag_prefix_ok(prefix):
+                continue
+        else:
+            if not (low in known_set or any(low.endswith(k) for k in known_set)):
+                continue
+            if not _flag_prefix_ok(prefix):
+                continue
+        # Внутренность: большинство символов — буквы/цифры/подчёркивание
+        # (isalnum покрывает кириллицу и другие алфавиты). Символы вроде
+        # + = < > ~ | допустимы, но не сплошной мусор.
         good = sum(ch.isalnum() or ch == "_" for ch in inner)
         if good / len(inner) < 0.7:
             continue
-        known = prefix.lower() in {p.lower() for p in _PREFIXES}
+        known = low in known_set
         # флаг из PDF/текста с пробелом: исходный пробел мог быть и
         # подчёркиванием, и простым переносом строки — отдаём все варианты
         if " " in inner and (known or prefix.isalpha()):
@@ -266,10 +284,40 @@ def printable_ratio(data) -> float:
 
 
 def sniff(head: bytes) -> str:
+    # TAR: магия ustar на смещении 257, а не с начала файла.
+    if len(head) >= 262 and head[257:262] == b"ustar":
+        return "TAR"
     for sig, name in SIGS:
+        if name in ("TAR", "PE", "RIFF"):
+            continue  # обрабатываются отдельно ниже
         if head.startswith(sig):
             return name
-    # ISO BMFF: [4 байта размера] + ftyp + бренд (mp4/mov/m4a)
+    # PE только если это действительно PE, а не текст, начинающийся с «MZ».
+    if head[:2] == b"MZ" and (b"PE\x00\x00" in head[:2048]
+                              or b"This program cannot be run" in head[:256]):
+        return "PE"
+    # RIFF-контейнеры различаем по типу: WEBP/AVI, остальное (WAVE) — RIFF.
+    if head[:4] == b"RIFF" and len(head) >= 12:
+        kind = head[8:12]
+        if kind == b"WEBP":
+            return "WEBP"
+        if kind == b"AVI ":
+            return "AVI"
+        return "RIFF"
+    # OLE2 — старые .doc/.xls/.ppt, .msi.
+    if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "OLE"
+    # BMP.
+    if head[:2] == b"BM" and len(head) >= 6:
+        return "BMP"
+    # PCAP с наносекундными метками (иначе выглядит как unknown).
+    if head[:4] in (b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d"):
+        return "PCAP"
+    # MP3 без тега ID3 — кадровая синхронизация MPEG audio.
+    if head[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2",
+                    b"\xff\xe3", b"\xff\xe2"):
+        return "MP3"
+    # ISO BMFF: [4 байта размера] + ftyp + бренд (mp4/mov/m4a).
     if len(head) >= 12 and head[4:8] == b"ftyp":
         if head[8:12] in (b"isom", b"mp42", b"mp41", b"avc1", b"iso2",
                           b"qt  ", b"m4a ", b"dash", b"iso5"):

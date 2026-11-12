@@ -252,6 +252,88 @@ def make_zip_bytes(name="a.txt", data=b"hello", comment=b""):
     return buf.getvalue()
 
 
+def checks_wav_lsb(tmp):
+    """stego/wav_lsb.py: LSB в сэмплах WAV (16/24-бит) и эхо-скрытие.
+
+    Все артефакты генерируются кодом (модуль wave), без ручного base64.
+    """
+    rng = random.Random(SEED)
+
+    def _bits_lsb(data):
+        # порядок байта little-endian (lsb-first): bit0 сначала
+        return [(byte >> b) & 1 for byte in data for b in range(8)]
+
+    def _pack24(v):
+        v = int(v) & 0xFFFFFF
+        return bytes((v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF))
+
+    # (a) 16-бит моно: флаг в 1 младшем бите всех сэмплов, lsb-first
+    flag16 = "CTF{wav_lsb_16bit}"
+    n16 = 4000
+    s16 = [rng.randrange(-8000, 8000) for _ in range(n16)]
+    bits = _bits_lsb(flag16.encode())
+    for i, bit in enumerate(bits):
+        s16[i] = (s16[i] & ~1) | bit
+    wav16 = os.path.join(tmp, "wavlsb16.wav")
+    with wave.open(wav16, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(b"".join(struct.pack("<h", x) for x in s16))
+    r = run("stego/wav_lsb.py", wav16)
+    check("stego/wav_lsb.py 16bit", flag16 in r.stdout, r.stdout[:800] + r.stderr)
+
+    # (b) 24-бит стерео: флаг в 1 младшем бите левого канала
+    flag24 = "CTF{wav24_lsb}"
+    n24 = 3000
+    left = [rng.randrange(-800000, 800000) for _ in range(n24)]
+    right = [rng.randrange(-800000, 800000) for _ in range(n24)]
+    bits = _bits_lsb(flag24.encode())
+    for i, bit in enumerate(bits):
+        left[i] = (left[i] & ~1) | bit
+    frames = bytearray()
+    for i in range(n24):
+        frames += _pack24(left[i]) + _pack24(right[i])
+    wav24 = os.path.join(tmp, "wavlsb24.wav")
+    with wave.open(wav24, "w") as w:
+        w.setnchannels(2); w.setsampwidth(3); w.setframerate(16000)
+        w.writeframes(bytes(frames))
+    r = run("stego/wav_lsb.py", wav24)
+    check("stego/wav_lsb.py 24bit", flag24 in r.stdout, r.stdout[:800] + r.stderr)
+
+    # (c) эхо-скрытие: на каждый бит добавляем задержанную ослабленную копию
+    #     сегмента (d0 кодирует 0, d1 — 1). Декодер — кепстральный.
+    seg_len, d0, d1, alpha = 2048, 50, 100, 0.6
+    echo_flag = "CTF{echo}"
+    ebits = [(byte >> b) & 1 for byte in echo_flag.encode() for b in range(7, -1, -1)]
+    nseg = len(ebits)
+    host = [rng.gauss(0, 3000) for _ in range((nseg + 1) * seg_len)]
+    out = list(host)
+    for k, bit in enumerate(ebits):
+        st = k * seg_len
+        d = d1 if bit else d0
+        for i in range(d, seg_len):
+            out[st + i] = host[st + i] + alpha * host[st + i - d]
+    out16 = [max(-32768, min(32767, int(x))) for x in out]
+    echo_wav = os.path.join(tmp, "wavecho.wav")
+    with wave.open(echo_wav, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(b"".join(struct.pack("<h", x) for x in out16))
+    expect_bits = "".join(str(b) for b in ebits)
+    r = run("stego/wav_lsb.py", echo_wav, "--echo",
+            "--seg", seg_len, "--d0", d0, "--d1", d1)
+    # сильнее: восстановленный флаг; мягче (fallback по заданию): битовый шаблон
+    check("stego/wav_lsb.py echo",
+          echo_flag in r.stdout or expect_bits in r.stdout,
+          r.stdout[:800] + r.stderr)
+
+    # (d) не PCM WAV / отсутствующий путь — без трейсбека, rc=0
+    notwav = os.path.join(tmp, "wavlsb_bad.wav")
+    open(notwav, "w", encoding="utf-8").write('{"code":"ACCESS_DENIED"}')
+    r = run("stego/wav_lsb.py", notwav)
+    check("stego/wav_lsb.py not-wav",
+          r.returncode == 0 and "не PCM WAV" in r.stdout and "Traceback" not in r.stderr,
+          r.stdout + r.stderr)
+
+
 def main():
     global SEED, FUZZ, QUICK, TIMEOUT
     argv = sys.argv[1:]
@@ -2279,6 +2361,9 @@ def main():
 
     # 139-145. свойства, дифференциал, фаззинг и мета-проверки
     property_and_meta_checks(tmp)
+
+    # 146. wav_lsb: LSB в сэмплах WAV (16/24-бит) и эхо-скрытие
+    checks_wav_lsb(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

@@ -545,6 +545,7 @@ def steps_for(path, deep=False, depth=0):
 
     if kind == "RIFF" or ext in (".wav",):
         add(("audiotools", [path, "--raw"], "морзе/DTMF", 40))
+        add(("wavlsb", [path], "LSB в сэмплах WAV", 40))
         if deep:
             add(("audio", [path], "спектрограмма", 60))
     elif kind in ("MP3", "OGG"):

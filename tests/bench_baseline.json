@@ -1,0 +1,17 @@
+{
+  "generated": "2026-11-12 18:16:43",
+  "cases": {
+    "lll_27": {
+      "median": 0.00599
+    },
+    "lll_48": {
+      "median": 0.037521
+    },
+    "find_flags_1mb": {
+      "median": 0.026614
+    },
+    "decode_auto_4kb": {
+      "median": 0.000286
+    }
+  }
+}

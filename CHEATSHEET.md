@@ -1,5 +1,17 @@
 # Шпаргалка по командам (Kali/Linux + Windows)
 
+## Сначала — окружение
+
+```bash
+python toolbox.py doctor                    # что есть и что деградирует
+python toolbox.py doctor --json             # то же машинно
+python toolbox.py doctor --require pcap     # код 1, если pcap не работает
+python toolbox.py doctor --list             # какие возможности проверяются
+python toolbox.py bench                     # скорость важных путей vs baseline
+python toolbox.py bench --only lll_27 --json
+python toolbox.py bench --update            # перезаписать baseline
+```
+
 ## Первый прогон по любому файлу
 
 ```bash
@@ -155,6 +167,9 @@ python crypto/prng_state.py lcg-trunc outs.txt --m <m> --a <a> --c <c> --shift 1
 python crypto/stream_sha256.py --cipher <hex> --key <...> --nonce <...>
 python crypto/stream_sha256.py --cipher <hex> --key <...> --nonce <...> --brute
 python crypto/otp_reuse.py --c1 <hex> --c2 <hex> --crib "the "
+python crypto/shamir.py --share 1:52 --share 2:68 --share 3:90 --share 4:118  # порог 3
+python crypto/shamir.py --file shares.txt --k 3 --robust                     # одна доля битая
+python crypto/shamir.py --crt --mod 3:2 --mod 5:3 --mod 7:2                  # CRT-остатки
 python crypto/classical.py vigenere-crack --text "<шифротекст>"
 python crypto/rsa_tool.py fermat --n <n> --e 65537 --cipher <c>
 python crypto/rsa_tool.py batch --moduli moduli.txt

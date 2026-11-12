@@ -42,6 +42,8 @@ REGISTRY = [
     ("", "solve", "solve.py", "автопилот: прогнать всё подходящее до флага"),
     ("", "hint", "toolbox.py", "разбор с объяснением: что вижу и почему"),
     ("", "auto", "", "определить тип и предложить действия"),
+    ("", "doctor", "doctor.py", "что установлено и что из-за этого не работает"),
+    ("", "bench", "tests/bench.py", "скорость важных путей и ловля регрессий"),
 
     ("stego", "lsb", "stego/lsb.py", "LSB одного канала / diff двух картинок"),
     ("stego", "alpha", "stego/alpha.py", "значения канала как ASCII"),
@@ -115,6 +117,8 @@ REGISTRY = [
     ("crypto", "otp", "crypto/otp_reuse.py", "two-time pad"),
     ("crypto", "stream", "crypto/stream_sha256.py", "SHA256-поток XOR"),
     ("crypto", "prngstate", "crypto/prng_state.py", "состояние ГПСЧ: MT19937, LCG, усечённый LCG"),
+    ("crypto", "shamir", "crypto/shamir.py",
+     "доли Шамира и CRT-остатки → секрет"),
 
     ("linux", "privesc", "linux/privesc.sh", "разведка прав"),
     ("linux", "gtfo", "linux/gtfobins.py", "GTFObins оффлайн"),

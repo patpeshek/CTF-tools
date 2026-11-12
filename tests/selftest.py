@@ -3741,6 +3741,70 @@ def main():
           and r.stdout.count("[+] H = ") == 1,
           r.stdout[-600:] + r.stderr)
 
+    # shamir: доли, битая доля, CRT, флаг
+    _p = (1 << 521) - 1
+    _secret = int.from_bytes(b"CTF{shamir_secret}", "big")
+    _coef = [_secret, 7, 3]
+
+    def _shamir_f(x):
+        return sum(c * pow(x, i, _p) for i, c in enumerate(_coef)) % _p
+
+    _args = ["--k", "3"]
+    for _x in (1, 2, 3, 4, 5):
+        _args += ["--share", f"{_x}:{_shamir_f(_x)}"]
+    r = run("crypto/shamir.py", *_args)
+    check("shamir flag", "CTF{shamir_secret}" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    r = run("crypto/shamir.py", "--share", "1:52", "--share", "2:68",
+            "--share", "3:90", "--share", "4:999", "--share", "5:152",
+            "--k", "3", "--robust")
+    check("shamir robust drops corrupt share",
+          "секрет: 42" in r.stdout and "отброшены" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    r = run("crypto/shamir.py", "--crt", "--mod", "3:2", "--mod", "5:3",
+            "--mod", "7:2")
+    check("shamir crt", "x = 23" in r.stdout and "M = 105" in r.stdout,
+          r.stdout[-400:] + r.stderr)
+
+    r = run("crypto/shamir.py", "--share", "1:123456789012345678901234567890",
+            "--share", "2:987654321098765432109876543210")
+    check("shamir refuses unknown field", r.returncode == 1 and "модуль" in r.stdout,
+          f"rc={r.returncode} " + r.stdout[-300:])
+
+    # doctor: схема, коды возврата и согласованность «возможность ↔ проверка»
+    r = run("doctor.py", "--json")
+    try:
+        _doc = json.loads(r.stdout)
+        _schema_ok = ({"python", "checks", "capabilities", "missing"}
+                      <= set(_doc) and len(_doc["checks"]) >= 10)
+    except Exception:
+        _doc, _schema_ok = {}, False
+    check("doctor json schema", _schema_ok, r.stdout[-400:] + r.stderr)
+    _crypto_ok = any(c["key"] == "Crypto" and c["ok"] for c in _doc.get("checks", []))
+    check("doctor caps vs checks",
+          bool(_doc) and all(k in _doc["capabilities"]
+                             for k in ("pcap", "image", "blocks"))
+          and _doc["capabilities"]["blocks"] == _crypto_ok,
+          repr(_doc.get("capabilities"))[:300])
+    r = run("doctor.py", "--require", "pcap")
+    check("doctor require pcap", r.returncode in (0, 1), f"rc={r.returncode}")
+    r = run("doctor.py", "--require", "nosuch")
+    check("doctor unknown cap", r.returncode == 2, f"rc={r.returncode}")
+
+    # bench: валидный JSON и отказ на неизвестном замере
+    r = run("tests/bench.py", "--only", "lll_27", "--repeat", "1", "--json")
+    try:
+        _b = json.loads(r.stdout)
+        _bench_ok = (_b["cases"]["lll_27"]["median"] > 0
+                     and _b["regressions"] == [])
+    except Exception:
+        _bench_ok = False
+    check("bench json", _bench_ok, r.stdout[-400:] + r.stderr)
+    r = run("tests/bench.py", "--only", "nope")
+    check("bench unknown case", r.returncode == 2, f"rc={r.returncode}")
+
     # 139-145. свойства, дифференциал, фаззинг и мета-проверки
     property_and_meta_checks(tmp)
 

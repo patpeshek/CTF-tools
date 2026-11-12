@@ -14,6 +14,8 @@
 | `solve` | автопилот: сам выбирает шаги по типу, идёт до первого флага; `--desc`/`--desc-file` — условие задачи (категория, подсказки, формат флага, пароли, адреса) меняет план; `--json` — итог одним JSON, `--events FILE\|-` — поток событий (схема: `MANUAL.md` §14) | `python toolbox.py solve file.bin --desc "XOR. Формат флага: ABC{...}"` |
 | `hint` | разбор с объяснением «что вижу → на что похоже → почему» | `python toolbox.py hint file.bin` |
 | `auto` | сам смотрит файл: тип, вложенные сигнатуры, флаги, архивы, DNS, WAV, защиты; даёт план команд | `python toolbox.py auto capture.pcap` |
+| `doctor` | что установлено, чего нет и что из-за этого не работает; `--require pcap,video` — код 1, если нельзя | `python toolbox.py doctor` |
+| `bench` | скорость важных путей (LLL, поиск флагов) и сравнение с baseline; `--strict` — код 1 при регрессии | `python toolbox.py bench --only lll_27` |
 | `all` | универсальный перебор: файлы/папки/строки, known-plaintext XOR по префиксу флага | `python toolbox.py all dump.bin` |
 | `triage` | первый прогон: тип, флаги, strings, base64, zip | `python toolbox.py triage dump/` |
 | `text` | вытащить текст из DOCX/PDF/ZIP | `python toolbox.py text doc.docx --out doc.txt` |
@@ -101,6 +103,7 @@
 | `otp` | two-time pad | `python toolbox.py otp --c1 ... --c2 ... --crib "the "` |
 | `prngstate` | состояние ГПСЧ: MT19937 (клон, назад/вперёд), LCG (m,a,c), усечённый LCG (решётка), XOR шифртекста | `python toolbox.py prngstate mt outs.txt --cipher <hex>` |
 | `stream` | SHA256-поток XOR | `python toolbox.py stream --cipher ... --key ... --nonce ... --brute` |
+| `shamir` | доли Шамира → секрет (поле подбирается по долям, `--robust` отбрасывает битые), CRT-остатки | `python toolbox.py shamir --share 1:52 --share 2:68 --share 3:90` / `--crt --mod 3:2` |
 
 ## Blockchain
 

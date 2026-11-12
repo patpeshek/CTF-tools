@@ -315,6 +315,8 @@ python stego/wav_lsb.py sound.wav                   # LSB сэмплов WAV (8/
 python stego/wav_lsb.py sound.wav --echo --seg 4096 --d0 60 --d1 120  # эхо-скрытие
 python stego/carve.py blob.bin --out carved        # ZIP ищется по EOCD и распаковывается
 python stego/qr_scan.py pic.png
+python stego/stego_crack.py pic.jpg --desc "пароль: s3cr3t"   # steghide/outguess/stegseek перебором
+python stego/stego_crack.py pic.jpg --wordlist rockyou.txt --max 20000
 python stego/whitespace.py file.txt
 python stego/esolang.py file.bf
 python crypto/obscure.py auto --text "..."

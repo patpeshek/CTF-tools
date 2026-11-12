@@ -59,6 +59,7 @@ REGISTRY = [
     ("stego", "audiotools", "stego/audio_tools.py", "DTMF и морзе из WAV"),
     ("stego", "wavlsb", "stego/wav_lsb.py", "LSB в сэмплах WAV + эхо-скрытие"),
     ("stego", "qr", "stego/qr_scan.py", "найти и прочитать QR"),
+    ("stego", "stegopass", "stego/stego_crack.py", "перебор паролей steghide/outguess/stegseek"),
 
     ("forensic", "zipmeta", "forensic/zipmeta.py", "комментарии/extra ZIP"),
     ("forensic", "exif", "forensic/exif.py", "метаданные файла"),

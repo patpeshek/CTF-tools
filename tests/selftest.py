@@ -1826,6 +1826,50 @@ def checks_wav_lsb(tmp):
     check("stego/wav_lsb.py not-wav",
           r.returncode == 0 and "не PCM WAV" in r.stdout and "Traceback" not in r.stderr,
           r.stdout + r.stderr)
+def checks_stego_crack(tmp):
+    """stego/stego_crack.py: подставной steghide находит флаг; без тулз — подсказка."""
+    fakebin = os.path.join(tmp, "stego_fakebin")
+    os.makedirs(fakebin, exist_ok=True)
+    pw = "hunter2stego"
+    flag = "CTF{fake_steghide_" + hashlib.md5(pw.encode()).hexdigest()[:8] + "}"
+
+    # подставной steghide: "извлекает" флаг только при верном пароле (-p),
+    # пишет в файл, указанный через -xf; иначе выходит с ошибкой.
+    impl = os.path.join(fakebin, "steghide_impl.py")
+    with open(impl, "w", encoding="utf-8") as f:
+        f.write(
+            "import sys\n"
+            "a = sys.argv[1:]\n"
+            "def opt(k):\n"
+            "    return a[a.index(k) + 1] if k in a and a.index(k) + 1 < len(a) else None\n"
+            "pw = opt('-p'); xf = opt('-xf')\n"
+            f"if pw == {pw!r} and xf:\n"
+            f"    open(xf, 'wb').write({flag!r}.encode() + b'\\n'); sys.exit(0)\n"
+            "sys.stderr.write('could not extract any data with that passphrase!\\n')\n"
+            "sys.exit(1)\n")
+    # .bat-обёртка: shutil.which найдёт её по PATHEXT, subprocess запустит
+    bat = os.path.join(fakebin, "steghide.bat")
+    with open(bat, "w", encoding="utf-8") as f:
+        f.write("@echo off\r\n\"%s\" \"%s\" %%*\r\n" % (PY, impl))
+
+    carrier = os.path.join(tmp, "stego_crack_carrier.jpg")
+    Image.new("RGB", (16, 16), (20, 40, 60)).save(carrier, "JPEG")
+
+    # (a) подставной steghide первым на PATH — флаг и пароль должны найтись
+    env_a = {"PATH": fakebin + os.pathsep + os.environ.get("PATH", "")}
+    r = run("stego/stego_crack.py", carrier, "--desc", f'пароль "{pw}" в картинке',
+            "--no-sibling", env=env_a)
+    ok_a = (flag in r.stdout and pw in r.stdout and "steghide" in r.stdout
+            and "Traceback" not in (r.stderr or "") and r.returncode == 0)
+    check("stego_crack: подставной steghide находит флаг", ok_a,
+          (r.stdout or "")[-900:] + (r.stderr or "")[-400:])
+
+    # (b) инструментов нет на PATH — чистая подсказка, без трейсбека
+    r2 = run("stego/stego_crack.py", carrier, "--no-sibling")
+    ok_b = ("Traceback" not in (r2.stderr or "") and r2.returncode == 0
+            and "steghide extract -sf" in r2.stdout)
+    check("stego_crack: без тулз — подсказка, не трейсбек", ok_b,
+          (r2.stdout or "")[-700:] + (r2.stderr or "")[-400:])
 
 
 def main():
@@ -3870,6 +3914,8 @@ def main():
     checks_stego_new(tmp)
     # 146. wav_lsb: LSB в сэмплах WAV (16/24-бит) и эхо-скрытие
     checks_wav_lsb(tmp)
+    # stego/stego_crack.py: перебор паролей через внешние тулзы
+    checks_stego_crack(tmp)
 
     print(f"\n=== PASS: {passed}  FAIL: {failed} ===")
     sys.exit(1 if failed else 0)

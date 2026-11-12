@@ -514,6 +514,7 @@ def steps_for(path, deep=False, depth=0):
     if kind == "PNG":
         add(("png_chunks", [path], "нестандартные чанки/текст", 30))
         add(("lsb", [path], "младшие биты", 40))
+        add(("zsteg", [path], "перебор LSB-раскладок", 40))
         add(("alpha", [path], "альфа-канал", 40))
         add(("qr", [path], "QR на картинке", 30))
         add(("ocr", [path], "текст с картинки", 40))

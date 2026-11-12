@@ -284,6 +284,17 @@ def checks_stego_new(tmp):
     check("zsteg directory", "Traceback" not in r.stderr and "[-]" in r.stdout,
           r.stdout + r.stderr)
 
+    # #96: классический 1-LSB R,G,B в BMP / TIFF / WEBP(lossless): reader + solve
+    f96 = "CTF{" + "fmt_lsb_ok}"
+    for ext, fmt, kw in (("bmp", "BMP", {}), ("tiff", "TIFF", {}),
+                         ("webp", "WEBP", {"lossless": True, "exact": True})):
+        p = os.path.join(tmp, "classic." + ext)
+        _lsb_image(p, fmt, f96, **kw)
+        r = run("stego/lsb_brute.py", p)
+        check(f"zsteg {ext} reader", f96 in r.stdout, r.stdout[-400:] + r.stderr)
+        r = run("solve.py", p, "--time", 40)
+        check(f"solve {ext} lsb", f96 in r.stdout, r.stdout[-600:] + r.stderr)
+
 
 def main():
     global SEED, FUZZ, QUICK, TIMEOUT

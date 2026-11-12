@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,14 @@ try:
     import runner as sandbox  # site/sandbox/runner.py (#142)
 except Exception:  # pragma: no cover
     sandbox = None
+
+sys.path.insert(0, os.path.join(HERE, "ai"))
+try:
+    import deepseek  # site/ai/deepseek.py (#186)
+except Exception:  # pragma: no cover
+    deepseek = None
+
+AI_FLAG = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,15}\{[^{}\r\n]{2,120}\}")
 
 MAX_UPLOAD = 64 * 1024 * 1024
 JOB_ROOT = os.path.join(tempfile.gettempdir(), "ctf_site_jobs")
@@ -65,7 +74,7 @@ def engine_events(path: str, budget: float, flag_prefix: str | None):
         return
     # Прямой локальный режим (без изоляции).
     cmd = [sys.executable, os.path.join(ROOT, "solve.py"), path,
-           "--events", "-", "--json", "--time", str(budget)]
+           "--events", "-", "--time", str(budget)]
     if flag_prefix:
         cmd += ["--flag-prefix", flag_prefix]
     yield {"event": "runner_note", "t": 0.0,
@@ -78,7 +87,7 @@ def engine_events(path: str, budget: float, flag_prefix: str | None):
     try:
         for line in proc.stdout:
             ev = sandbox.parse_event_line(line) if sandbox else _parse(line)
-            if ev:
+            if ev and ev.get("event"):
                 yield ev
             if time.time() > deadline:
                 proc.kill()
@@ -103,19 +112,62 @@ def _parse(line: str):
         return None
 
 
+def _ai_assist(job, q, summary: str):
+    """Если кит не нашёл флаг — вызвать ИИ (DeepSeek) и вылить разбор в тот же
+    поток через существующие события (lead/flag/runner_note). Интерфейс не
+    меняется: страница уже умеет показывать lead и flag."""
+    if not deepseek or not os.environ.get("DEEPSEEK_API_KEY"):
+        q.put({"event": "runner_note", "t": 0.0,
+               "note": "ИИ выключен: нет DEEPSEEK_API_KEY в окружении сервера"})
+        return
+    q.put({"event": "runner_note", "t": 0.0,
+           "note": "кит не нашёл флаг — подключаю ИИ (DeepSeek)…"})
+    try:
+        data = open(job["path"], "rb").read(48000)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("latin-1", "replace")
+        ans = deepseek.analyze(text, solve_summary=summary,
+                               filename=os.path.basename(job["path"]))
+    except Exception as e:
+        q.put({"event": "runner_note", "t": 0.0, "note": f"ИИ недоступен: {e}"})
+        return
+    shown = 0
+    for line in ans.splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        q.put({"event": "lead", "t": 0.0, "tool": "ИИ", "text": line[:300]})
+        shown += 1
+        if shown >= 60:
+            break
+    m = AI_FLAG.search(ans)
+    if m:
+        job["flag"] = m.group(0)
+        q.put({"event": "flag", "t": 0.0, "tool": "ИИ", "flag": m.group(0)})
+
+
 def _worker(job_id: str):
     job = _jobs[job_id]
     q: queue.Queue = job["q"]
+    tried = []
     try:
         for ev in engine_events(job["path"], job["budget"], job["prefix"]):
             q.put(ev)
+            if ev.get("event") == "step_end":
+                tried.append(f"{ev.get('tool')}:{ev.get('status')}")
             if ev.get("event") == "flag" and ev.get("flag"):
                 job["flag"] = ev["flag"]
     except Exception as e:  # pragma: no cover
         q.put({"event": "runner_note", "t": 0.0, "note": f"ошибка запуска: {e}"})
-    finally:
-        q.put({"event": "runner_end", "t": 0.0, "flag": job.get("flag")})
-        q.put(None)
+    try:
+        if not job.get("flag"):
+            _ai_assist(job, q, "; ".join(tried[:40]))
+    except Exception as e:  # pragma: no cover
+        q.put({"event": "runner_note", "t": 0.0, "note": f"ИИ сбой: {e}"})
+    q.put({"event": "runner_end", "t": 0.0, "flag": job.get("flag")})
+    q.put(None)
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -57,6 +57,7 @@ REGISTRY = [
     ("stego", "esolang", "stego/esolang.py", "Brainfuck/Ook/Cow/Befunge/Deadfish"),
     ("stego", "audio", "stego/audio_spectrum.py", "спектрограмма WAV"),
     ("stego", "audiotools", "stego/audio_tools.py", "DTMF и морзе из WAV"),
+    ("stego", "wavlsb", "stego/wav_lsb.py", "LSB в сэмплах WAV + эхо-скрытие"),
     ("stego", "qr", "stego/qr_scan.py", "найти и прочитать QR"),
 
     ("forensic", "zipmeta", "forensic/zipmeta.py", "комментарии/extra ZIP"),

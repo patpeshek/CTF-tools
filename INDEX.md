@@ -37,6 +37,7 @@
 | `esolang` | Brainfuck/Ook/Cow/Befunge/Deadfish | `python toolbox.py esolang file.bf` |
 | `audio` | спектрограмма WAV + пики | `python toolbox.py audio a.wav --peaks` |
 | `audiotools` | DTMF и морзе из WAV (проверка `.-` через `--raw`, код в нижнем регистре) | `python toolbox.py audiotools a.wav --raw` |
+| `wavlsb` | LSB в сэмплах WAV (8/16/24/32 бит, моно/стерео) + эхо-скрытие | `python toolbox.py wavlsb a.wav` / `... --echo --seg 4096 --d0 60 --d1 120` |
 | `qr` | найти и прочитать QR | `python toolbox.py qr a.png` |
 
 ## Forensic

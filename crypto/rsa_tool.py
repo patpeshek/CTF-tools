@@ -32,6 +32,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -818,6 +819,332 @@ def cmd_auto(args):
             print("[!!!] ФЛАГ:", f)
 
 
+# ---------------------------------------------------------------- решётки
+
+
+def _nearest(a: int, b: int) -> int:
+    if a >= 0:
+        return (2 * a + b) // (2 * b)
+    return -((-2 * a + b) // (2 * b))
+
+
+def _lll_init(B):
+    n = len(B)
+    m = len(B[0])
+    G = [[sum(B[i][k] * B[j][k] for k in range(m)) for j in range(n)]
+         for i in range(n)]
+    d = [0] * (n + 1)
+    d[0] = 1
+    lam = [[0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1):
+            u = G[i][j]
+            for k in range(j):
+                num = d[k + 1] * u - lam[i][k] * lam[j][k]
+                if num % d[k]:
+                    raise ArithmeticError("LLL: неточное деление")
+                u = num // d[k]
+            if j < i:
+                lam[i][j] = u
+            else:
+                d[i + 1] = u
+                if u == 0:
+                    raise ValueError("LLL: векторы линейно зависимы")
+    return d, lam
+
+
+def lll(B, delta=(3, 4)):
+    """LLL с инкрементальными обновлениями (Cohen 2.6.3), без GS-пересчёта."""
+    B = [[int(x) for x in row] for row in B]
+    n = len(B)
+    if n <= 1:
+        return B
+    d, lam = _lll_init(B)
+    dn, dd = delta
+    k = 1
+    while k < n:
+        for j in range(k - 1, -1, -1):
+            if 2 * abs(lam[k][j]) > d[j + 1]:
+                q = _nearest(lam[k][j], d[j + 1])
+                B[k] = [B[k][i] - q * B[j][i] for i in range(len(B[k]))]
+                lam[k][j] -= q * d[j + 1]
+                for i in range(j):
+                    lam[k][i] -= q * lam[j][i]
+        if dd * d[k + 1] * d[k - 1] >= (dn * d[k] * d[k]
+                                        - dd * lam[k][k - 1] ** 2):
+            k += 1
+        else:
+            B[k], B[k - 1] = B[k - 1], B[k]
+            for j in range(k - 2, -1, -1):
+                lam[k][j], lam[k - 1][j] = lam[k - 1][j], lam[k][j]
+            l = lam[k][k - 1]
+            Bk = (d[k - 1] * d[k + 1] + l * l) // d[k]
+            for i in range(k + 1, n):
+                t = lam[i][k]
+                lam[i][k] = (d[k + 1] * lam[i][k - 1] - l * t) // d[k]
+                lam[i][k - 1] = (Bk * t + l * lam[i][k]) // d[k + 1]
+            d[k] = Bk
+            k = max(k - 1, 1)
+    return B
+
+
+def _pmul(a, b):
+    out = [0] * (len(a) + len(b) - 1)
+    for i, x in enumerate(a):
+        if x:
+            for j, y in enumerate(b):
+                if y:
+                    out[i + j] += x * y
+    return out
+
+
+def _ppow(a, k):
+    r = [1]
+    base = a
+    while k:
+        if k & 1:
+            r = _pmul(r, base)
+        base = _pmul(base, base)
+        k >>= 1
+    return r
+
+
+def _vector_roots(rows, X):
+    """Корни из коротких векторов: общий делитель пар полиномов, затем корни."""
+    from sympy import Poly, Symbol, gcd as sym_gcd
+    x = Symbol("x")
+    polys = []
+    for row in rows:
+        coef = [row[j] // pow(X, j) for j in range(len(row))]
+        while len(coef) > 1 and coef[-1] == 0:
+            coef.pop()
+        if len(coef) <= 1:
+            continue
+        polys.append(Poly(sum(c * x ** i for i, c in enumerate(coef)), x))
+    roots = set()
+    for i in range(len(polys)):
+        for j in range(i + 1, len(polys)):
+            try:
+                g = sym_gcd(polys[i], polys[j])
+            except Exception:
+                continue
+            if 1 <= g.degree() <= 4:
+                for r in g.ground_roots():
+                    if getattr(r, "is_Integer", False):
+                        roots.add(int(r))
+    return roots
+
+
+def coppersmith(f, N: int, X: int, beta=1.0, m=None, t=None):
+    """Малые корни f(x) ≡ 0 mod N (beta=1) или mod p | N (beta<1)."""
+    f = [int(c) for c in f]
+    while len(f) > 1 and f[-1] == 0:
+        f.pop()
+    d = len(f) - 1
+    if m is None:
+        m = 3 if beta >= 1 else 5
+    if t is None:
+        t = 0 if beta >= 1 else m
+    polys = []
+    for i in range(m):
+        base = _ppow(f, i)
+        coef = [c * pow(N, m - i) for c in base]
+        for j in range(d):
+            polys.append([0] * j + coef)
+    fm = _ppow(f, m)
+    for i in range(t):
+        polys.append([0] * i + fm)
+    dim = d * m + t
+    B = []
+    for p in polys:
+        row = [0] * dim
+        for j, c in enumerate(p):
+            if j < dim:
+                row[j] = c * pow(X, j)
+        B.append(row)
+    return sorted(x for x in _vector_roots(lll(B), X) if 0 <= x < X)
+
+
+def cmd_coppersmith(args):
+    N, e, c = to_int(args.n), args.e, to_int(args.c)
+    hi = to_int(args.known_high) if args.known_high else 0
+    A = hi << args.unknown_bits
+    X = 1 << args.unknown_bits
+    f = [math.comb(e, k) * A ** (e - k) for k in range(e + 1)]
+    f[0] -= c
+    print(f"[i] e={e}, известно {A.bit_length()} бит, неизвестно {args.unknown_bits}")
+    roots = coppersmith(f, N, X, beta=1, m=args.m)
+    hit = None
+    for r in roots:
+        if pow(A + r, e, N) == c % N:
+            hit = A + r
+            break
+    if hit is None:
+        print("[-] корень не найден (увеличь --m или проверь границы)")
+        return 1
+    show(hit)
+    return 0
+
+
+def cmd_partial_p(args):
+    N = to_int(args.n)
+    bits = args.unknown_bits
+    ph = to_int(args.p_high)
+    roots = coppersmith([ph << bits, 1], N, 1 << bits,
+                        beta=0.5, m=args.m, t=args.t)
+    print(f"[i] известно {ph.bit_length()} бит p, неизвестно {bits}")
+    for r in roots:
+        p = (ph << bits) | r
+        if p > 1 and N % p == 0:
+            q = N // p
+            print(f"[+] p = {p}")
+            print(f"[+] q = {q}")
+            if args.e and args.cipher:
+                d = pow(args.e, -1, (p - 1) * (q - 1))
+                show(pow(to_int(args.cipher), d, N))
+            return 0
+    print("[-] p не восстановился")
+    return 1
+
+
+def cmd_lsb_oracle(args):
+    N, e = to_int(args.n), args.e
+    c0 = to_int(args.c)
+    c = c0
+    if args.bits:
+        bits = [int(b) for b in re.split(r"[,\s]+", args.bits.strip()) if b]
+    elif args.oracle_cmd:
+        bits = []
+        for _ in range(N.bit_length()):
+            c = c * pow(2, e, N) % N
+            r = subprocess.run(args.oracle_cmd, shell=True, input=str(c),
+                               capture_output=True, text=True, timeout=30)
+            out = (r.stdout or "").strip()
+            if not out:
+                print(f"[-] оракул ничего не ответил (rc={r.returncode})")
+                return 1
+            bits.append(1 if out[0] == "1" else 0)
+        c = c0
+    else:
+        print("[-] нужен --bits или --oracle-cmd")
+        return 1
+
+    lower, upper = 0, N
+    for bit in bits:
+        c = c * pow(2, e, N) % N
+        mid = (lower + upper) // 2
+        if bit:
+            lower = mid
+        else:
+            upper = mid
+    m = upper
+    # округление на каждом шаге даёт дрейф вниз; добираем точным перебором
+    if pow(m, e, N) != c0 % N:
+        lo = max(0, upper - 65536)
+        hi = min(N, upper + 65537)
+        for cand in range(lo, hi):
+            if pow(cand, e, N) == c0 % N:
+                m = cand
+                break
+    show(m)
+    if pow(m, e, N) == c0 % N:
+        print("[+] проверка: m^e mod n совпал")
+    else:
+        print("[!] m^e mod n не совпал — битов мало или они неверные")
+    return 0
+
+
+def _bf_attempt(N, e, m, t, delta, top=10):
+    from sympy import Poly, expand, resultant, symbols
+    x, y = symbols("x y")
+    A = N + 1
+    f = 1 + x * (A + y)
+    X = int(2 * N ** delta)
+    Y = 2 * isqrt(N)
+    polys = []
+    for k in range(m + 1):
+        fk = expand(f ** k)
+        for i in range(m - k + 1):
+            polys.append(expand(x ** i * fk * e ** (m - k)))
+    for k in range(m + 1):
+        fk = expand(f ** k)
+        for j in range(1, t + 1):
+            polys.append(expand(y ** j * fk * e ** (m - k)))
+
+    mons = set()
+    for p in polys:
+        mons |= set(p.as_poly(x, y).monoms())
+    mons = sorted(mons, key=lambda mt: (sum(mt), mt))
+    B = []
+    for p in polys:
+        row = [0] * len(mons)
+        pd = p.as_poly(x, y)
+        for mon, coef in zip(pd.monoms(), pd.coeffs()):
+            row[mons.index(mon)] = int(coef) * X ** mon[0] * Y ** mon[1]
+        B.append(row)
+
+    R = lll(B)
+    cands = []
+    for row in R[:top]:
+        poly = 0
+        for coef, (i, j) in zip(row, mons):
+            if coef:
+                poly += (coef // (X ** i * Y ** j)) * x ** i * y ** j
+        cands.append(poly)
+
+    for a in range(len(cands)):
+        for b in range(a + 1, len(cands)):
+            res = resultant(cands[a], cands[b], x)
+            if res == 0:
+                continue
+            try:
+                pr = Poly(res, y)
+            except Exception:
+                continue
+            if pr.degree() > 10:
+                continue
+            for root in pr.ground_roots():
+                if not getattr(root, "is_Integer", False):
+                    continue
+                y0 = int(root)
+                try:
+                    kk = (-pow(A + y0, -1, e)) % e
+                except ValueError:
+                    continue
+                num = 1 + kk * (A + y0)
+                if num % e:
+                    continue
+                d = num // e
+                if d > 0 and pow(2, e * d, N) == 2:
+                    return d, kk, y0
+    return None
+
+
+def cmd_boneh_durfee(args):
+    N, e = to_int(args.n), to_int(args.e)
+    if args.m is not None:
+        grid = [(args.m, args.t or 2, args.delta or 0.28)]
+    else:
+        grid = [(3, 1, 0.27), (4, 2, 0.27), (4, 2, 0.26),
+                (5, 2, 0.27), (5, 3, 0.28)]
+    for m, t, delta in grid:
+        print(f"[i] попытка m={m}, t={t}, delta={delta}")
+        try:
+            res = _bf_attempt(N, e, m, t, delta)
+        except ValueError as exc:
+            print(f"[!] {exc}")
+            continue
+        if res:
+            d, kk, y0 = res
+            print(f"[+] d = {d}")
+            print(f"[+] k = {kk}, p+q = {-y0}")
+            if args.cipher:
+                show(pow(to_int(args.cipher), d, N))
+            return 0
+    print("[-] не нашлось — увеличь --delta или задай --m/--t вручную")
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -886,6 +1213,42 @@ def main():
                     help='строки "n:c", можно несколько через запятую')
     br.add_argument("--file", help="файл со строками n:c")
     br.set_defaults(func=cmd_broadcast)
+
+    cp = sub.add_parser("coppersmith", help="Coppersmith: частично известный m")
+    cp.add_argument("--n", required=True)
+    cp.add_argument("--e", type=int, required=True)
+    cp.add_argument("--c", required=True)
+    cp.add_argument("--known-high", default="", help="известные старшие биты m")
+    cp.add_argument("--unknown-bits", type=int, required=True)
+    cp.add_argument("--m", type=int, default=3)
+    cp.set_defaults(func=cmd_coppersmith)
+
+    pp = sub.add_parser("partial-p", help="Coppersmith: часть p известна")
+    pp.add_argument("--n", required=True)
+    pp.add_argument("--p-high", required=True, help="p >> unknown_bits")
+    pp.add_argument("--unknown-bits", type=int, required=True)
+    pp.add_argument("--m", type=int, default=5)
+    pp.add_argument("--t", type=int, default=5)
+    pp.add_argument("--e", type=int)
+    pp.add_argument("--cipher")
+    pp.set_defaults(func=cmd_partial_p)
+
+    lo = sub.add_parser("lsb-oracle", help="оракул младшего бита")
+    lo.add_argument("--n", required=True)
+    lo.add_argument("--e", type=int, default=65537)
+    lo.add_argument("--c", required=True)
+    lo.add_argument("--bits", help="готовые биты через запятую")
+    lo.add_argument("--oracle-cmd", help="команда: ciphertext в stdin, 0/1 в stdout")
+    lo.set_defaults(func=cmd_lsb_oracle)
+
+    bd = sub.add_parser("boneh-durfee", help="малая d (до N^0.292)")
+    bd.add_argument("--n", required=True)
+    bd.add_argument("--e", required=True)
+    bd.add_argument("--m", type=int, default=None)
+    bd.add_argument("--t", type=int, default=None)
+    bd.add_argument("--delta", type=float, default=None)
+    bd.add_argument("--cipher")
+    bd.set_defaults(func=cmd_boneh_durfee)
 
     au = sub.add_parser("auto", help="числа из любого текста -> все атаки подряд")
     au.add_argument("file", nargs="?", help="файл с числами (или --text)")

@@ -106,7 +106,8 @@ def model_ready() -> bool:
 
 # ------------------------------------------------------------------ движок кита
 
-def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None):
+def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None,
+                   stop_check=None):
     cmd = [sys.executable, os.path.join(ROOT, "solve.py"), path,
            "--events", "-", "--time", str(int(budget))]
     if deep:
@@ -123,9 +124,33 @@ def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None):
     except OSError as exc:
         yield {"event": "runner_note", "note": f"не запустился кит: {exc}"}
         return
+    lines: queue.Queue = queue.Queue()
+
+    def reader():
+        try:
+            for line in proc.stdout:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    threading.Thread(target=reader, daemon=True).start()
     deadline = time.time() + budget + 30
     try:
-        for line in proc.stdout:
+        while True:
+            if stop_check and stop_check():
+                proc.kill()
+                yield {"event": "runner_note", "note": "остановлено пользователем"}
+                break
+            try:
+                line = lines.get(timeout=0.5)
+            except queue.Empty:
+                if time.time() > deadline:
+                    proc.kill()
+                    yield {"event": "runner_note", "note": "кит: таймаут"}
+                    break
+                continue
+            if line is None:
+                break
             line = line.strip()
             if not line:
                 continue
@@ -137,10 +162,6 @@ def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None):
                 if ev["event"] == "done":
                     continue
                 yield ev
-            if time.time() > deadline:
-                proc.kill()
-                yield {"event": "runner_note", "note": "кит: таймаут"}
-                break
     finally:
         try:
             proc.stdout.close()
@@ -152,7 +173,8 @@ def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None):
 def _agent_events(job: dict):
     if not (engine and model_ready()):
         return
-    ws = engine.Workspace(job["work"])
+    ws = engine.Workspace(job["work"],
+                          cancel=lambda: job.get("stop", False))
     task = job["task"] or ""
     if job["inputs"]:
         lines = [f"[{i.get('role') or 'данные'}] {i.get('value', '')}"
@@ -238,7 +260,8 @@ def worker(job_id: str):
     def stage_kit():
         try:
             for ev in toolkit_events(single, job["budget"], job["deep"],
-                                     job["prefix"]):
+                                     job["prefix"],
+                                     stop_check=lambda: job.get("stop")):
                 out.put(("kit", ev))
         except Exception as exc:  # pragma: no cover
             out.put(("kit", {"event": "runner_note",
@@ -285,7 +308,8 @@ def worker(job_id: str):
             break
 
     job["flag"] = flag
-    job["status"] = "done" if flag else "no_flag"
+    job["status"] = ("stopped" if job.get("stop")
+                     else ("done" if flag else "no_flag"))
     saved = _cache_artifacts(job)
     _emit(job, {"event": "runner_end", "flag": flag, "cached": saved[:10]})
     with _lock:

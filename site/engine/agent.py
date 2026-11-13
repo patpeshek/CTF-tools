@@ -62,8 +62,9 @@ def _tool_name_ok(name: str) -> bool:
 class Workspace:
     """Рабочая папка задачи: всё внутри корня, ничего наружу."""
 
-    def __init__(self, root: str):
+    def __init__(self, root: str, cancel=None):
         self.root = os.path.abspath(root)
+        self.cancel = cancel
 
     def safe(self, rel: str) -> str:
         rel = (rel or "").replace("\\", "/").lstrip("/")
@@ -95,23 +96,38 @@ class Workspace:
                 rows.append(f"{os.path.getsize(path):>10}  {rel}")
         return "\n".join(rows) or "(пусто)"
 
+    def _exec(self, argv, timeout: int, shell: bool = False) -> str:
+        try:
+            proc = subprocess.Popen(argv, cwd=self.root, shell=shell,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True,
+                                    encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return f"OSERROR: {exc}"
+        end = time.time() + timeout
+        while True:
+            if self.cancel and self.cancel():
+                proc.kill()
+                proc.communicate()
+                return "ОСТАНОВЛЕНО пользователем"
+            try:
+                out, err = proc.communicate(timeout=0.4)
+                break
+            except subprocess.TimeoutExpired:
+                if time.time() > end:
+                    proc.kill()
+                    proc.communicate()
+                    return f"TIMEOUT {timeout}s"
+        text = ((out or "") + (err or "")).strip()
+        if len(text) > MAX_OUT:
+            text = text[:MAX_OUT] + "\n...[обрезано]"
+        return f"rc={proc.returncode}\n{text}"
+
     def run(self, cmd: str, timeout: int = DEFAULT_CMD_TIMEOUT) -> str:
         ok, why = guard.check_command(cmd)
         if not ok:
             return f"ОТКАЗ: {why}"
-        try:
-            proc = subprocess.run(cmd, cwd=self.root, shell=True,
-                                  capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace",
-                                  timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return f"TIMEOUT {timeout}s"
-        except OSError as exc:
-            return f"OSERROR: {exc}"
-        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
-        if len(out) > MAX_OUT:
-            out = out[:MAX_OUT] + "\n...[обрезано]"
-        return f"rc={proc.returncode}\n{out}"
+        return self._exec(cmd, timeout, shell=True)
 
     def run_py(self, code: str, timeout: int = DEFAULT_CMD_TIMEOUT) -> str:
         fd, path = tempfile.mkstemp(suffix=".py", dir=self.root)
@@ -119,8 +135,8 @@ class Workspace:
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(code)
         try:
-            return self.run(f'"{sys.executable}" -I "{os.path.basename(path)}"',
-                            timeout=timeout)
+            return self._exec([sys.executable, "-I", os.path.basename(path)],
+                              timeout)
         finally:
             try:
                 os.remove(path)
@@ -135,18 +151,7 @@ class Workspace:
         if not os.path.isfile(TOOLBOX):
             return f"ОТКАЗ: не найден {TOOLBOX}"
         argv = [sys.executable, TOOLBOX, name] + [str(a) for a in args][:20]
-        try:
-            proc = subprocess.run(argv, cwd=self.root, capture_output=True,
-                                  text=True, encoding="utf-8",
-                                  errors="replace", timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return f"TIMEOUT {timeout}s"
-        except OSError as exc:
-            return f"OSERROR: {exc}"
-        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
-        if len(out) > MAX_OUT:
-            out = out[:MAX_OUT] + "\n...[обрезано]"
-        return f"rc={proc.returncode}\n{out}"
+        return self._exec(argv, timeout)
 
 
 SYSTEM = """Ты автономный решатель CTF-задач.
@@ -180,6 +185,9 @@ carve, chain, ws, audio, pcap, dns, jwt, lsb, zip, sqlite, elf и другие.
   * Никакой отправки файлов и данных наружу.
   * Для задач, которым нужен интернет, используй только разрешённые адреса
     из условия; если сети нет — верни need_service.
+  * Не используй echo в терминале — ни для вывода текста, ни для записи файлов,
+    тем более с русским текстом. Для файлов есть write, для проверок — py.
+    Терминал нужен только для запуска программ и утилит.
   * Если флага нет — НЕ выдумывай его. Верни answer/not_found с короткой
     причиной (что проверил и чего не хватило).
   * Флаг возвращай только когда он реально был в выводе команды.
@@ -316,7 +324,7 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             started = time.time()
             yield {"event": "agent_step", "n": step,
                    "tool": f"tool:{name}",
-                   "detail": " ".join(str(a) for a in args)[:100]}
+                   "detail": f"аргументов: {len(args)}"}
             result = ws.toolbox(name, args)
             yield {"event": "agent_step", "n": step,
                    "tool": f"tool:{name}",
@@ -326,7 +334,7 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             cmd = str(action.get("cmd", ""))
             allowed, why = guard.check_command(cmd)
             yield {"event": "agent_step", "n": step, "tool": "bash",
-                   "detail": (cmd if allowed else f"отказ: {why}")[:120]}
+                   "detail": "выполняю…" if allowed else f"отказ: {why}"[:80]}
             result = ws.run(cmd, timeout=cmd_timeout) if allowed else f"ОТКАЗ: {why}"
             if allowed:
                 yield {"event": "agent_step", "n": step, "tool": "bash",

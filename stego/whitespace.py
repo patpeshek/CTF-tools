@@ -342,6 +342,32 @@ def _pack(bits: str, width: int, offset: int, lsb: bool) -> bytes:
     return bytes(out)
 
 
+def _extra_families(bits: str):
+    """Нестандартные упаковки битов: 7+чётность, повтор×3, 6 бит, цифры 0..7."""
+    out = []
+    # 7 бит данных + 1 бит чётности на каждые 8 символов
+    for parity_at in (7, 0):
+        kept = "".join(b for i, b in enumerate(bits) if i % 8 != parity_at)
+        for offset in range(4):
+            for lsb in (False, True):
+                out.append((f"7 бит + чётность (выброшен бит {parity_at}), "
+                            f"сдвиг {offset}{', LSB' if lsb else ''}",
+                            _pack(kept, 7, offset, lsb)))
+    # каждый бит повторён трижды — берём большинство
+    if len(bits) >= 30:
+        voted = "".join("1" if g.count("1") > 1 else "0"
+                        for g in (bits[i:i + 3] for i in range(0, len(bits) - 2, 3)))
+        for offset in range(3):
+            out.append((f"повтор×3, сдвиг {offset}", _pack(voted, 8, offset, False)))
+    # 6 бит на символ (base64-алфавит → латиница/цифры)
+    b64 = ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+    for offset in range(6):
+        chars = [b64[int(bits[i:i + 6], 2)]
+                 for i in range(offset, len(bits) - 5, 6)]
+        out.append((f"6 бит, сдвиг {offset}", "".join(chars).encode()))
+    return out
+
+
 def brute_candidates(text: str, limit: int = 6):
     """Все разумные пробельные схемы → лучшие кандидаты [(score, name, bytes)]."""
     lines = text.splitlines()
@@ -369,6 +395,9 @@ def brute_candidates(text: str, limit: int = 6):
                 if direction == "реверс потока":
                     parts = ["".join(parts)[::-1]]
                 joined = "".join(parts)
+                for name, data in _extra_families(joined):
+                    add(f"{sname}, {'таб=1' if space_is_zero else 'пробел=1'}, "
+                        f"{direction}, {name}", data)
                 for per_line in (False, True):
                     units = parts if per_line else [joined]
                     for width in (8, 7, 6, 5):
@@ -440,8 +469,48 @@ def run_brute(text: str, limit: int = 6):
     return flags
 
 
+def run_structure(text: str):
+    """Структурный разбор хвостового whitespace: токены, гистограммы, энтропия.
+
+    Нужен, когда биты «не читаются»: видно, похоже ли содержимое на случайный
+    паддинг (тогда данные спрятаны иначе — в позициях, счётчиках, порядке).
+    """
+    lines = text.splitlines()
+    rows = [ln[len(ln.rstrip(" \t\r")):] for ln in lines]
+    rows = [r for r in rows if r]
+    total = sum(len(r) for r in rows)
+    spaces = sum(r.count(" ") for r in rows)
+    tabs = sum(r.count("\t") for r in rows)
+    print(f"\n[структура хвостов] строк с хвостами: {len(rows)}, "
+          f"символов: {total} (пробелов {spaces}, табов {tabs})")
+    print("   len | проб | таб | токены «k пробелов + таб»")
+    for i, r in enumerate(rows):
+        segs = [len(s) for s in r.split("\t")]
+        print(f"  {len(r):4d} | {r.count(' '):4d} | {r.count(chr(9)):3d} | {segs}")
+
+    digits = [len(s) for r in rows for s in r.split("\t")]
+    hist = {k: digits.count(k) for k in range(max(digits) + 1)}
+    print(f"\n[серии пробелов] n={len(digits)}, распределение: " +
+          " ".join(f"{k}:{v}" for k, v in hist.items()))
+    uniform = all(abs(v - len(digits) / len(hist)) <= 2.5 * (len(digits) / len(hist)) ** 0.5
+                  for v in hist.values())
+    print("  " + ("похоже на равномерный случайный паддинг — данные, скорее всего, "
+                  "не в значениях серий" if uniform else
+                  "распределение неровное — значения серий могут быть данными"))
+    if total >= 8:
+        print(f"\n[если это биты space/tab] {total} бит = {total // 8} байт + {total % 8} бит")
+        print(f"  доля табов: {tabs / total:.2f} (для текста ждём ~0.35-0.5)")
+    print("\n[подсказки, что делать дальше]")
+    print("  - биты в порядке space/tab и сдвиги: --mode brute")
+    print("  - данные в счётчиках/позициях: смотри колонки табов ниже")
+    for i, r in enumerate(rows):
+        pos = [j for j, c in enumerate(r) if c == "\t"]
+        print(f"  строка {i}: табы на позициях {pos}")
+    return
+
+
 def rtf_report(path: str):
-    """RTF: показать текст и сразу прогнать перебор по сырому файлу."""
+    """RTF: показать текст, структуру хвостов и прогнать перебор."""
     data = open(path, "rb").read()
     if not common.is_rtf(data):
         print("[-] это не RTF")
@@ -450,12 +519,7 @@ def rtf_report(path: str):
     print(f"\n[текст RTF] {len(text)} символов")
     print("  " + repr(text[:300]))
     raw = data.decode("latin-1")
-    trail_hits = [ln for ln in raw.splitlines()
-                  if ln != ln.rstrip(" \t\r")]
-    print(f"\n[строк с хвостовыми пробелами/табами] {len(trail_hits)}")
-    for ln in trail_hits[:20]:
-        t = ln[len(ln.rstrip(" \t\r")):]
-        print(f"  sp={t.count(' ')} tab={t.count(chr(9))} len={len(t)}")
+    run_structure(raw)
     return run_brute(raw)
 
 
@@ -475,7 +539,7 @@ def main():
     ap.add_argument("file")
     ap.add_argument("--mode", default="auto",
                     choices=["auto", "ws", "bits", "zw", "vs", "tags", "braille",
-                             "trail", "brute", "rtf"])
+                             "trail", "brute", "rtf", "report"])
     ap.add_argument("--input", default="", help="вход для whitespace read")
     ap.add_argument("--max-steps", type=int, default=5_000_000)
     common.add_flag_args(ap)
@@ -549,6 +613,9 @@ def main():
         run_brute(text)
     elif mode == "rtf":
         rtf_report(args.file)
+    elif mode == "report":
+        run_structure(text)
+        run_brute(text)
 
 
 if __name__ == "__main__":

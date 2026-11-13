@@ -54,10 +54,35 @@ except Exception:  # pragma: no cover
 MAX_FILES = 200
 MAX_TOTAL = 128 * 1024 * 1024
 JOB_ROOT = os.path.join(tempfile.gettempdir(), "cf_site_jobs")
-os.makedirs(JOB_ROOT, exist_ok=True)
+CACHE_ROOT = os.path.join(tempfile.gettempdir(), "cf_site_cache")
+BLOB_DIR = os.path.join(CACHE_ROOT, "blobs")
+ART_DIR = os.path.join(CACHE_ROOT, "artifacts")
+HISTORY = os.path.join(JOB_ROOT, "history.json")
+for _d in (JOB_ROOT, BLOB_DIR, ART_DIR):
+    os.makedirs(_d, exist_ok=True)
 
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
+
+
+def sha256_bytes(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def load_history() -> list:
+    try:
+        with open(HISTORY, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def save_history(rows: list) -> None:
+    tmp = HISTORY + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(rows[-200:], fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, HISTORY)
 
 
 def safe_name(name: str) -> str:
@@ -143,10 +168,52 @@ def _agent_events(job: dict):
 
 # ---------------------------------------------------------------------- worker
 
+def _emit(job: dict, ev: dict) -> None:
+    """Кладём событие в очередь и в файл <job>/events.jsonl (для разбора потом)."""
+    job["q"].put(ev)
+    try:
+        with open(os.path.join(job["dir"], "events.jsonl"), "a",
+                  encoding="utf-8") as fh:
+            fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _cache_artifacts(job: dict) -> list:
+    """Сохранить файлы, которые создал движок (не загруженные), по хешу входа."""
+    if not job.get("input_hash"):
+        return []
+    uploaded = {u["name"] for u in job.get("uploaded", [])}
+    art_dir = os.path.join(ART_DIR, job["input_hash"])
+    os.makedirs(art_dir, exist_ok=True)
+    saved = []
+    for base, _dirs, files in os.walk(job["dir"]):
+        for name in files:
+            if name in uploaded or name == "events.jsonl" or name.endswith(".pyc"):
+                continue
+            src = os.path.join(base, name)
+            rel = os.path.relpath(src, job["dir"])
+            if rel.startswith("__pycache__"):
+                continue
+            dst = os.path.join(art_dir, rel.replace("/", "__"))
+            try:
+                if os.path.getsize(src) <= 5 * 1024 * 1024:
+                    shutil.copyfile(src, dst)
+                    saved.append(rel)
+            except OSError:
+                pass
+    return saved[:100]
+
+
 def worker(job_id: str):
     """Кит и доработка идут ОДНОВРЕМЕННО; что первое нашло — то и ответ."""
     job = _jobs[job_id]
+    job["status"] = "running"
     q: queue.Queue = job["q"]
+    if job.get("reused"):
+        _emit(job, {"event": "runner_note",
+                    "note": "подхватил прошлые наработки: "
+                            + ", ".join(job["reused"][:5])})
     target = job["dir"]
     files = [f for f in os.listdir(target)]
     single = os.path.join(target, files[0]) if len(files) == 1 else target
@@ -190,13 +257,21 @@ def worker(job_id: str):
             continue
         ev = dict(ev)
         ev.setdefault("stage", src)
-        q.put(ev)
+        _emit(job, ev)
         if ev.get("event") == "flag" and ev.get("flag"):
             flag = ev["flag"]
             break
 
     job["flag"] = flag
-    q.put({"event": "runner_end", "flag": flag})
+    job["status"] = "done" if flag else "no_flag"
+    saved = _cache_artifacts(job)
+    _emit(job, {"event": "runner_end", "flag": flag, "cached": saved[:10]})
+    with _lock:
+        rows = load_history()
+        for row in rows:
+            if row.get("id") == job_id:
+                row.update({"status": job["status"], "flag": flag})
+        save_history(rows)
     q.put(None)
 
 
@@ -255,6 +330,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {"files": list_files(job["dir"])})
             return
+        if path.startswith("/api/status/"):
+            job = _jobs.get(path.rsplit("/", 1)[-1])
+            if not job:
+                self._json(404, {"error": "no job"})
+                return
+            self._json(200, {"id": path.rsplit("/", 1)[-1],
+                             "status": job.get("status"),
+                             "started": job.get("started"),
+                             "flag": job.get("flag"),
+                             "reused": job.get("reused", [])})
+            return
+        if path == "/api/history":
+            self._json(200, {"jobs": load_history()[-50:]})
+            return
         if path.startswith("/api/file/"):
             job_id = path.rsplit("/", 1)[-1]
             job = _jobs.get(job_id)
@@ -307,6 +396,7 @@ class Handler(BaseHTTPRequestHandler):
         job_dir = os.path.join(JOB_ROOT, job_id)
         os.makedirs(job_dir, exist_ok=True)
         saved = 0
+        uploaded = []
         for item in files[:MAX_FILES]:
             name = safe_name(item.get("name", "file.bin"))
             try:
@@ -315,9 +405,30 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             if saved + len(blob) > MAX_TOTAL:
                 break
-            with open(os.path.join(job_dir, name), "wb") as fh:
-                fh.write(blob)
+            digest = sha256_bytes(blob)
+            cached = os.path.join(BLOB_DIR, digest)
+            if not os.path.exists(cached):
+                with open(cached, "wb") as fh:
+                    fh.write(blob)
+            shutil.copyfile(cached, os.path.join(job_dir, name))
+            uploaded.append({"name": name, "size": len(blob), "sha": digest})
             saved += len(blob)
+        input_hash = sha256_bytes(
+            json.dumps(sorted((u["name"], u["sha"]) for u in uploaded),
+                       ensure_ascii=False).encode())
+        # артефакты прошлой попытки с теми же входными файлами
+        reused = []
+        art_dir = os.path.join(ART_DIR, input_hash)
+        if os.path.isdir(art_dir):
+            for fname in os.listdir(art_dir):
+                if fname in {u["name"] for u in uploaded}:
+                    continue
+                try:
+                    shutil.copyfile(os.path.join(art_dir, fname),
+                                    os.path.join(job_dir, fname))
+                    reused.append(fname)
+                except OSError:
+                    pass
         try:
             budget = float(data.get("budget", 90))
         except (TypeError, ValueError):
@@ -334,9 +445,18 @@ class Handler(BaseHTTPRequestHandler):
                 "thoughts": bool(data.get("thoughts")),
                 "prefix": (data.get("prefix") or "").strip()[:40] or None,
                 "q": queue.Queue(), "flag": None, "started": False,
-                "stop": False,
+                "stop": False, "status": "new", "created": time.time(),
+                "uploaded": uploaded, "input_hash": input_hash,
+                "reused": reused,
             }
-        self._json(200, {"id": job_id, "files": list_files(job_dir)})
+            rows = load_history()
+            rows.append({"id": job_id, "created": time.time(),
+                         "files": [u["name"] for u in uploaded],
+                         "input_hash": input_hash, "status": "new",
+                         "flag": None})
+            save_history(rows)
+        self._json(200, {"id": job_id, "files": list_files(job_dir),
+                         "reused": reused})
 
     def _terminal(self):
         data = self._body()

@@ -142,12 +142,16 @@ def _dict_score(plain: str, vocab: set) -> float:
     if not toks:
         return -1e9
     hits = sum(1 for t in toks if t in vocab or t.rstrip("0123456789") in vocab)
-    sc = hits * 10 + english_score(plain)
-    try:
-        if common.find_flags(plain.encode("utf-8", "replace")):
-            sc += 30
-    except Exception:
-        pass
+    # english_score любит короткие строки с повторами (IC), поэтому вес умеренный
+    sc = hits * 10 + english_score(plain) * 0.4
+    # флаг в тексте — сильный сигнал, но только если текст размечен словами
+    # (иначе `zhnto{...}` из случайного ключа получает бонус незаслуженно)
+    if any(sep in plain for sep in ("_", "-", " ")):
+        try:
+            if common.find_flags(plain.encode("utf-8", "replace")):
+                sc += 30
+        except Exception:
+            pass
     return sc
 
 

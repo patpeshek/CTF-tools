@@ -126,8 +126,6 @@ def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None):
 
 def _agent_events(job: dict):
     if not (engine and model_ready()):
-        yield {"event": "runner_note",
-               "note": "вторая стадия выключена: не настроен endpoint модели"}
         return
     ws = engine.Workspace(job["dir"])
     task = job["task"] or ""
@@ -143,7 +141,7 @@ def _agent_events(job: dict):
 # ---------------------------------------------------------------------- worker
 
 def worker(job_id: str):
-    """Кит и вторая стадия идут ОДНОВРЕМЕННО; что первое нашло — то и ответ."""
+    """Кит и доработка идут ОДНОВРЕМЕННО; что первое нашло — то и ответ."""
     job = _jobs[job_id]
     q: queue.Queue = job["q"]
     target = job["dir"]
@@ -168,7 +166,7 @@ def worker(job_id: str):
                 out.put(("second", ev))
         except Exception as exc:  # pragma: no cover
             out.put(("second", {"event": "runner_note",
-                                "note": f"ошибка второй стадии: {exc}"}))
+                                "note": f"ошибка доработки: {exc}"}))
         finally:
             out.put(("second", None))
 
@@ -407,9 +405,7 @@ def main():
     bind = os.environ.get("BIND", "127.0.0.1")
     httpd = ThreadingHTTPServer((bind, port), Handler)
     mode = "песочница" if docker_on() else "локально (без Docker)"
-    second = "включена" if model_ready() else "выключена"
-    print(f"[+] http://{bind}:{port}/  режим: {mode}; вторая стадия: {second}",
-          flush=True)
+    print(f"[+] http://{bind}:{port}/  режим: {mode}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

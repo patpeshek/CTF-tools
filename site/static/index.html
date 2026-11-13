@@ -144,8 +144,7 @@ const ROLES = ["", "ciphertext", "plaintext", "key", "keylen", "nonce", "iv",
 let files = [], jobId = null, es = null, lines = {};
 
 fetch("/health").then(r => r.json()).then(d => {
-  $("#mode").textContent = (d.sandbox ? "песочница" : "локально") +
-    " · вторая стадия " + (d.model ? "вкл" : "выкл");
+  $("#mode").textContent = d.sandbox ? "песочница" : "локально";
 }).catch(() => {});
 
 /* ---------- файлы ---------- */
@@ -292,7 +291,7 @@ function handle(ev) {
       (ev.steps ? ", шагов: " + ev.steps.length : "") + '</span><span class="s"></span>';
     $("#log").appendChild(el); return;
   }
-  if (k === "step_start") { row(ev.n, (ev.stage === "second" ? "2· " : "") + ev.tool, ev.why); return; }
+  if (k === "step_start") { row(ev.n, ev.tool, ev.why); return; }
   if (k === "step_end") {
     const el = row(ev.n); const s = el.querySelector(".s");
     const st = ev.status || "ok";
@@ -306,7 +305,7 @@ function handle(ev) {
     d.querySelector(".w").textContent = ev.text || "";
     $("#log").appendChild(d); return;
   }
-  if (k === "agent_step") { row("a" + ev.n, "2· " + ev.tool, ev.detail); return; }
+  if (k === "agent_step") { row("a" + ev.n, ev.tool, ev.detail); return; }
   if (k === "agent_output") {
     const d = document.createElement("div"); d.className = "line";
     d.innerHTML = '<span class="t">вывод</span><span class="w"></span><span class="s"></span>';

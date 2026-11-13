@@ -35,8 +35,28 @@ import guard
 FLAG_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,15}\{[^{}\r\n]{1,200}\}")
 JSON_RE = re.compile(r"\{.*\}", re.S)
 
+
+def looks_like_flag(text: str) -> bool:
+    """Настоящий флаг, а не пример из справки вида CTF{...}."""
+    m = FLAG_RE.search(text or "")
+    if not m:
+        return False
+    inner = m.group(0).split("{", 1)[1][:-1]
+    core = re.sub(r"[^A-Za-z0-9]", "", inner)
+    if len(core) < 4:
+        return False
+    if set(inner) <= set(".… "):
+        return False
+    return True
+
 MAX_OUT = 6000
 DEFAULT_CMD_TIMEOUT = 45
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+TOOLBOX = os.path.join(ROOT, "toolbox.py")
+
+
+def _tool_name_ok(name: str) -> bool:
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]{0,30}", name or ""))
 
 
 class Workspace:
@@ -107,6 +127,27 @@ class Workspace:
             except OSError:
                 pass
 
+    def toolbox(self, name: str, args: list[str],
+                timeout: int = 120) -> str:
+        """Вызов инструмента проекта: python toolbox.py <name> <args...>."""
+        if not _tool_name_ok(name):
+            return f"ОТКАЗ: недопустимое имя инструмента {name!r}"
+        if not os.path.isfile(TOOLBOX):
+            return f"ОТКАЗ: не найден {TOOLBOX}"
+        argv = [sys.executable, TOOLBOX, name] + [str(a) for a in args][:20]
+        try:
+            proc = subprocess.run(argv, cwd=self.root, capture_output=True,
+                                  text=True, encoding="utf-8",
+                                  errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return f"TIMEOUT {timeout}s"
+        except OSError as exc:
+            return f"OSERROR: {exc}"
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if len(out) > MAX_OUT:
+            out = out[:MAX_OUT] + "\n...[обрезано]"
+        return f"rc={proc.returncode}\n{out}"
+
 
 SYSTEM = """Ты автономный решатель CTF-задач.
 
@@ -114,11 +155,20 @@ SYSTEM = """Ты автономный решатель CTF-задач.
   {"action":"list"}
   {"action":"read","path":"файл"}
   {"action":"write","path":"sol.py","content":"..."}
+  {"action":"tool","name":"rsa","args":["auto","keys.txt"]}
+  {"action":"tool","name":"index"}
   {"action":"bash","cmd":"команда"}
   {"action":"py","code":"python-код"}
   {"action":"flag","flag":"НАЙДЕННЫЙ_ФЛАГ"}
   {"action":"answer","status":"not_found","text":"почему не вышло"}
   {"action":"answer","status":"need_service","text":"host:port"}
+
+В проекте есть готовые инструменты (тот же toolbox.py). Сначала смотри список
+через {"action":"tool","name":"index"} — там всё: rsa, enc, xor, hash, triage,
+carve, chain, ws, audio, pcap, dns, jwt, lsb, zip, sqlite, elf и другие.
+Если задача про RSA/кодировки/архивы/картинки/трафик — СНАЧАЛА вызывай готовый
+инструмент, а свой скрипт пиши только если готового нет или он не справился.
+Пример: {"action":"tool","name":"rsa","args":["auto","chall.txt"]}.
 
 Правила (обязательны):
   * Отвечай РОВНО одним JSON-объектом. Никакого текста вокруг, никакого
@@ -215,9 +265,9 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
 
         if kind == "flag":
             raw = str(action.get("flag", "")).strip()
-            m = FLAG_RE.search(raw)
-            if m:
-                yield {"event": "flag", "flag": m.group(0), "source": "agent"}
+            if looks_like_flag(raw):
+                yield {"event": "flag", "flag": FLAG_RE.search(raw).group(0),
+                       "source": "agent"}
                 return
             yield {"event": "agent_step", "n": step, "tool": "flag",
                    "detail": "не похоже на флаг"}
@@ -256,6 +306,21 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             result = ws.run_py(str(action.get("code", "")), timeout=cmd_timeout)
             yield {"event": "agent_step", "n": step, "tool": "py",
                    "detail": f"{time.time() - started:.1f}s"}
+        elif kind == "tool":
+            name = str(action.get("name", ""))
+            args = action.get("args")
+            if isinstance(args, str):
+                args = [args]
+            if not isinstance(args, list):
+                args = []
+            started = time.time()
+            yield {"event": "agent_step", "n": step,
+                   "tool": f"tool:{name}",
+                   "detail": " ".join(str(a) for a in args)[:100]}
+            result = ws.toolbox(name, args)
+            yield {"event": "agent_step", "n": step,
+                   "tool": f"tool:{name}",
+                   "detail": f"{time.time() - started:.1f}s"}
         elif kind == "bash":
             started = time.time()
             cmd = str(action.get("cmd", ""))
@@ -271,8 +336,9 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             yield {"event": "agent_step", "n": step, "tool": kind,
                    "detail": "неизвестное действие"}
 
-        found = FLAG_RE.search(result)
-        if found:
+        found = None if kind == "tool" and "index" in str(action.get("name")) \
+            else FLAG_RE.search(result)
+        if found and looks_like_flag(found.group(0)):
             yield {"event": "flag", "flag": found.group(0), "source": "agent"}
             return
 

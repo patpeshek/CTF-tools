@@ -177,6 +177,10 @@ def valid_flag(text: str) -> bool:
     if not FLAG_OK.match(text):
         return False
     inner = text[text.index("{") + 1:-1]
+    if not any(c.isalnum() for c in inner):
+        return False
+    if set(inner) <= set(".… []{}"):
+        return False
     return not any(c in inner for c in '\n\r\t"\\[]{}')
 
 

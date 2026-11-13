@@ -2,24 +2,22 @@
 # -*- coding: utf-8 -*-
 """agent.py — цикл решения задачи с инструментами.
 
-Что умеет агент (реально, без имитации):
-  * писать/читать файлы в рабочей папке задачи;
-  * запускать команды оболочки (терминал) с таймаутом;
-  * запускать python-код;
-  * смотреть список файлов;
-  * объявлять флаг или ответ «нужен сервис».
+Инструменты (реальные):
+  * write / read / list — файлы в рабочей папке задачи;
+  * bash — команда оболочки (стоп-лист в guard.py);
+  * py — запуск python-кода;
+  * flag / answer — итог.
 
-Протокол ответа модели — один JSON-объект на шаг:
-  {"action":"bash","cmd":"..."}
-  {"action":"py","code":"..."}
+Протокол ответа — один JSON-объект на шаг, необязательное поле `thought`
+для рассуждений (в интерфейс не попадает, если не включён режим рассуждений):
+  {"thought":"...","action":"bash","cmd":"..."}
+  {"thought":"...","action":"py","code":"..."}
   {"action":"write","path":"...","content":"..."}
   {"action":"read","path":"..."}
   {"action":"list"}
   {"action":"flag","flag":"..."}
-  {"action":"answer","text":"..."}
-
-Каждый шаг отдаётся наружу событиями (что именно запущено и что вернулось),
-поэтому в интерфейсе видно реальную работу, а не «магию».
+  {"action":"answer","status":"not_found","text":"..."}
+  {"action":"answer","status":"need_service","text":"host:port"}
 """
 from __future__ import annotations
 
@@ -32,6 +30,7 @@ import tempfile
 import time
 
 import client
+import guard
 
 FLAG_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,15}\{[^{}\r\n]{1,200}\}")
 JSON_RE = re.compile(r"\{.*\}", re.S)
@@ -77,6 +76,9 @@ class Workspace:
         return "\n".join(rows) or "(пусто)"
 
     def run(self, cmd: str, timeout: int = DEFAULT_CMD_TIMEOUT) -> str:
+        ok, why = guard.check_command(cmd)
+        if not ok:
+            return f"ОТКАЗ: {why}"
         try:
             proc = subprocess.run(cmd, cwd=self.root, shell=True,
                                   capture_output=True, text=True,
@@ -106,28 +108,35 @@ class Workspace:
                 pass
 
 
-SYSTEM = """Ты автономный решатель задач по информационной безопасности.
+SYSTEM = """Ты автономный решатель CTF-задач.
 
-У тебя есть рабочая папка, в ней лежат файлы задачи. Ты можешь:
-  * писать файлы, чтобы собрать скрипт;
-  * запускать команды оболочки и python;
-  * читать файлы и смотреть список.
-
-Отвечай РОВНО одним JSON-объектом, без пояснений и без markdown:
+Рабочая папка: файлы задачи уже лежат в ней. Доступные действия:
+  {"action":"list"}
+  {"action":"read","path":"файл"}
+  {"action":"write","path":"sol.py","content":"..."}
   {"action":"bash","cmd":"команда"}
   {"action":"py","code":"python-код"}
-  {"action":"write","path":"имя_файла.py","content":"..."}
-  {"action":"read","path":"имя_файла"}
-  {"action":"list"}
   {"action":"flag","flag":"НАЙДЕННЫЙ_ФЛАГ"}
-  {"action":"answer","text":"если без внешнего сервиса/тулзы никак"}
+  {"action":"answer","status":"not_found","text":"почему не вышло"}
+  {"action":"answer","status":"need_service","text":"host:port"}
 
-Правила:
-  * Сначала осмотрись: {"action":"list"}, затем читай/запускай.
-  * Каждый шаг делай маленьким и проверяемым: написал скрипт — запусти его.
-  * Если данных мало, но решать можно — решай; не спрашивай разрешения.
-  * Флаг возвращай только когда реально получил его на выводе.
-  * Никаких выдуманных флагов. Не уверен — продолжай исследовать.
+Правила (обязательны):
+  * Отвечай ровно одним JSON-объектом, без markdown и пояснений вокруг.
+  * Работай только внутри рабочей папки. Никаких путей вида C:\\, /, ..
+  * ЗАПРЕЩЕНО: удалять и форматировать диски, менять реестр, выключать машину,
+    убивать процессы, ставить/сносить пакеты системы, скачивать и запускать
+    скрипты из интернета, трогать чужие файлы и домашнюю папку.
+  * Никакой отправки файлов и данных наружу.
+  * Для задач, которым нужен интернет, используй только разрешённые адреса
+    из условия; если сети нет — верни need_service.
+  * Если флага нет — НЕ выдумывай его. Верни answer/not_found с короткой
+    причиной (что проверил и чего не хватило).
+  * Флаг возвращай только когда он реально был в выводе команды.
+
+Экономия шагов: сначала list, потом один-два точных шага, а не перебор всего.
+
+Необязательное поле "thought" — короткая заметка, зачем делаешь шаг
+(например {"thought":"проверю заголовок","action":"bash","cmd":"xxd -l 64 f"}).
 """
 
 
@@ -149,7 +158,8 @@ def _parse_action(text: str) -> dict | None:
 
 def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
         deadline: float | None = None, cmd_timeout: int = DEFAULT_CMD_TIMEOUT,
-        model: str | None = None):
+        model: str | None = None, reasoning: bool = False,
+        show_thoughts: bool = False, cancel=None):
     """Генератор событий. Останавливается на флаге/ответе/лимитах."""
     deadline = deadline or (time.time() + 600)
     listing = ws.tree()
@@ -159,35 +169,46 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             f"Условие задачи:\n{task_text or '(не задано)'}\n\n"
             f"Файлы в рабочей папке:\n{listing}"},
     ]
+    if reasoning:
+        messages.append({"role": "user", "content":
+                         "Перед каждым действием заполняй поле thought "
+                         "короткой заметкой о плане."})
 
     for step in range(1, max_steps + 1):
+        if cancel and cancel():
+            yield {"event": "agent_stop", "reason": "остановлено"}
+            return
         if time.time() > deadline:
             yield {"event": "agent_stop", "reason": "время вышло"}
             return
         try:
-            reply = client.chat(messages, model=model, temperature=0.1,
+            reply = client.chat(messages, model=model, temperature=0.15,
                                 max_tokens=1800)
-        except Exception as exc:  # сеть/ключ/лимиты
+        except Exception as exc:
             yield {"event": "agent_stop", "reason": f"модель недоступна: {exc}"}
             return
         action = _parse_action(reply)
         if not action:
             messages.append({"role": "assistant", "content": reply})
             messages.append({"role": "user", "content":
-                             "Ответ должен быть ровно одним JSON-объектом "
+                             'Ответ должен быть ровно одним JSON-объектом '
                              'вида {"action":"..."}.'})
             yield {"event": "agent_step", "n": step, "tool": "формат",
                    "detail": "ответ не распознан"}
             continue
 
+        thought = str(action.get("thought", "")).strip()
+        if thought and show_thoughts:
+            yield {"event": "thought", "text": thought[:500]}
+
         kind = str(action.get("action", "")).lower()
         messages.append({"role": "assistant", "content": reply})
 
         if kind == "flag":
-            flag = str(action.get("flag", "")).strip()
-            if FLAG_RE.fullmatch(flag) or FLAG_RE.search(flag):
-                found = FLAG_RE.search(flag).group(0)
-                yield {"event": "flag", "flag": found, "source": "agent"}
+            raw = str(action.get("flag", "")).strip()
+            m = FLAG_RE.search(raw)
+            if m:
+                yield {"event": "flag", "flag": m.group(0), "source": "agent"}
                 return
             yield {"event": "agent_step", "n": step, "tool": "flag",
                    "detail": "не похоже на флаг"}
@@ -196,9 +217,12 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             continue
 
         if kind == "answer":
-            yield {"event": "answer", "text": str(action.get("text", ""))[:800]}
+            status = str(action.get("status", "done") or "done").lower()
+            text = str(action.get("text", ""))[:800]
+            yield {"event": "answer", "status": status, "text": text}
             return
 
+        result = ""
         if kind == "list":
             result = ws.tree()
             yield {"event": "agent_step", "n": step, "tool": "list",
@@ -206,7 +230,7 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
         elif kind == "read":
             try:
                 result = ws.read(str(action.get("path", "")))
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 result = f"ошибка чтения: {exc}"
             yield {"event": "agent_step", "n": step, "tool": "read",
                    "detail": str(action.get("path", ""))}
@@ -226,11 +250,13 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
         elif kind == "bash":
             started = time.time()
             cmd = str(action.get("cmd", ""))
+            allowed, why = guard.check_command(cmd)
             yield {"event": "agent_step", "n": step, "tool": "bash",
-                   "detail": cmd[:120]}
-            result = ws.run(cmd, timeout=cmd_timeout)
-            yield {"event": "agent_step", "n": step, "tool": "bash",
-                   "detail": f"{time.time() - started:.1f}s"}
+                   "detail": (cmd if allowed else f"отказ: {why}")[:120]}
+            result = ws.run(cmd, timeout=cmd_timeout) if allowed else f"ОТКАЗ: {why}"
+            if allowed:
+                yield {"event": "agent_step", "n": step, "tool": "bash",
+                       "detail": f"{time.time() - started:.1f}s"}
         else:
             result = f"неизвестное действие: {kind}"
             yield {"event": "agent_step", "n": step, "tool": kind,
@@ -246,4 +272,5 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
                          f"Результат шага {step}:\n```\n{result[:4000]}\n```\n"
                          "Что дальше? Один JSON-объект."})
 
-    yield {"event": "agent_stop", "reason": f"лимит шагов ({max_steps})"}
+    yield {"event": "answer", "status": "not_found",
+           "text": f"лимит шагов ({max_steps})"}

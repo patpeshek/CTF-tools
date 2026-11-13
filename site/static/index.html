@@ -106,6 +106,7 @@
       <input type="text" id="prefix" placeholder="формат флага, напр. ctf (не обязательно)">
       <input type="number" id="budget" value="90" min="10" max="900" title="секунд на кит">
       <label class="check"><input type="checkbox" id="deep"> глубокий режим</label>
+      <label class="check"><input type="checkbox" id="reasoning"> рассуждения</label>
     </div>
 
     <div class="actions">
@@ -237,6 +238,8 @@ $("#go").onclick = async () => {
     prefix: $("#prefix").value,
     budget: Number($("#budget").value || 90),
     deep: $("#deep").checked,
+    reasoning: $("#reasoning").checked,
+    thoughts: $("#reasoning").checked,
     files: [],
     inputs: [...document.querySelectorAll("#fields .field")].map(row => ({
       role: row.querySelector("select").value,
@@ -312,7 +315,15 @@ function handle(ev) {
     d.querySelector(".w").textContent = (ev.text || "").slice(0, 400);
     $("#log").appendChild(d); return;
   }
+  if (k === "thought") {
+    const d = document.createElement("div"); d.className = "line";
+    d.innerHTML = '<span class="t">мысль</span><span class="w"></span><span class="s"></span>';
+    d.querySelector(".w").textContent = ev.text || "";
+    d.querySelector(".w").style.color = "#7d7d7d";
+    $("#log").appendChild(d); return;
+  }
   if (k === "answer") {
+    if ((ev.status || "done") === "not_found") return;
     $("#warn").textContent = ev.text || "";
     return;
   }

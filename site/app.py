@@ -135,7 +135,10 @@ def _agent_events(job: dict):
         if lines:
             task += "\n\nДанные из условия:\n" + "\n".join(lines)
     yield from engine.run(ws, task, max_steps=16,
-                          deadline=time.time() + max(120, job["budget"] * 3))
+                          deadline=time.time() + max(120, job["budget"] * 3),
+                          reasoning=job.get("reasoning", False),
+                          show_thoughts=job.get("thoughts", False),
+                          cancel=lambda: job.get("stop", False))
 
 
 # ---------------------------------------------------------------------- worker
@@ -327,6 +330,8 @@ class Handler(BaseHTTPRequestHandler):
                            if isinstance(i, dict)][:20],
                 "budget": max(10.0, min(budget, 900.0)),
                 "deep": bool(data.get("deep")),
+                "reasoning": bool(data.get("reasoning")),
+                "thoughts": bool(data.get("thoughts")),
                 "prefix": (data.get("prefix") or "").strip()[:40] or None,
                 "q": queue.Queue(), "flag": None, "started": False,
                 "stop": False,

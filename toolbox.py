@@ -203,6 +203,7 @@ EXT_TYPE = {
     ".pcap": "PCAP", ".pcapng": "PCAPNG", ".wav": "RIFF", ".mp3": "MP3", ".ogg": "OGG",
     ".exe": "PE", ".dll": "PE", ".so": "ELF", ".7z": "7Z", ".rar": "RAR",
     ".gz": "GZIP", ".tar": "TAR", ".db": "SQLite", ".sqlite": "SQLite",
+    ".rtf": "RTF",
 }
 
 TEXT_MAGIC_HINT = {
@@ -621,6 +622,12 @@ def _plan_dir(path):
     print(f"    python toolbox.py solve {path} --deep")
     print(f"    python toolbox.py flaghunt {path}       # файлы flag/user/root")
     print(f"    python toolbox.py triage {path}         # отчёт по каждому")
+    words = [fn for _, _, files in os.walk(path) for fn in files
+             if fn.lower().endswith((".txt", ".lst")) and "word" in fn.lower()]
+    if words:
+        print(f"    # рядом словарь {words[0]} → классический шифр по словам:")
+        print(f"    python toolbox.py classical vigdict --text \"<шифротекст>\" "
+              f"--words {os.path.join(path, words[0])}")
     try:
         sys.path.insert(0, os.path.join(HERE, "admin"))
         import adminlib
@@ -678,6 +685,9 @@ TEACH = {
     "PDF": "Текст/вложения/потоки: ищи FlateDecode, JavaScript, аннотации, "
            "скрытый текст белым по белому.",
     "SQLite": "База: таблицы, чаты, токены, время. Начни со схемы и имён таблиц.",
+    "RTF": "RTF — это текст с разметкой, и лишние пробелы/табы в нём не видны "
+           "при открытии. Сначала text (что реально написано), потом ws: "
+           "хвосты строк, табы, zero-width. Смотри, что исчезает при рендере.",
     "unknown": "Сигнатур нет: либо текст, либо сырые байты. Текст — кодировки/"
                "шифры/эзотерика; байты — энтропия, XOR с известным префиксом, "
                "вложенные сигнатуры по оффсетам. Если видишь «Ð¡Ð¾Ð¾Ð±Ñ‰» — это "

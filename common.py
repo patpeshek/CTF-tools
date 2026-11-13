@@ -16,7 +16,8 @@ import sys
 import urllib.parse
 
 FLAG_CONTENT = r"[^\x00-\x1f{}]{1,300}"
-DEFAULT_PREFIXES = ["ctf", "flag", "nto", "innopolis", "innoctf", "vosh", "npc"]
+DEFAULT_PREFIXES = ["ctf", "flag", "nto", "innopolis", "innoctf", "vosh", "npc",
+                    "uaz"]
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flags.json")
 
 
@@ -138,6 +139,7 @@ SIGS = [
     (b"OggS", "OGG"),
     (b"RIFF", "RIFF"),
     (b"ustar", "TAR"),
+    (b"{\\rtf", "RTF"),
 ]
 
 
@@ -486,6 +488,8 @@ def classify_text(text: str):
     tags = []
     if not text:
         return tags
+    if text.lstrip()[:5].lower() == "{\\rtf":
+        tags.append("rtf")
     if all(c in " \t\r\n" for c in text):
         tags.append("whitespace-only")
     zw = sum(c in "\u200b\u200c\u200d\u2060\ufeff" for c in text)
@@ -514,6 +518,163 @@ def classify_text(text: str):
     if re.search(r"(?:[0-9a-fA-F]{32,}|[A-Za-z0-9+/]{32,}={0,2})", text):
         tags.append("encoded-blob")
     return tags
+
+
+# ---------------- RTF ----------------
+
+_RTF_SKIP_DESTS = {
+    "fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "header",
+    "headerl", "headerr", "headerf", "footer", "footerl", "footerr", "footerf",
+    "footnote", "annotation", "field", "fldinst", "themedata", "colorschememapping",
+    "latentstyles", "datastore", "xmlnstbl", "listtable", "listoverridetable",
+    "rsidtbl", "generator", "expandedcolortbl", "filetbl", "revtbl", "pnseclvl",
+    "listtext", "bkmkstart", "bkmkend", "template", "mmathPr",
+}
+
+
+def is_rtf(data: bytes) -> bool:
+    head = data.lstrip()[:6].lower()
+    return head.startswith(b"{\\rtf")
+
+
+def rtf_to_text(data: bytes, keep_layout: bool = False) -> str:
+    """RTF → читаемый текст.
+
+    Убирает управляющие слова и служебные группы (шрифты, цвета, картинки),
+    разворачивает \\'hh (cp1251/ansi), \\uNNNN и \\tab / \\par / \\line.
+
+    keep_layout=True — сохранить переводы строк исходного RTF и пробелы
+    (нужно, когда данные спрятаны в «хвостовых» пробелах, а не в тексте).
+    """
+    text = data.decode("latin-1")
+    out = []
+    stack = []          # прежнее значение skip на каждый уровень группы
+    skip = False
+    pending = False     # только что открыли группу — следующее слово решает
+    i, n = 0, len(text)
+    uc = 1              # \ucN — сколько байт-заменителей съесть после \uN
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 1
+            if i >= n:
+                break
+            c2 = text[i]
+            if c2 == "'":                        # \'hh — байт в текущей кодировке
+                hx = text[i + 1:i + 3]
+                i += 3
+                if not skip:
+                    try:
+                        out.append(bytes([int(hx, 16)]).decode("cp1251", "replace"))
+                    except ValueError:
+                        pass
+                continue
+            if c2 == "u":                        # \uNNNN — юникод
+                i += 1
+                j = i
+                if j < n and text[j] == "-":
+                    j += 1
+                while j < n and text[j].isdigit():
+                    j += 1
+                try:
+                    val = int(text[i:j])
+                    if val < 0:
+                        val += 65536
+                    if not skip:
+                        out.append(chr(val))
+                except ValueError:
+                    pass
+                i = j
+                # пропустить байты-заменители \ucN
+                for _ in range(uc):
+                    while i < n and text[i] == " ":
+                        i += 1
+                    if i < n and text[i] not in "\\{}":
+                        i += 1
+                continue
+            if c2 in "{}\\":                     # \{ \} \\
+                if not skip:
+                    out.append(c2)
+                i += 1
+                continue
+            if c2 == "~":
+                if not skip:
+                    out.append("\u00a0")
+                i += 1
+                continue
+            if c2 in "\r\n":                     # \<newline> — жёсткий перенос
+                if not skip and keep_layout:
+                    out.append("\n")
+                i += 1
+                continue
+            if not c2.isalpha():                 # \- \_ \* ... — просто убрать
+                i += 1
+                continue
+            j = i
+            while j < n and text[j].isalpha():
+                j += 1
+            word = text[i:j].lower()
+            i = j
+            num = ""
+            if i < n and (text[i] == "-" or text[i].isdigit()):
+                k = i
+                if text[k] == "-":
+                    k += 1
+                while k < n and text[k].isdigit():
+                    k += 1
+                num = text[i:k]
+                i = k
+            if i < n and text[i] == " ":
+                i += 1
+            if word == "par" or word == "line" or word == "sect" or word == "row":
+                if not skip:
+                    out.append("\n")
+                continue
+            if word == "tab":
+                if not skip:
+                    out.append("\t")
+                continue
+            if word == "uc" and num:
+                try:
+                    uc = int(num)
+                except ValueError:
+                    uc = 1
+                continue
+            if word in _RTF_SKIP_DESTS and pending:
+                skip = True
+                pending = False
+                continue
+            pending = False
+            continue
+        if c == "{":
+            i += 1
+            stack.append(skip)
+            pending = True
+            if text[i:i + 1] == "*":
+                skip = True
+                pending = False
+                i += 1
+            continue
+        if c == "}":
+            i += 1
+            if stack:
+                skip = stack.pop()
+            pending = False
+            continue
+        if not skip:
+            if c == "\n" or c == "\r":
+                if keep_layout:
+                    out.append(c)
+            else:
+                out.append(c)
+        pending = False
+        i += 1
+    res = "".join(out)
+    if not keep_layout:
+        res = re.sub(r"[ \t]{2,}", " ", res)
+        res = re.sub(r"[ \t]+\n", "\n", res)
+        res = re.sub(r"\n{3,}", "\n\n", res)
+    return res
 
 
 def document_text(path: str):
@@ -553,6 +714,12 @@ def document_text(path: str):
                 pass
             return out
         data = open(path, "rb").read(4_000_000)
+        if is_rtf(data):
+            out.append((f"{path} [текст]", rtf_to_text(data)))
+            layout = rtf_to_text(data, keep_layout=True)
+            if layout != out[-1][1]:
+                out.append((f"{path} [с разметкой, без control-слов]", layout))
+            return out
         if b"\x00" not in data[:2000]:
             out.append((path, data.decode("utf-8", "replace")))
     except Exception:

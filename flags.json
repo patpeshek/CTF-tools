@@ -6,7 +6,8 @@
     "innopolis",
     "innoctf",
     "vosh",
-    "npc"
+    "npc",
+    "uaz"
   ],
   "extended": [
     "ctf",
@@ -53,7 +54,8 @@
     "croc",
     "pt",
     "taskbook",
-    "ctfcup"
+    "ctfcup",
+    "uaz"
   ],
   "custom": []
 }

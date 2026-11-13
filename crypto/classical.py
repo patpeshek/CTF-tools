@@ -29,9 +29,14 @@ import argparse
 import collections
 import itertools
 import math
+import os
 import random
 import re
 import string
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import common  # noqa: E402
 
 ENG_FREQ = {
     'a': 8.17, 'b': 1.49, 'c': 2.78, 'd': 4.25, 'e': 12.70, 'f': 2.23, 'g': 2.02,
@@ -99,6 +104,111 @@ def vigenere(text: str, key: str, encrypt=False) -> str:
         else:
             out.append(c)
     return ''.join(out)
+
+
+def vigenere_alpha(text: str, key: str, alphabet: str, encrypt=False) -> str:
+    """Виженер по произвольному алфавиту (буквы+цифры+`_` и т.п.)."""
+    key = [c.lower() for c in key if c.lower() in alphabet]
+    if not key or len(alphabet) < 2:
+        return text
+    out, j = [], 0
+    for c in text:
+        low = c.lower()
+        if low in alphabet:
+            idx = alphabet.index(low)
+            k = alphabet.index(key[j % len(key)])
+            idx = (idx + k) % len(alphabet) if encrypt else (idx - k) % len(alphabet)
+            ch = alphabet[idx]
+            out.append(ch.upper() if c.isupper() else ch)
+            j += 1
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+ALPHABET_VARIANTS = [
+    "abcdefghijklmnopqrstuvwxyz",
+    "abcdefghijklmnopqrstuvwxyz0123456789",
+    "abcdefghijklmnopqrstuvwxyz0123456789_",
+    "abcdefghijklmnopqrstuvwxyz_0123456789",
+    "0123456789abcdefghijklmnopqrstuvwxyz_",
+    "abcdefghijklmnopqrstuvwxyz_",
+]
+
+
+def _dict_score(plain: str, vocab: set) -> float:
+    """Словарные попадания + частотный скор + бонус за флаг внутри текста."""
+    toks = [t for t in re.split(r"[^a-z0-9]+", plain.lower()) if t]
+    if not toks:
+        return -1e9
+    hits = sum(1 for t in toks if t in vocab or t.rstrip("0123456789") in vocab)
+    sc = hits * 10 + english_score(plain)
+    try:
+        if common.find_flags(plain.encode("utf-8", "replace")):
+            sc += 30
+    except Exception:
+        pass
+    return sc
+
+
+def alphabet_candidates(text: str):
+    """Алфавиты-кандидаты для шифротекста: буквы + цифры + то, что реально есть.
+
+    Генератор задачи мог взять `a-z0-9`, `a-z0-9_`, `a-z0-9_{}` или что-то
+    своё. Порядок внутри алфавита важен (от него зависит сдвиг), поэтому
+    пробуем несколько типовых раскладок пунктуации.
+    """
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    digits = "0123456789"
+    punct = []
+    for c in text.lower():
+        if not c.isalnum() and c not in " \t\r\n" and c not in punct:
+            punct.append(c)
+    orders = ["", "_", "{}", "_{}", "{}_", "_-{}", "{}_-", "_-", "-_"]
+    out = []
+    for base in (letters + digits, letters, digits + letters):
+        for order in orders:
+            extra = order + "".join(c for c in punct if c not in order)
+            alpha = base + extra
+            if alpha in out:
+                continue
+            if set(text.lower()) <= set(alpha) | set(" \t\r\n"):
+                out.append(alpha)
+    return out
+
+
+def vigdict_crack(text: str, words: list[str], alphabets=None, need=None,
+                  top: int = 10):
+    """Словарная атака на Виженера: каждое слово словаря — кандидат в ключ.
+
+    Для шифротекста со цифрами/`_` перебираются несколько алфавитов: генератор
+    задачи часто берёт `a-z0-9_`, а не чистые буквы — поэтому обычный
+    vigenere-crack на таком тексте бесполезен.
+    """
+    vacab = {w.lower() for w in words if w}
+    words = [w for w in dict.fromkeys(w.lower() for w in words if w)]
+    if alphabets is None:
+        alphabets = alphabet_candidates(text) or ["abcdefghijklmnopqrstuvwxyz"]
+    need_low = [n.lower() for n in (need or [])]
+    res = []
+    for alpha in alphabets:
+        alpha_words = [w for w in words if all(c in alpha for c in w)]
+        for key in alpha_words:
+            plain = vigenere_alpha(text, key, alpha)
+            low = plain.lower()
+            if need_low and not all(n in low for n in need_low):
+                continue
+            res.append((_dict_score(plain, vacab), alpha, key, plain))
+    res.sort(key=lambda x: -x[0])
+    seen, out = set(), []
+    for sc, alpha, key, plain in res:
+        if plain in seen:
+            continue
+        seen.add(plain)
+        out.append((sc, alpha, key, plain))
+        if len(out) >= top:
+            break
+    return out
 
 
 MORSE = {
@@ -304,12 +414,17 @@ def vigenere_crack(text: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cipher", choices=["caesar", "affine", "vigenere", "vigenere-crack",
-                                       "atbash", "morse", "multitap", "playfair"])
+                                       "vigdict", "atbash", "morse", "multitap",
+                                       "playfair"])
     ap.add_argument("--text", required=True)
     ap.add_argument("--key")
     ap.add_argument("--a", type=int)
     ap.add_argument("--b", type=int)
     ap.add_argument("--known")
+    ap.add_argument("--words", help="словарь для vigdict (одно слово в строке)")
+    ap.add_argument("--alphabet", help="свой алфавит: буквы+цифры+_ (или через запятую)")
+    ap.add_argument("--need", help="в расшифровке обязаны быть эти подстроки (через запятую)")
+    ap.add_argument("--top", type=int, default=10)
     ap.add_argument("--encrypt", action="store_true")
     args = ap.parse_args()
 
@@ -344,7 +459,31 @@ def main():
         if not args.key:
             print("[-] нужен --key (без ключа используй vigenere-crack)")
             return
-        print(vigenere(args.text, args.key, args.encrypt))
+        if args.alphabet:
+            print(vigenere_alpha(args.text, args.key, args.alphabet, args.encrypt))
+        else:
+            print(vigenere(args.text, args.key, args.encrypt))
+    elif args.cipher == "vigdict":
+        if not args.words:
+            print("[-] нужен --words файл-словарь")
+            return
+        try:
+            words = [w.strip() for w in open(args.words, encoding="utf-8",
+                                             errors="replace") if w.strip()]
+        except OSError as e:
+            print(f"[-] не могу прочитать словарь: {e}")
+            return
+        alphas = [a for a in (args.alphabet or "").split(",") if a] or None
+        need = [n for n in (args.need or "").split(",") if n] or None
+        res = vigdict_crack(args.text, words, alphas, need, args.top)
+        if not res:
+            print(f"[-] ни одно слово из {len(words)} не подошло")
+            if need:
+                print(f"    фильтр --need {need}: попробуй без него")
+            return
+        for sc, alpha, key, plain in res:
+            print(f"\n[score={sc:6.1f}] key={key}  алфавит={alpha}")
+            print(f"  {plain[:300]}")
     elif args.cipher == "vigenere-crack":
         res = vigenere_crack(args.text)
         if not res:

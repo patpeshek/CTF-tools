@@ -34,7 +34,7 @@
 | `runs` | серии символов → ASCII | `python toolbox.py runs a.txt --chars "<>{}"` |
 | `png_chunks` | чанки PNG, CRC/IHDR, `--fix`, хвост | `python toolbox.py png_chunks a.png --fix fixed.png` |
 | `bitmap_font` | точки → картинка → глифы | `python toolbox.py bitmap_font pts.csv --flip-y --decode` |
-| `ws` | Whitespace + zero-width + braille + хвосты | `python toolbox.py ws file.txt` |
+| `ws` | Whitespace + zero-width + braille + хвосты + перебор схем (`--mode brute`) | `python toolbox.py ws file.txt` |
 | `esolang` | Brainfuck/Ook/Cow/Befunge/Deadfish | `python toolbox.py esolang file.bf` |
 | `audio` | спектрограмма WAV + пики | `python toolbox.py audio a.wav --peaks` |
 | `audiotools` | DTMF и морзе из WAV (проверка `.-` через `--raw`, код в нижнем регистре) | `python toolbox.py audiotools a.wav --raw` |
@@ -88,7 +88,7 @@
 | `autocrack` | перебрать кодировки/шифры/XOR/хеши | `python toolbox.py autocrack --hex ...` |
 | `mega` | шифротекст + материалы → перебор ключей/шифров; без материалов объясняет, что дать | `python toolbox.py mega enc.bin --material-dir dump` |
 | `obscure` | Bacon/ADFGX/Bifid/Porta/Hill/base58/… | `python toolbox.py obscure auto --text ...` |
-| `classical` | классические шифры + `vigenere-crack` | `python toolbox.py classical vigenere-crack --text "..."` |
+| `classical` | классические шифры + `vigenere-crack` + `vigdict` (ключ из словаря, алфавит с цифрами) | `python toolbox.py classical vigdict --text "..." --words words.txt` |
 | `genetic` | триплеты → аминокислоты | `python toolbox.py genetic "UGUACUUUC"` |
 | `xorknown` | XOR с known plaintext; длину ключа подбирает сам | `python toolbox.py xorknown enc.bin --known "CTF{"` |
 | `chain` | многослойные цепочки кодировок: поиск лучом по base64/32/85, hex, bin/dec/oct, url, zlib/gzip/bz2/xz, ROT13/ROT-N/ROT47, Atbash, реверс, NOT, однобайтовый XOR + все декодеры `enc`; глубина/луч/бюджет, стоп на флаге; `solve` зовёт его сам | `python toolbox.py chain "<строка>"` / `chain blob.bin --depth 8 --time 30` |

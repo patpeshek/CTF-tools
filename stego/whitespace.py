@@ -32,6 +32,7 @@ except Exception:
 
 import argparse
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -280,6 +281,184 @@ def decode_trailing(text: str):
     return [("хвостовые пробелы", bits_to_bytes("".join(bits)))]
 
 
+# ---------------- перебор схем ----------------
+#
+# Один и тот же файл прячут по-разному: таб=1/пробел=0 и наоборот, читают
+# по строкам или единым потоком, берут 5/6/7/8 бит, сдвигают начало, читают
+# с конца строки, пишут длину «хвоста» или длину серии пробелов. Раньше
+# скрипт угадывал один вариант — если он не тот, получался мусор. brute
+# прогоняет все разумные варианты и сортирует по «похожести на текст».
+
+_TRIGRAMS = ("the", "and", "ing", "ion", "ent", "her", "tha", "flag", "key", "ctf")
+_COMMON_WORDS = {"the", "and", "is", "are", "to", "of", "in", "that", "for",
+                 "with", "you", "your", "key", "flag", "ctf", "secret", "this",
+                 "was", "not", "have", "from", "it", "on", "at", "as", "be",
+                 "or", "my", "we", "do", "if", "so", "no", "here", "there"}
+
+
+def text_score(data: bytes) -> float:
+    """Насколько результат похож на настоящий текст (и на флаг)."""
+    if not data:
+        return -1.0
+    printable = sum(32 <= c < 127 or c in (9, 10, 13) for c in data) / len(data)
+    low = data.decode("latin-1").lower()
+    tri = sum(low.count(t) for t in _TRIGRAMS)
+    letters = sum(c.isalpha() for c in low) / len(low)
+    words = re.findall(r"[a-z0-9_]{2,}", low)
+    hits = sum(1 for w in words if w in _COMMON_WORDS)
+    sc = printable * 10 + min(tri, 20) * 1.5 + letters * 4 + hits * 3
+    if re.search(r"[A-Za-z]{3,}", low):
+        sc += 2
+    try:
+        if common.find_flags(data):
+            sc += 40
+        else:
+            # «текст» без единого пробела — почти всегда мусор из битов
+            if len(data) > 10 and b" " not in data:
+                sc -= 5
+            if "{" in low and "}" in low:
+                sc += 2
+    except Exception:
+        pass
+    if len(set(data)) <= 2:
+        sc -= 10
+    return sc
+
+
+def _bit_stream(chunk: str, space_is_zero: bool) -> str:
+    return "".join("0" if c == " " else "1" for c in chunk) if space_is_zero \
+        else "".join("1" if c == " " else "0" for c in chunk)
+
+
+def _pack(bits: str, width: int, offset: int, lsb: bool) -> bytes:
+    out = bytearray()
+    for i in range(offset, len(bits) - width + 1, width):
+        chunk = bits[i:i + width]
+        if lsb:
+            chunk = chunk[::-1]
+        v = int(chunk, 2)
+        if v < 256:
+            out.append(v)
+    return bytes(out)
+
+
+def brute_candidates(text: str, limit: int = 6):
+    """Все разумные пробельные схемы → лучшие кандидаты [(score, name, bytes)]."""
+    lines = text.splitlines()
+    trails = [ln[len(ln.rstrip(" \t\r")):] for ln in lines]
+    trails = [t for t in trails if t]
+    ws_all = "".join(c for c in text if c in " \t")
+
+    sources = []
+    if trails:
+        sources.append(("хвосты строк", trails))
+    if ws_all:
+        sources.append(("все пробелы/табы", [ws_all]))
+
+    found = []
+
+    def add(name, data):
+        if len(data) >= 3:
+            found.append((text_score(data), name, data))
+
+    for sname, chunks in sources:
+        for space_is_zero in (True, False):
+            raw = [_bit_stream(c, space_is_zero) for c in chunks]
+            for direction in ("вперёд", "реверс строк", "реверс потока"):
+                parts = [b[::-1] if direction == "реверс строк" else b for b in raw]
+                if direction == "реверс потока":
+                    parts = ["".join(parts)[::-1]]
+                joined = "".join(parts)
+                for per_line in (False, True):
+                    units = parts if per_line else [joined]
+                    for width in (8, 7, 6, 5):
+                        for offset in range(width):
+                            for lsb in (False, True):
+                                data = b"".join(
+                                    _pack(u, width, offset, lsb) for u in units)
+                                add(f"{sname}, таб=1, {direction}, "
+                                    f"{'по строкам' if per_line else 'потоком'}, "
+                                    f"{width} бит, сдвиг {offset}"
+                                    f"{', LSB' if lsb else ''}", data)
+
+    # своя полярность у каждой строки (генератор мог писать случайно)
+    if 1 < len(trails) <= 12:
+        base = [_bit_stream(t, True) for t in trails]
+        for mask in range(1 << len(trails)):
+            bits = "".join(b.translate(str.maketrans("01", "10")) if mask >> i & 1
+                           else b for i, b in enumerate(base))
+            for offset in (0, 4):
+                add(f"хвосты строк, полярность по маске {mask:0{len(trails)}b}, "
+                    f"8 бит, сдвиг {offset}", _pack(bits, 8, offset, False))
+
+    # длина серии пробелов между табами как цифра (0..7) — база 8
+    if trails:
+        digits = [len(seg) for t in trails for seg in t.split("\t")]
+        dstr = "".join(str(d) for d in digits)
+        for width in (2, 3, 4):
+            for offset in range(4):
+                s = dstr[offset:]
+                data = bytes(int(s[i:i + width], 8) & 0xFF
+                             for i in range(0, len(s) - width + 1, width)
+                             if int(s[i:i + width], 8) <= 0x10FFFF)
+                add(f"серии пробелов как цифры, база 8, {width} цифры, "
+                    f"сдвиг {offset}", data)
+
+    # длина хвоста / число табов в строке как байты и как буквы
+    if trails:
+        lens = bytes(len(t) & 0xFF for t in trails)
+        add("длина хвоста строки → байт", lens)
+        add("длина хвоста → буква (mod 26)",
+            bytes(97 + len(t) % 26 for t in trails))
+        add("число табов в строке → байт",
+            bytes(t.count("\t") & 0xFF for t in trails))
+
+    # убрать повторы, оставить лучшее
+    best = {}
+    for sc, name, data in found:
+        key = data
+        if key not in best or sc > best[key][0]:
+            best[key] = (sc, name, data)
+    out = sorted(best.values(), key=lambda x: -x[0])
+    return out[:limit]
+
+
+def run_brute(text: str, limit: int = 6):
+    print("\n[перебор пробельных схем]")
+    cands = brute_candidates(text, limit)
+    if not cands:
+        print("  [-] ничего не нашлось")
+        return []
+    flags = []
+    for i, (sc, name, data) in enumerate(cands, 1):
+        printable = sum(32 <= c < 127 or c in (9, 10, 13) for c in data) / max(1, len(data))
+        print(f"\n  {i}. score={sc:5.1f} printable={printable:.2f}  {name}")
+        print(f"     {data[:160]!r}")
+        for f in common.find_flags(data):
+            print(f"     !!! ФЛАГ: {f}")
+            flags.append(f)
+    return flags
+
+
+def rtf_report(path: str):
+    """RTF: показать текст и сразу прогнать перебор по сырому файлу."""
+    data = open(path, "rb").read()
+    if not common.is_rtf(data):
+        print("[-] это не RTF")
+        return []
+    text = common.rtf_to_text(data)
+    print(f"\n[текст RTF] {len(text)} символов")
+    print("  " + repr(text[:300]))
+    raw = data.decode("latin-1")
+    trail_hits = [ln for ln in raw.splitlines()
+                  if ln != ln.rstrip(" \t\r")]
+    print(f"\n[строк с хвостовыми пробелами/табами] {len(trail_hits)}")
+    for ln in trail_hits[:20]:
+        t = ln[len(ln.rstrip(" \t\r")):]
+        print(f"  sp={t.count(' ')} tab={t.count(chr(9))} len={len(t)}")
+    return run_brute(raw)
+
+
 def report(name, data):
     text = data.decode("utf-8", "replace")
     flags = common.find_flags(data)
@@ -295,14 +474,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file")
     ap.add_argument("--mode", default="auto",
-                    choices=["auto", "ws", "bits", "zw", "vs", "tags", "braille", "trail"])
+                    choices=["auto", "ws", "bits", "zw", "vs", "tags", "braille",
+                             "trail", "brute", "rtf"])
     ap.add_argument("--input", default="", help="вход для whitespace read")
     ap.add_argument("--max-steps", type=int, default=5_000_000)
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
 
-    text = open(args.file, "r", encoding="utf-8", errors="replace").read()
+    raw_bytes = open(args.file, "rb").read()
+    text = raw_bytes.decode("utf-8", "replace")
     mode = args.mode
     auto = mode == "auto"
     if auto:
@@ -317,6 +498,8 @@ def main():
         elif all(c in (S, T, L, "\r") for c in text):
             # раньше trail: у программы из одних пробелов «хвост» в каждой строке
             mode = "ws"
+        elif common.is_rtf(raw_bytes):
+            mode = "rtf"
         elif any(line != line.rstrip(" \t") for line in text.splitlines()):
             mode = "trail"
         else:
@@ -355,8 +538,17 @@ def main():
         for name, data in decode_braille(text):
             report(name, data)
     elif mode == "trail":
+        hit_flags = []
         for name, data in decode_trailing(text):
+            hit_flags.extend(common.find_flags(data))
             report(name, data)
+        if auto and not hit_flags:
+            print("\n[i] в хвостах ничего осмысленного — перебираю схемы")
+            run_brute(text)
+    elif mode == "brute":
+        run_brute(text)
+    elif mode == "rtf":
+        rtf_report(args.file)
 
 
 if __name__ == "__main__":

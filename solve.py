@@ -892,6 +892,12 @@ def steps_for(path, deep=False, depth=0):
                 add(("autocrack", ["--hash", h], "похоже на хеш: тип + словарь", 60))
                 if wl:
                     add(("hashcat", [h, "--wordlist", wl], "хеш + словарь (hashcat/GPU)", 120))
+            # короткий шифротекст + словарь рядом: Виженер, где ключ — слово
+            ct_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+            if wl and 8 <= len(ct_line) <= 400 and re.search(r"[A-Za-z]", ct_line) \
+                    and not re.search(r"\s", ct_line):
+                add(("classical", ["vigdict", "--text", ct_line, "--words", wl],
+                     "шифротекст + словарь: Виженер по словам из словаря", 60))
             try:
                 doc = json.loads(text)
             except Exception:

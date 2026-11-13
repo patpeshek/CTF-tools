@@ -58,6 +58,8 @@ SIGS = [
     (b"OggS", "OGG"),
     (b"\x00\x00\x01\x00", "ICO"),
     (b"LUKS\xba\xbe", "LUKS"),
+    (b"{\\rtf", "RTF"),
+    (b"{\\RTF", "RTF"),
     (b"\x53\xef", "ext2/3/4 superblock? (похоже)"),
     (b"ustar", "TAR"),
 ]
@@ -196,6 +198,8 @@ def inspect(path: str, max_strings: int):
 
 def tag_hint(tags):
     hints = []
+    if "rtf" in tags:
+        hints.append("python toolbox.py text <файл> (вытащить текст из RTF)")
     if "whitespace-only" in tags:
         hints.append("python toolbox.py ws <файл> --mode ws")
     if any(t.startswith("zero-width") for t in tags):
@@ -205,7 +209,7 @@ def tag_hint(tags):
     if any(t.startswith("braille") for t in tags):
         hints.append("python toolbox.py ws <файл> --mode braille")
     if "trailing-whitespace" in tags:
-        hints.append("python toolbox.py ws <файл> --mode trail")
+        hints.append("python toolbox.py ws <файл> --mode trail (или --mode brute)")
     if any(t.startswith("esolang") for t in tags):
         hints.append("python toolbox.py esolang <файл>")
     if "encoded-blob" in tags:

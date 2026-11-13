@@ -2128,6 +2128,51 @@ def main():
     r = run("crypto/classical.py", "vigenere-crack", "--text", cipher)
     check("crypto/classical.py vigenere-crack", "key=LEMON" in r.stdout, r.stdout[:400])
 
+    # 27b. classical vigdict: ключ берётся из словаря, алфавит с цифрами и `_`
+    # (задачи вида lz0b_q0jr_... старый vigenere-crack не берёт: букв мало,
+    # а цифры/подчёркивания он просто пропускает).
+    valpha = "abcdefghijklmnopqrstuvwxyz0123456789_"
+    vkey2 = "lemonade"
+    vplain = "the_secret_key_is_hidden_here_4012"
+    vcipher, j = "", 0
+    for ch in vplain:
+        if ch in valpha:
+            kk = valpha.index(vkey2[j % len(vkey2)])
+            vcipher += valpha[(valpha.index(ch) + kk) % len(valpha)]
+            j += 1
+        else:
+            vcipher += ch
+    wl = os.path.join(tmp, "words_small.txt")
+    open(wl, "w", encoding="utf-8").write(
+        "banana\nlemonade\ncorrect\nhorse\nbattery\nstaple\n")
+    r = run("crypto/classical.py", "vigdict", "--text", vcipher,
+            "--words", wl, "--top", "3")
+    check("crypto/classical.py vigdict", vplain in r.stdout, r.stdout[:600])
+
+    # 27c. RTF: текст достаётся, а не сырые control-слова
+    rtf = os.path.join(tmp, "doc.rtf")
+    open(rtf, "w", encoding="latin-1").write(
+        "{\\rtf1\\ansi{\\fonttbl\\f0 Helvetica;}\\f0 Hello \\'93pi\\'94"
+        " and text.\\par CTF\\{from_rtf\\}}\n")
+    r = run("toolbox.py", "text", rtf)
+    check("toolbox.py text rtf", "CTF{from_rtf}" in r.stdout, r.stdout[:600])
+    r = run("toolbox.py", "triage", rtf)
+    check("toolbox.py triage rtf", "тип: RTF" in r.stdout, r.stdout[:600])
+
+    # 27d. ws: перебор схем ловит флаг, спрятанный «не по умолчанию»
+    # (16-битные куски, у каждой второй строки полярность перевёрнута)
+    ws_flag = "CTF{ws_brute_ok}"
+    ws_bits = "".join(f"{ord(c):08b}" for c in ws_flag)
+    wsp = os.path.join(tmp, "ws_brute.txt")
+    with open(wsp, "w", encoding="utf-8") as f:
+        for i in range(0, len(ws_bits), 16):
+            chunk = "".join("\t" if b == "1" else " " for b in ws_bits[i:i + 16])
+            if (i // 16) % 2:
+                chunk = chunk.translate(str.maketrans(" \t", "\t "))
+            f.write("xxxxx" + chunk + "\n")
+    r = run("stego/whitespace.py", wsp, "--mode", "brute")
+    check("stego/whitespace.py brute", ws_flag in r.stdout, r.stdout[:800])
+
     # 28. rsa fermat + batch
     r = run("crypto/rsa_tool.py", "fermat", "--n", str(n1))
     check("crypto/rsa_tool.py fermat", str(p) in r.stdout or str(q1) in r.stdout,

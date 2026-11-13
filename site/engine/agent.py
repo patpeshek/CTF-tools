@@ -175,6 +175,19 @@ carve, chain, ws, audio, pcap, dns, jwt, lsb, zip, sqlite, elf и другие.
 инструмент, а свой скрипт пиши только если готового нет или он не справился.
 Пример: {"action":"tool","name":"rsa","args":["auto","chall.txt"]}.
 
+Типовые заходы (не изобретай своё, если есть готовое):
+  * файл незнакомого типа → {"action":"tool","name":"triage","args":["файл"]};
+  * RTF/DOCX/PDF/ZIP с текстом → {"action":"tool","name":"text","args":["файл"]};
+  * подозрение на пробелы/невидимые символы → {"action":"tool","name":"ws",
+    "args":["файл"]} (режим auto сам перебирает схемы: таб/пробел, 5-8 бит,
+    сдвиги, реверс, длины серий);
+  * шифротекст + текстовый словарь → {"action":"tool","name":"classical",
+    "args":["vigdict","--text","ШИФР","--words","words.txt"]};
+    если словарь рядом есть — это ОБЯЗАТЕЛЬНЫЙ первый шаг, свой скрипт для
+    Виженера не пиши (перебор алфавитов и рейтинг уже внутри инструмента);
+  * классический шифр без ключа → {"action":"tool","name":"classical",
+    "args":["vigenere-crack","--text","ШИФР"]} или autocrack.
+
 Правила (обязательны):
   * Отвечай РОВНО одним JSON-объектом. Никакого текста вокруг, никакого
     markdown, никаких ```блоков``` — только JSON.
@@ -199,6 +212,33 @@ carve, chain, ws, audio, pcap, dns, jwt, lsb, zip, sqlite, elf и другие.
 """
 
 
+def _balanced_json(text: str):
+    """Все фрагменты text, начинающиеся с '{' и сбалансированные по скобкам."""
+    for start, ch in enumerate(text):
+        if ch != "{":
+            continue
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(text)):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    yield text[start:i + 1]
+                    break
+
+
 def _parse_action(text: str) -> dict | None:
     text = (text or "").strip()
     if not text:
@@ -210,9 +250,19 @@ def _parse_action(text: str) -> dict | None:
             return obj
     except json.JSONDecodeError:
         pass
-    # запасной путь: вытащить первый объект, если провайдер добавил текст
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    # фрагменты: первый сбалансированный объект, затем «починка» мелочей
+    for chunk in _balanced_json(text):
+        for variant in (chunk,
+                        re.sub(r",\s*([}\]])", r"\1", chunk),
+                        re.sub(r"'([^']*)'", r'"\1"', chunk)):
+            try:
+                obj = json.loads(variant)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and "action" in obj:
+                return obj
     m = JSON_RE.search(text)
     if not m:
         return None
@@ -221,6 +271,58 @@ def _parse_action(text: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return obj if isinstance(obj, dict) and "action" in obj else None
+
+
+def _file_hints(root: str) -> str:
+    """Детерминированные подсказки по файлам: словарь, шифротекст, RTF, архив."""
+    files = []
+    try:
+        for n in sorted(os.listdir(root))[:60]:
+            p = os.path.join(root, n)
+            if os.path.isfile(p) and os.path.getsize(p) <= 2_000_000:
+                files.append((n, p, os.path.getsize(p)))
+    except OSError:
+        return ""
+    if not files:
+        return ""
+    hints = []
+    wordlist = next((n for n, _, _ in files
+                     if re.search(r"(word|pass|cand|dict)", n, re.I)
+                     and n.lower().endswith((".txt", ".lst"))), None)
+    if wordlist:
+        hints.append(f"есть словарь {wordlist} — ключи/пароли ищутся по нему")
+        for n, p, size in files:
+            if n == wordlist or size > 600:
+                continue
+            try:
+                txt = open(p, encoding="utf-8", errors="replace").read().strip()
+            except OSError:
+                continue
+            first = txt.splitlines()[0].strip() if txt else ""
+            if (8 <= len(first) <= 400 and " " not in first
+                    and re.search(r"[A-Za-z]", first)
+                    and re.search(r"[0-9_]", first)):
+                hints.append(
+                    'похоже на шифротекст ' + n + ': '
+                    '{"action":"tool","name":"classical","args":["vigdict",'
+                    '"--text","' + first + '","--words","' + wordlist + '"]}')
+                break
+    for n, p, size in files:
+        try:
+            head = open(p, "rb").read(8)
+        except OSError:
+            continue
+        if head.startswith(b"{\\rtf"):
+            hints.append(
+                n + " — это RTF: сначала "
+                '{"action":"tool","name":"text","args":["' + n + '"]}, '
+                'потом {"action":"tool","name":"ws","args":["' + n + '"]}')
+        elif head.startswith(b"PK\x03\x04"):
+            hints.append(n + " — архив: " +
+                         '{"action":"tool","name":"triage","args":["' + n + '"]}')
+    if not hints:
+        return ""
+    return "\n\nЧто видно по файлам (проверено заранее):\n- " + "\n- ".join(hints)
 
 
 def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
@@ -280,7 +382,10 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             yield {"event": "agent_step", "n": step, "tool": "flag",
                    "detail": "не похоже на флаг"}
             messages.append({"role": "user", "content":
-                             "Это не флаг. Продолжай."})
+                             "Это не флаг: флаг — одна строка вида prefix{...} "
+                             "без пробелов и кавычек. Если расшифровка дала "
+                             "текст с {...} внутри — верни ровно его. Если флага "
+                             "в выводе не было, продолжай решать."})
             continue
 
         if kind == "answer":

@@ -76,6 +76,8 @@ File → Export Objects → HTTP.
 python crypto/classical.py caesar --text "..."
 python crypto/classical.py affine --text "..." --known "AGENT"
 python crypto/classical.py vigenere --text "..." --key LEMON
+python crypto/classical.py vigenere --text "..." --key LEMON --alphabet abcdefghijklmnopqrstuvwxyz0123456789_
+python crypto/classical.py vigdict --text "lz0b_q0jr" --words words.txt   # ключ из словаря
 python crypto/classical.py multitap --text "222 33 555"
 python crypto/genetic.py "UGUACUUUC{...}"
 python crypto/xor_known.py enc.bin --known "CTF{"          # ключ и длину найдёт сам
@@ -332,6 +334,8 @@ python stego/audio_spectrum.py sound.wav --peaks
 python stego/carve.py blob.bin --out carved        # ZIP ищется по EOCD и распаковывается
 python stego/qr_scan.py pic.png
 python stego/whitespace.py file.txt
+python stego/whitespace.py doc.rtf              # RTF: текст + перебор пробельных схем
+python stego/whitespace.py file.txt --mode brute  # 5-8 бит, сдвиги, реверс, полярность по строкам
 python stego/esolang.py file.bf
 python crypto/obscure.py auto --text "..."
 

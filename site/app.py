@@ -457,6 +457,7 @@ class Handler(BaseHTTPRequestHandler):
             save_history(rows)
         self._json(200, {"id": job_id, "files": list_files(job_dir),
                          "reused": reused})
+        threading.Thread(target=worker, args=(job_id,), daemon=True).start()
 
     def _terminal(self):
         data = self._body()

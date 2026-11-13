@@ -2173,6 +2173,34 @@ def main():
     r = run("stego/whitespace.py", wsp, "--mode", "brute")
     check("stego/whitespace.py brute", ws_flag in r.stdout, r.stdout[:800])
 
+    # 27e. ws: SNOW (3 бита на серию пробелов, таб-разделитель) + ICE-пароль
+    def snow_hide(msg: bytes, password=None) -> str:
+        bite = "".join(f"{c:08b}" for c in msg)
+        if password:
+            sys.path.insert(0, os.path.join(KIT, "stego"))
+            import ice as _ice
+            bite = "".join(str(b) for b in
+                           _ice.encrypt_bits(password, [int(x) for x in bite]))
+        while len(bite) % 3:
+            bite += "0"
+        vals = [int(bite[i:i + 3], 2) for i in range(0, len(bite), 3)]
+        out = "x\t"
+        for v in vals:
+            n = ((v & 1) << 2) | (v & 2) | ((v & 4) >> 2)
+            out += " " * n + "\t"
+        return out + "\n"
+
+    snow_msg = "CTF{snow_ice_ok}"
+    sp1 = os.path.join(tmp, "snow_plain.txt")
+    open(sp1, "w").write(snow_hide(snow_msg.encode()))
+    r = run("stego/whitespace.py", sp1, "--mode", "snow")
+    check("stego/whitespace.py snow", snow_msg in r.stdout, r.stdout[:600])
+
+    sp2 = os.path.join(tmp, "snow_ice.txt")
+    open(sp2, "w").write(snow_hide(snow_msg.encode(), "s3cr3t"))
+    r = run("stego/whitespace.py", sp2, "--mode", "snow", "--password", "s3cr3t")
+    check("stego/whitespace.py snow + пароль", snow_msg in r.stdout, r.stdout[:600])
+
     # 28. rsa fermat + batch
     r = run("crypto/rsa_tool.py", "fermat", "--n", str(n1))
     check("crypto/rsa_tool.py fermat", str(p) in r.stdout or str(q1) in r.stdout,

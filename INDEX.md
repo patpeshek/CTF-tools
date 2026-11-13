@@ -34,7 +34,7 @@
 | `runs` | серии символов → ASCII | `python toolbox.py runs a.txt --chars "<>{}"` |
 | `png_chunks` | чанки PNG, CRC/IHDR, `--fix`, хвост | `python toolbox.py png_chunks a.png --fix fixed.png` |
 | `bitmap_font` | точки → картинка → глифы | `python toolbox.py bitmap_font pts.csv --flip-y --decode` |
-| `ws` | Whitespace + zero-width + braille + хвосты + перебор схем (`--mode brute`) | `python toolbox.py ws file.txt` |
+| `ws` | Whitespace + zero-width + braille + хвосты + SNOW (3 бита на серию, `--password`) + перебор схем (`--mode brute`) | `python toolbox.py ws file.txt` |
 | `esolang` | Brainfuck/Ook/Cow/Befunge/Deadfish | `python toolbox.py esolang file.bf` |
 | `audio` | спектрограмма WAV + пики | `python toolbox.py audio a.wav --peaks` |
 | `audiotools` | DTMF и морзе из WAV (проверка `.-` через `--raw`, код в нижнем регистре) | `python toolbox.py audiotools a.wav --raw` |

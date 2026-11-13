@@ -452,6 +452,112 @@ def brute_candidates(text: str, limit: int = 6):
     return out[:limit]
 
 
+def decode_snow(text: str, limit: int = 4000, password: str | None = None):
+    """SNOW (stegsnow): 3 бита на серию пробелов, таб разделяет, таб в начале
+    хвоста = начало данных.
+
+    Формат из исходников stegsnow (encode.c: decode_bits/decode_whitespace/
+    message_extract, compress.c: output_bit): хвостовой whitespace строки;
+    пока не встретилась строка, чей хвост начинается с таба, данные не начались;
+    затем каждая серия пробелов длины n (0..7) перед табом (и в конце хвоста)
+    даёт 3 бита: n&1, (n>>1)&1, (n>>2)&1; биты собираются в байт MSB-first.
+    """
+    bits = []
+    started = False
+    lines_used = 0
+    for line in text.splitlines():
+        line = line.rstrip("\r")
+        i = len(line)
+        while i > 0 and line[i - 1] in " \t":
+            i -= 1
+        if i == len(line):
+            continue
+        tail = line[i:]
+        if not started:
+            if tail[0] == " ":
+                continue
+            started = True
+            tail = tail[1:]
+            if not tail:
+                continue
+        lines_used += 1
+
+        def push(spc):
+            bits.extend(((spc & 1), (spc >> 1) & 1, (spc >> 2) & 1))
+
+        spc = 0
+        for ch in tail:
+            if ch == " ":
+                spc += 1
+            elif ch == "\t":
+                push(spc)
+                spc = 0
+        if spc > 0:
+            push(spc)
+
+    if not bits:
+        return None
+    if password:
+        import os as _os
+        import sys as _sys
+        try:
+            import ice
+        except ImportError:
+            here = _os.path.dirname(_os.path.abspath(__file__))
+            if here not in _sys.path:
+                _sys.path.insert(0, here)
+            import ice
+        bits = ice.decrypt_bits(password, bits)
+    out = bytearray()
+    for i in range(0, len(bits) - 7, 8):
+        v = 0
+        for b in bits[i:i + 8]:
+            v = (v << 1) | b
+        out.append(v)
+    return {"bits": len(bits), "lines": lines_used, "data": bytes(out)}
+
+
+def run_snow(text: str, out_path: str | None = None,
+             password: str | None = None):
+    res = decode_snow(text, password=password)
+    if not res:
+        print("[-] SNOW-данных не видно (нет хвоста, начинающегося с таба)")
+        return []
+    data = res["data"]
+    printable = sum(32 <= c < 127 or c in (9, 10, 13) for c in data) / max(1, len(data))
+    print(f"\n[SNOW] строк с данными: {res['lines']}, бит: {res['bits']} "
+          f"→ {len(data)} байт, printable={printable:.2f}"
+          + (f", пароль: {password!r}" if password else ", без пароля"))
+    print("  hex:", data.hex())
+    print("  как текст:", repr(data.decode("utf-8", "replace")[:300]))
+    magic = {b"\x1f\x8b": "gzip", b"BZh": "bzip2", b"PK": "zip", b"%PDF": "pdf",
+             b"\x78\x9c": "zlib", b"\x78\x01": "zlib", b"\x78\xda": "zlib"}
+    for m, name in magic.items():
+        if data.startswith(m):
+            print(f"  [!] похоже на {name}: попробуй распаковать")
+            try:
+                import zlib
+                if name.startswith("zlib"):
+                    print("  распаковано:", zlib.decompress(data)[:300])
+            except Exception:
+                pass
+    if printable < 0.85:
+        if password:
+            print("  [!] с этим паролем не текст: пароль не тот или snow -C "
+                  "(Huffman-сжатие)")
+        else:
+            print("  [!] данные не текст: похоже на snow с паролем (-p) — "
+                  "попробуй --password ПАРОЛЬ; ещё вариант -C (сжатие)")
+    flags = common.find_flags(data)
+    for f in flags:
+        print("  !!! ФЛАГ:", f)
+    if out_path:
+        with open(out_path, "wb") as fh:
+            fh.write(data)
+        print(f"  [+] байты сохранены: {out_path}")
+    return flags
+
+
 def run_brute(text: str, limit: int = 6):
     print("\n[перебор пробельных схем]")
     cands = brute_candidates(text, limit)
@@ -509,7 +615,7 @@ def run_structure(text: str):
     return
 
 
-def rtf_report(path: str):
+def rtf_report(path: str, password: str | None = None):
     """RTF: показать текст, структуру хвостов и прогнать перебор."""
     data = open(path, "rb").read()
     if not common.is_rtf(data):
@@ -520,6 +626,7 @@ def rtf_report(path: str):
     print("  " + repr(text[:300]))
     raw = data.decode("latin-1")
     run_structure(raw)
+    run_snow(raw, password=password)
     return run_brute(raw)
 
 
@@ -539,8 +646,10 @@ def main():
     ap.add_argument("file")
     ap.add_argument("--mode", default="auto",
                     choices=["auto", "ws", "bits", "zw", "vs", "tags", "braille",
-                             "trail", "brute", "rtf", "report"])
+                             "trail", "brute", "rtf", "report", "snow"])
     ap.add_argument("--input", default="", help="вход для whitespace read")
+    ap.add_argument("--out", help="куда сохранить найденные байты (snow)")
+    ap.add_argument("--password", help="пароль snow (-p): ICE-шифр на битах")
     ap.add_argument("--max-steps", type=int, default=5_000_000)
     common.add_flag_args(ap)
     args = ap.parse_args()
@@ -612,10 +721,12 @@ def main():
     elif mode == "brute":
         run_brute(text)
     elif mode == "rtf":
-        rtf_report(args.file)
+        rtf_report(args.file, args.password)
     elif mode == "report":
         run_structure(text)
         run_brute(text)
+    elif mode == "snow":
+        run_snow(text, args.out, args.password)
 
 
 if __name__ == "__main__":

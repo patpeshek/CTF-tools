@@ -336,6 +336,8 @@ python stego/qr_scan.py pic.png
 python stego/whitespace.py file.txt
 python stego/whitespace.py doc.rtf              # RTF: текст + перебор пробельных схем
 python stego/whitespace.py file.txt --mode brute  # 5-8 бит, сдвиги, реверс, полярность по строкам
+python stego/whitespace.py file.txt --mode snow   # SNOW: 3 бита на «N пробелов + TAB»
+python stego/whitespace.py file.txt --mode snow --password 314  # SNOW + ICE (snow -p)
 python stego/esolang.py file.bf
 python crypto/obscure.py auto --text "..."
 

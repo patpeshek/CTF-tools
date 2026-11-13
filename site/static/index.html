@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTF-tools</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #070707; color: #e8e8e8;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    display: flex; justify-content: center; padding: 24px 16px;
+  }
+  .wrap { width: 100%; max-width: 560px; }
+  .card { background: #0d0d0d; border: 1px solid #1c1c1c; border-radius: 14px; padding: 22px; }
+  .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 18px; }
+  .top b { font-weight: 500; font-size: 15px; letter-spacing: .5px; }
+  .mode { font-size: 12px; color: #6f6f6f; }
+  .drop {
+    border: 1px dashed #2a2a2a; border-radius: 10px; padding: 26px 16px;
+    text-align: center; color: #8a8a8a; cursor: pointer; transition: border-color .4s, color .4s;
+    font-size: 14px;
+  }
+  .drop.hot { border-color: #4a4a4a; color: #d0d0d0; }
+  .drop b { color: #e8e8e8; font-weight: 500; }
+  .row { display: flex; gap: 10px; margin-top: 12px; }
+  input[type=text], input[type=number] {
+    background: #000; border: 1px solid #222; color: #e8e8e8; border-radius: 8px;
+    padding: 8px 10px; font: inherit; font-size: 13px; width: 100%;
+  }
+  input::placeholder { color: #555; }
+  button {
+    background: #e8e8e8; color: #000; border: 0; border-radius: 8px; padding: 9px 18px;
+    font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+    transition: opacity .3s;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  .log { margin-top: 20px; display: flex; flex-direction: column; gap: 2px; }
+  .line {
+    display: flex; gap: 12px; font-size: 13px; line-height: 1.7;
+    opacity: 0; transform: translateY(6px); animation: in .5s cubic-bezier(.16,1,.3,1) forwards;
+  }
+  @keyframes in { to { opacity: 1; transform: none; } }
+  .line .t { color: #5a5a5a; flex: none; }
+  .line .w { color: #cfcfcf; flex: 1; }
+  .line .s { color: #6f6f6f; flex: none; }
+  .s.ok { color: #6f9f6f; } .s.fail { color: #9f6f6f; } .s.run { color: #9a9a6a; }
+  .leads { margin-top: 14px; }
+  .leads .lead { font-size: 12px; color: #8a8a8a; line-height: 1.7; }
+  .flag {
+    margin-top: 22px; padding-top: 18px; border-top: 1px solid #1c1c1c;
+    display: none; justify-content: space-between; align-items: baseline;
+  }
+  .flag.show { display: flex; animation: in .6s ease forwards; }
+  .flag .val { font-size: 19px; color: #fff; word-break: break-all; }
+  .flag .val.miss { font-size: 15px; color: #8a8a8a; }
+  .flag .cp { font-size: 12px; color: #8a8a8a; cursor: pointer; flex: none; margin-left: 12px; }
+  .warn { margin-top: 12px; font-size: 12px; color: #a98b4a; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="top"><b>CTF-tools</b><span class="mode" id="mode">…</span></div>
+    <div class="drop" id="drop"><span id="droptext">перетащи файл или <b>выбери</b></span></div>
+    <input type="file" id="file" hidden>
+    <div class="row">
+      <input type="text" id="prefix" placeholder="формат флага, напр. flag (не обязательно)">
+      <input type="number" id="budget" value="90" min="5" max="600" style="width:84px" title="секунд">
+      <button id="go" disabled>решить</button>
+    </div>
+    <div id="warn" class="warn"></div>
+    <div class="log" id="log"></div>
+    <div class="leads" id="leads"></div>
+    <div class="flag" id="flagbox"><span class="val" id="flagval"></span><span class="cp" id="cp">скопировать</span></div>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const fileInput = $("#file"), drop = $("#drop"), go = $("#go"), log = $("#log"),
+      leads = $("#leads"), flagbox = $("#flagbox"), flagval = $("#flagval"), cp = $("#cp");
+let chosen = null, lines = {}, es = null;
+
+fetch("/health").then(r => r.json()).then(d => {
+  $("#mode").textContent = d.docker ? "песочница" : "локально (без Docker)";
+}).catch(() => {});
+
+drop.onclick = () => fileInput.click();
+["dragover","dragenter"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("hot"); }));
+["dragleave","drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", ev => { if (ev.dataTransfer.files[0]) pick(ev.dataTransfer.files[0]); });
+fileInput.onchange = () => { if (fileInput.files[0]) pick(fileInput.files[0]); };
+function pick(f) { chosen = f; $("#droptext").innerHTML = "<b>" + f.name + "</b> · " + f.size + " б"; go.disabled = false; }
+
+go.onclick = async () => {
+  if (!chosen) return;
+  go.disabled = true; log.innerHTML = ""; leads.innerHTML = ""; lines = {};
+  flagbox.className = "flag"; $("#warn").textContent = "";
+  if (es) es.close();
+  const res = await fetch("/solve", { method: "POST", body: chosen, headers: {
+    "X-Filename": chosen.name, "X-Flag-Prefix": $("#prefix").value, "X-Budget": $("#budget").value } });
+  if (!res.ok) { $("#warn").textContent = "ошибка загрузки"; go.disabled = false; return; }
+  const { job_id } = await res.json();
+  es = new EventSource("/events/" + job_id);
+  es.onmessage = e => handle(JSON.parse(e.data));
+  es.onerror = () => { es.close(); go.disabled = false; };
+};
+
+function row(n) {
+  if (lines[n]) return lines[n];
+  const el = document.createElement("div"); el.className = "line";
+  el.innerHTML = '<span class="t"></span><span class="w"></span><span class="s run">идёт</span>';
+  log.appendChild(el); lines[n] = el; return el;
+}
+function handle(ev) {
+  const k = ev.event;
+  if (k === "runner_note") { $("#warn").textContent = ev.note || ""; return; }
+  if (k === "plan") {
+    const el = document.createElement("div"); el.className = "line";
+    el.innerHTML = '<span class="t">тип</span><span class="w">' + (ev.kind || "?") +
+      (ev.steps ? ", шагов: " + ev.steps.length : "") + '</span><span class="s"></span>';
+    log.appendChild(el); return;
+  }
+  if (k === "step_start") { const el = row(ev.n);
+    el.querySelector(".t").textContent = ev.tool || ""; el.querySelector(".w").textContent = ev.why || ""; return; }
+  if (k === "step_end") { const el = row(ev.n); const s = el.querySelector(".s");
+    const st = ev.status || "ok"; s.textContent = st === "ok" ? (ev.seconds || 0) + "с" : st;
+    s.className = "s " + (st === "ok" ? "ok" : (st === "skipped" ? "" : "fail")); return; }
+  if (k === "lead") { const d = document.createElement("div"); d.className = "lead";
+    d.textContent = "· " + (ev.text || ""); leads.appendChild(d); return; }
+  if (k === "flag" && ev.flag) { showFlag(ev.flag); return; }
+  if (k === "done" || k === "runner_end") {
+    go.disabled = false;
+    if (ev.flag) showFlag(ev.flag);
+    else if (!flagbox.classList.contains("show")) {
+      flagval.textContent = "флаг не найден"; flagval.className = "val miss";
+      cp.style.display = "none"; flagbox.classList.add("show");
+    }
+    if (es) es.close();
+  }
+}
+function showFlag(f) {
+  flagval.textContent = f; flagval.className = "val"; cp.style.display = "";
+  flagbox.classList.add("show");
+  cp.onclick = () => { navigator.clipboard.writeText(f); cp.textContent = "скопировано"; };
+}
+</script>
+</body>
+</html>

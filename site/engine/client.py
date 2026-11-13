@@ -53,7 +53,8 @@ def ready() -> bool:
 
 
 def chat(messages, *, model: str | None = None, temperature: float = 0.2,
-         max_tokens: int = 2000, timeout: int = 120) -> str:
+         max_tokens: int = 2000, timeout: int = 120,
+         json_mode: bool = False) -> str:
     cfg = settings()
     if not cfg["key"] or not cfg["base"]:
         raise RuntimeError("нет SOLVER_API_URL / SOLVER_API_KEY "
@@ -64,6 +65,19 @@ def chat(messages, *, model: str | None = None, temperature: float = 0.2,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    try:
+        return _post(cfg, payload, timeout)
+    except RuntimeError as exc:
+        # провайдер может не знать response_format — повторяем без него
+        if json_mode and "response_format" in str(exc):
+            payload.pop("response_format", None)
+            return _post(cfg, payload, timeout)
+        raise
+
+
+def _post(cfg: dict, payload: dict, timeout: int) -> str:
     req = urllib.request.Request(
         cfg["base"].rstrip("/") + "/chat/completions",
         data=json.dumps(payload).encode("utf-8"),

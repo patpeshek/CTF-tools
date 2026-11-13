@@ -121,7 +121,8 @@ SYSTEM = """Ты автономный решатель CTF-задач.
   {"action":"answer","status":"need_service","text":"host:port"}
 
 Правила (обязательны):
-  * Отвечай ровно одним JSON-объектом, без markdown и пояснений вокруг.
+  * Отвечай РОВНО одним JSON-объектом. Никакого текста вокруг, никакого
+    markdown, никаких ```блоков``` — только JSON.
   * Работай только внутри рабочей папки. Никаких путей вида C:\\, /, ..
   * ЗАПРЕЩЕНО: удалять и форматировать диски, менять реестр, выключать машину,
     убивать процессы, ставить/сносить пакеты системы, скачивать и запускать
@@ -144,6 +145,14 @@ def _parse_action(text: str) -> dict | None:
     text = (text or "").strip()
     if not text:
         return None
+    # строгий режим: ответ целиком должен быть JSON
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and "action" in obj:
+            return obj
+    except json.JSONDecodeError:
+        pass
+    # запасной путь: вытащить первый объект, если провайдер добавил текст
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
     m = JSON_RE.search(text)
@@ -183,7 +192,7 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             return
         try:
             reply = client.chat(messages, model=model, temperature=0.15,
-                                max_tokens=1800)
+                                max_tokens=1800, json_mode=True)
         except Exception as exc:
             yield {"event": "agent_stop", "reason": f"модель недоступна: {exc}"}
             return

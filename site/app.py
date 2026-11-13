@@ -152,7 +152,7 @@ def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None):
 def _agent_events(job: dict):
     if not (engine and model_ready()):
         return
-    ws = engine.Workspace(job["dir"])
+    ws = engine.Workspace(job["work"])
     task = job["task"] or ""
     if job["inputs"]:
         lines = [f"[{i.get('role') or 'данные'}] {i.get('value', '')}"
@@ -168,11 +168,23 @@ def _agent_events(job: dict):
 
 # ---------------------------------------------------------------------- worker
 
+FLAG_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,15}\{[ -~]{1,200}\}$")
+
+
+def valid_flag(text: str) -> bool:
+    """Флаг — одна строка без переводов строк, кавычек, слэшей и скобок внутри."""
+    text = (text or "").strip()
+    if not FLAG_OK.match(text):
+        return False
+    inner = text[text.index("{") + 1:-1]
+    return not any(c in inner for c in '\n\r\t"\\[]{}')
+
+
 def _emit(job: dict, ev: dict) -> None:
     """Кладём событие в очередь и в файл <job>/events.jsonl (для разбора потом)."""
     job["q"].put(ev)
     try:
-        with open(os.path.join(job["dir"], "events.jsonl"), "a",
+        with open(os.path.join(job["meta"], "events.jsonl"), "a",
                   encoding="utf-8") as fh:
             fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
     except OSError:
@@ -187,12 +199,12 @@ def _cache_artifacts(job: dict) -> list:
     art_dir = os.path.join(ART_DIR, job["input_hash"])
     os.makedirs(art_dir, exist_ok=True)
     saved = []
-    for base, _dirs, files in os.walk(job["dir"]):
+    for base, _dirs, files in os.walk(job["work"]):
         for name in files:
-            if name in uploaded or name == "events.jsonl" or name.endswith(".pyc"):
+            if name in uploaded or name.endswith(".pyc"):
                 continue
             src = os.path.join(base, name)
-            rel = os.path.relpath(src, job["dir"])
+            rel = os.path.relpath(src, job["work"])
             if rel.startswith("__pycache__"):
                 continue
             dst = os.path.join(art_dir, rel.replace("/", "__"))
@@ -214,7 +226,7 @@ def worker(job_id: str):
         _emit(job, {"event": "runner_note",
                     "note": "подхватил прошлые наработки: "
                             + ", ".join(job["reused"][:5])})
-    target = job["dir"]
+    target = job["in"]
     files = [f for f in os.listdir(target)]
     single = os.path.join(target, files[0]) if len(files) == 1 else target
     out: queue.Queue = queue.Queue()
@@ -257,6 +269,12 @@ def worker(job_id: str):
             continue
         ev = dict(ev)
         ev.setdefault("stage", src)
+        if ev.get("event") == "flag":
+            candidate = str(ev.get("flag") or "")
+            if not valid_flag(candidate):
+                _emit(job, {"event": "runner_note",
+                            "note": "движок вернул мусор вместо флага — отбросил"})
+                continue
         _emit(job, ev)
         if ev.get("event") == "flag" and ev.get("flag"):
             flag = ev["flag"]
@@ -359,6 +377,8 @@ class Handler(BaseHTTPRequestHandler):
                 full = os.path.abspath(os.path.join(job["dir"], rel))
                 if os.path.commonpath([full, job["dir"]]) != job["dir"]:
                     raise ValueError
+                if os.path.relpath(full, job["dir"]).split(os.sep)[0] == "meta":
+                    raise ValueError("служебная папка")
                 with open(full, "rb") as fh:
                     data = fh.read(200000)
                 self._json(200, {"path": rel, "text":
@@ -394,7 +414,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         job_id = uuid.uuid4().hex
         job_dir = os.path.join(JOB_ROOT, job_id)
-        os.makedirs(job_dir, exist_ok=True)
+        in_dir = os.path.join(job_dir, "in")
+        work_dir = os.path.join(job_dir, "work")
+        meta_dir = os.path.join(job_dir, "meta")
+        for d in (in_dir, work_dir, meta_dir):
+            os.makedirs(d, exist_ok=True)
         saved = 0
         uploaded = []
         for item in files[:MAX_FILES]:
@@ -410,7 +434,8 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.exists(cached):
                 with open(cached, "wb") as fh:
                     fh.write(blob)
-            shutil.copyfile(cached, os.path.join(job_dir, name))
+            shutil.copyfile(cached, os.path.join(in_dir, name))
+            shutil.copyfile(cached, os.path.join(work_dir, name))
             uploaded.append({"name": name, "size": len(blob), "sha": digest})
             saved += len(blob)
         input_hash = sha256_bytes(
@@ -425,7 +450,7 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 try:
                     shutil.copyfile(os.path.join(art_dir, fname),
-                                    os.path.join(job_dir, fname))
+                                    os.path.join(work_dir, fname))
                     reused.append(fname)
                 except OSError:
                     pass
@@ -436,6 +461,9 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             _jobs[job_id] = {
                 "dir": job_dir,
+                "in": in_dir,
+                "work": work_dir,
+                "meta": meta_dir,
                 "task": str(data.get("task", ""))[:20000],
                 "inputs": [i for i in (data.get("inputs") or [])
                            if isinstance(i, dict)][:20],
@@ -471,7 +499,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         started = time.time()
         try:
-            proc = subprocess.run(cmd, cwd=job["dir"], shell=True,
+            proc = subprocess.run(cmd, cwd=job["work"], shell=True,
                                   capture_output=True, text=True,
                                   encoding="utf-8", errors="replace",
                                   timeout=60)
@@ -522,6 +550,8 @@ def list_files(root: str):
         for name in sorted(files):
             full = os.path.join(base, name)
             rel = os.path.relpath(full, root).replace("\\", "/")
+            if rel.split("/")[0] == "meta":
+                continue
             rows.append({"path": rel, "size": os.path.getsize(full)})
     return rows[:500]
 

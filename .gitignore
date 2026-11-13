@@ -51,4 +51,6 @@ tools/
 secrets.json
 *.key
 *api*key*
-site/ai/.env
+site/engine/.env
+
+.codegraph/

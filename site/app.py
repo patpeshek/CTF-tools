@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-app.py — тонкий прототип сайта (тикеты #143 + #147 + #146).
+"""app.py — сервер сайта: задача -> прогон кита -> при необходимости агент.
 
-Цепочка: страница -> загрузка файла -> запуск `solve --events -` ->
-живой поток событий в браузер по SSE -> лог шагов и флаг.
+Эндпоинты (JSON):
+  POST /api/task            {task, files:[{name,b64}], inputs:[{role,value}],
+                             deep, budget, prefix}
+  GET  /api/events/<id>     SSE-поток событий (запускает работу)
+  POST /api/terminal        {id, cmd} — команда в папке задачи
+  GET  /api/files/<id>      список файлов задачи
+  GET  /api/file/<id>?path= содержимое файла
+  POST /api/stop/<id>       остановить
+  GET  /health              {ok, sandbox, model}
+  GET  /                    index.html
 
-Только стандартная библиотека, запуск без установки зависимостей:
-
-    python site/app.py            # http://127.0.0.1:8770
-
-Два режима запуска движка:
-  * есть Docker -> изолированная песочница (site/sandbox/runner.py, #142);
-  * нет Docker  -> прямой ЛОКАЛЬНЫЙ запуск solve (без изоляции). Годится для
-    проверки «решает/нет» на своей машине; для чужих файлов нужна песочница.
-
-Это прототип: без логина, очереди, истории и защиты сайта (см. docs/SITE.md).
+Только стандартная библиотека.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -34,64 +34,87 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 STATIC = os.path.join(HERE, "static")
+ENGINE = os.path.join(HERE, "engine")
+sys.path.insert(0, ENGINE)
 sys.path.insert(0, os.path.join(HERE, "sandbox"))
 
 try:
-    import runner as sandbox  # site/sandbox/runner.py (#142)
+    import client as model  # site/engine/client.py
+except Exception:  # pragma: no cover
+    model = None
+try:
+    import agent as engine  # site/engine/agent.py
+except Exception:  # pragma: no cover
+    engine = None
+try:
+    import runner as sandbox  # site/sandbox/runner.py
 except Exception:  # pragma: no cover
     sandbox = None
 
-sys.path.insert(0, os.path.join(HERE, "ai"))
-try:
-    import deepseek  # site/ai/deepseek.py (#186)
-except Exception:  # pragma: no cover
-    deepseek = None
-
-AI_FLAG = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,15}\{[^{}\r\n]{2,120}\}")
-
-MAX_UPLOAD = 64 * 1024 * 1024
-JOB_ROOT = os.path.join(tempfile.gettempdir(), "ctf_site_jobs")
+MAX_FILES = 200
+MAX_TOTAL = 128 * 1024 * 1024
+JOB_ROOT = os.path.join(tempfile.gettempdir(), "cf_site_jobs")
 os.makedirs(JOB_ROOT, exist_ok=True)
 
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 
 
+def safe_name(name: str) -> str:
+    name = os.path.basename((name or "").replace("\\", "/")) or "file.bin"
+    return "".join(c for c in name if c.isalnum() or c in "._-")[:120] or "file.bin"
+
+
 def docker_on() -> bool:
-    return bool(sandbox and sandbox.docker_available(probe=True))
+    try:
+        return bool(sandbox and sandbox.docker_available(probe=True))
+    except Exception:
+        return False
 
 
-def _safe_name(name: str) -> str:
-    name = os.path.basename((name or "").replace("\\", "/")) or "upload.bin"
-    return "".join(c for c in name if c.isalnum() or c in "._-")[:120] or "upload.bin"
+def model_ready() -> bool:
+    try:
+        return bool(model and model.ready())
+    except Exception:
+        return False
 
 
-def engine_events(path: str, budget: float, flag_prefix: str | None):
-    """Генератор dict-событий от движка. Через песочницу или напрямую."""
-    if docker_on():
-        yield from sandbox.run(path, mode="offline", engine_budget=budget,
-                               flag_format=flag_prefix or None, want_summary=True)
-        return
-    # Прямой локальный режим (без изоляции).
+# ------------------------------------------------------------------ движок кита
+
+def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None):
     cmd = [sys.executable, os.path.join(ROOT, "solve.py"), path,
-           "--events", "-", "--time", str(budget)]
-    if flag_prefix:
-        cmd += ["--flag-prefix", flag_prefix]
-    yield {"event": "runner_note", "t": 0.0,
-           "note": "ПЕСОЧНИЦА ВЫКЛЮЧЕНА (нет Docker): локальный запуск без изоляции"}
+           "--events", "-", "--time", str(int(budget))]
+    if deep:
+        cmd.append("--deep")
+    if prefix:
+        cmd += ["--flag-prefix", prefix]
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            env=env, bufsize=1, text=True, encoding="utf-8",
-                            errors="replace")
+    yield {"event": "runner_note", "note": "прогон инструментов кита"}
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, env=env,
+                                bufsize=1, text=True, encoding="utf-8",
+                                errors="replace")
+    except OSError as exc:
+        yield {"event": "runner_note", "note": f"не запустился кит: {exc}"}
+        return
     deadline = time.time() + budget + 30
     try:
         for line in proc.stdout:
-            ev = sandbox.parse_event_line(line) if sandbox else _parse(line)
-            if ev and ev.get("event"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(ev, dict) and ev.get("event"):
+                if ev["event"] == "done":
+                    continue
                 yield ev
             if time.time() > deadline:
                 proc.kill()
-                yield {"event": "runner_note", "t": 0.0, "note": "таймаут, процесс снят"}
+                yield {"event": "runner_note", "note": "кит: таймаут"}
                 break
     finally:
         try:
@@ -101,151 +124,250 @@ def engine_events(path: str, budget: float, flag_prefix: str | None):
             proc.kill()
 
 
-def _parse(line: str):
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        obj = json.loads(line)
-        return obj if isinstance(obj, dict) and "event" in obj else None
-    except Exception:
-        return None
-
-
-def _ai_agent(job, q):
-    """Агент-цикл: ИИ пишет решатель, он запускается, при неудаче правится и
-    пробует снова. Наружу — только статус (runner_note) и РЕЗУЛЬТАТ (флаг или
-    одна строка-ответ), без рассуждений («скрытый пул»). Запуск кода модели —
-    через agent.run: без Docker локально с таймаутом (для чужих файлов нужна
-    песочница #142)."""
-    if not (deepseek and os.environ.get("DEEPSEEK_API_KEY")):
-        q.put({"event": "runner_note", "t": 0.0,
-               "note": "ИИ выключен: нет DEEPSEEK_API_KEY в окружении сервера"})
+def _agent_events(job: dict):
+    if not (engine and model_ready()):
+        yield {"event": "runner_note",
+               "note": "вторая стадия выключена: не настроен endpoint модели"}
         return
-    try:
-        import agent
-    except Exception as e:  # pragma: no cover
-        q.put({"event": "runner_note", "t": 0.0, "note": f"агент недоступен: {e}"})
-        return
-    try:
-        data = open(job["path"], "rb").read(40000)
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            text = data.decode("latin-1", "replace")
-    except OSError as e:
-        q.put({"event": "runner_note", "t": 0.0, "note": f"файл не прочитан: {e}"})
-        return
-    for ev in agent.run(text, filename=os.path.basename(job["path"]),
-                        file_path=job["path"]):
-        k = ev.get("event")
-        if k == "ai_status":
-            q.put({"event": "runner_note", "t": 0.0, "note": ev["note"]})
-        elif k == "flag":
-            job["flag"] = ev["flag"]
-            q.put({"event": "flag", "t": 0.0, "tool": "ИИ", "flag": ev["flag"]})
-        elif k == "ai_answer":
-            q.put({"event": "lead", "t": 0.0, "tool": "ИИ", "text": ev["text"]})
+    ws = engine.Workspace(job["dir"])
+    task = job["task"] or ""
+    if job["inputs"]:
+        lines = [f"[{i.get('role') or 'данные'}] {i.get('value', '')}"
+                 for i in job["inputs"] if str(i.get("value", "")).strip()]
+        if lines:
+            task += "\n\nДанные из условия:\n" + "\n".join(lines)
+    yield from engine.run(ws, task, max_steps=16,
+                          deadline=time.time() + max(120, job["budget"] * 3))
 
 
-def _worker(job_id: str):
+# ---------------------------------------------------------------------- worker
+
+def worker(job_id: str):
+    """Кит и вторая стадия идут ОДНОВРЕМЕННО; что первое нашло — то и ответ."""
     job = _jobs[job_id]
     q: queue.Queue = job["q"]
-    tried = []
-    try:
-        for ev in engine_events(job["path"], job["budget"], job["prefix"]):
-            if ev.get("event") == "done":
-                # НЕ пробрасываем done от solve: страница закрывает поток на нём,
-                # а ИИ отрабатывает ПОЗЖЕ. Терминал потока — наш runner_end.
-                if ev.get("flag"):
-                    job["flag"] = ev["flag"]
-                continue
-            q.put(ev)
-            if ev.get("event") == "step_end":
-                tried.append(f"{ev.get('tool')}:{ev.get('status')}")
-            if ev.get("event") == "flag" and ev.get("flag"):
-                job["flag"] = ev["flag"]
-    except Exception as e:  # pragma: no cover
-        q.put({"event": "runner_note", "t": 0.0, "note": f"ошибка запуска: {e}"})
-    try:
-        if not job.get("flag"):
-            _ai_agent(job, q)
-    except Exception as e:  # pragma: no cover
-        q.put({"event": "runner_note", "t": 0.0, "note": f"ИИ сбой: {e}"})
-    q.put({"event": "runner_end", "t": 0.0, "flag": job.get("flag")})
+    target = job["dir"]
+    files = [f for f in os.listdir(target)]
+    single = os.path.join(target, files[0]) if len(files) == 1 else target
+    out: queue.Queue = queue.Queue()
+
+    def stage_kit():
+        try:
+            for ev in toolkit_events(single, job["budget"], job["deep"],
+                                     job["prefix"]):
+                out.put(("kit", ev))
+        except Exception as exc:  # pragma: no cover
+            out.put(("kit", {"event": "runner_note",
+                             "note": f"ошибка кита: {exc}"}))
+        finally:
+            out.put(("kit", None))
+
+    def stage_second():
+        try:
+            for ev in _agent_events(job):
+                out.put(("second", ev))
+        except Exception as exc:  # pragma: no cover
+            out.put(("second", {"event": "runner_note",
+                                "note": f"ошибка второй стадии: {exc}"}))
+        finally:
+            out.put(("second", None))
+
+    threads = [threading.Thread(target=stage_kit, daemon=True),
+               threading.Thread(target=stage_second, daemon=True)]
+    for th in threads:
+        th.start()
+
+    alive = {"kit": True, "second": True}
+    flag = None
+    while any(alive.values()) and not job.get("stop"):
+        try:
+            src, ev = out.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        if ev is None:
+            alive[src] = False
+            continue
+        ev = dict(ev)
+        ev.setdefault("stage", src)
+        q.put(ev)
+        if ev.get("event") == "flag" and ev.get("flag"):
+            flag = ev["flag"]
+            break
+
+    job["flag"] = flag
+    q.put({"event": "runner_end", "flag": flag})
     q.put(None)
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "ctf-site-proto"
+# ---------------------------------------------------------------------- HTTP
 
-    def log_message(self, *a):  # тише в консоли
+class Handler(BaseHTTPRequestHandler):
+    server_version = "ctf-site"
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
         pass
 
-    def _send(self, code, ctype, body: bytes, extra=None):
+    def _send(self, code, ctype, body: bytes):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        for k, v in (extra or {}).items():
-            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+    def _json(self, code, obj):
+        self._send(code, "application/json; charset=utf-8",
+                   json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+    def _body(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0))
+        if length <= 0 or length > MAX_TOTAL:
+            return {}
+        raw = self.rfile.read(length)
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            return {}
+
+    # ---------------- GET
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
             try:
-                with open(os.path.join(STATIC, "index.html"), "rb") as f:
-                    self._send(200, "text/html; charset=utf-8", f.read())
+                with open(os.path.join(STATIC, "index.html"), "rb") as fh:
+                    self._send(200, "text/html; charset=utf-8", fh.read())
             except OSError:
-                self._send(500, "text/plain; charset=utf-8", b"index.html not found")
+                self._send(500, "text/plain; charset=utf-8", b"no index.html")
             return
         if path == "/health":
-            self._send(200, "application/json",
-                       json.dumps({"ok": True, "docker": docker_on()}).encode())
+            self._json(200, {"ok": True, "sandbox": docker_on(),
+                             "model": model_ready()})
             return
-        if path.startswith("/events/"):
+        if path.startswith("/api/events/"):
             self._events(path.rsplit("/", 1)[-1])
             return
-        self._send(404, "text/plain; charset=utf-8", b"not found")
+        if path.startswith("/api/files/"):
+            job = _jobs.get(path.rsplit("/", 1)[-1])
+            if not job:
+                self._json(404, {"error": "no job"})
+                return
+            self._json(200, {"files": list_files(job["dir"])})
+            return
+        if path.startswith("/api/file/"):
+            job_id = path.rsplit("/", 1)[-1]
+            job = _jobs.get(job_id)
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            rel = ""
+            for part in query.split("&"):
+                if part.startswith("path="):
+                    rel = part[5:].replace("%2F", "/").replace("%20", " ")
+            if not job:
+                self._json(404, {"error": "no job"})
+                return
+            try:
+                full = os.path.abspath(os.path.join(job["dir"], rel))
+                if os.path.commonpath([full, job["dir"]]) != job["dir"]:
+                    raise ValueError
+                with open(full, "rb") as fh:
+                    data = fh.read(200000)
+                self._json(200, {"path": rel, "text":
+                                 data.decode("utf-8", "replace")})
+            except (OSError, ValueError) as exc:
+                self._json(400, {"error": str(exc)})
+            return
+        self._json(404, {"error": "not found"})
+
+    # ---------------- POST
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] != "/solve":
-            self._send(404, "text/plain; charset=utf-8", b"not found")
+        path = self.path.split("?", 1)[0]
+        if path == "/api/task":
+            self._task()
             return
-        length = int(self.headers.get("Content-Length", 0))
-        if length <= 0 or length > MAX_UPLOAD:
-            self._send(400, "application/json", b'{"error":"bad size"}')
+        if path == "/api/terminal":
+            self._terminal()
             return
-        data = self.rfile.read(length)
-        name = _safe_name(self.headers.get("X-Filename", "upload.bin"))
-        try:
-            budget = float(self.headers.get("X-Budget", "90"))
-        except ValueError:
-            budget = 90.0
-        budget = max(5.0, min(budget, 600.0))
-        prefix = (self.headers.get("X-Flag-Prefix", "") or "").strip()[:40] or None
+        if path.startswith("/api/stop/"):
+            job = _jobs.get(path.rsplit("/", 1)[-1])
+            if job:
+                job["stop"] = True
+            self._json(200, {"ok": bool(job)})
+            return
+        self._json(404, {"error": "not found"})
+
+    def _task(self):
+        data = self._body()
+        files = data.get("files") or []
+        if not files:
+            self._json(400, {"error": "нужен хотя бы один файл"})
+            return
         job_id = uuid.uuid4().hex
         job_dir = os.path.join(JOB_ROOT, job_id)
         os.makedirs(job_dir, exist_ok=True)
-        path = os.path.join(job_dir, name)
-        with open(path, "wb") as f:
-            f.write(data)
+        saved = 0
+        for item in files[:MAX_FILES]:
+            name = safe_name(item.get("name", "file.bin"))
+            try:
+                blob = base64.b64decode(item.get("b64", ""))
+            except Exception:
+                continue
+            if saved + len(blob) > MAX_TOTAL:
+                break
+            with open(os.path.join(job_dir, name), "wb") as fh:
+                fh.write(blob)
+            saved += len(blob)
+        try:
+            budget = float(data.get("budget", 90))
+        except (TypeError, ValueError):
+            budget = 90.0
         with _lock:
-            _jobs[job_id] = {"path": path, "budget": budget, "prefix": prefix,
-                             "q": queue.Queue(), "flag": None, "started": False}
-        self._send(200, "application/json",
-                   json.dumps({"job_id": job_id}).encode())
+            _jobs[job_id] = {
+                "dir": job_dir,
+                "task": str(data.get("task", ""))[:20000],
+                "inputs": [i for i in (data.get("inputs") or [])
+                           if isinstance(i, dict)][:20],
+                "budget": max(10.0, min(budget, 900.0)),
+                "deep": bool(data.get("deep")),
+                "prefix": (data.get("prefix") or "").strip()[:40] or None,
+                "q": queue.Queue(), "flag": None, "started": False,
+                "stop": False,
+            }
+        self._json(200, {"id": job_id, "files": list_files(job_dir)})
+
+    def _terminal(self):
+        data = self._body()
+        job = _jobs.get(data.get("id", ""))
+        if not job:
+            self._json(404, {"error": "no job"})
+            return
+        cmd = str(data.get("cmd", ""))[:2000]
+        if not cmd.strip():
+            self._json(400, {"error": "пустая команда"})
+            return
+        started = time.time()
+        try:
+            proc = subprocess.run(cmd, cwd=job["dir"], shell=True,
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace",
+                                  timeout=60)
+            out = ((proc.stdout or "") + (proc.stderr or ""))[:20000]
+            self._json(200, {"rc": proc.returncode, "out": out,
+                             "seconds": round(time.time() - started, 2)})
+        except subprocess.TimeoutExpired:
+            self._json(200, {"rc": -1, "out": "TIMEOUT 60s",
+                             "seconds": round(time.time() - started, 2)})
 
     def _events(self, job_id: str):
         job = _jobs.get(job_id)
         if not job:
-            self._send(404, "text/plain; charset=utf-8", b"no such job")
+            self._json(404, {"error": "no job"})
             return
         with _lock:
             if not job["started"]:
                 job["started"] = True
-                threading.Thread(target=_worker, args=(job_id,), daemon=True).start()
+                threading.Thread(target=worker, args=(job_id,),
+                                 daemon=True).start()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -258,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     ev = q.get(timeout=15)
                 except queue.Empty:
-                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                     continue
                 if ev is None:
@@ -270,12 +392,24 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
+def list_files(root: str):
+    rows = []
+    for base, _dirs, files in os.walk(root):
+        for name in sorted(files):
+            full = os.path.join(base, name)
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            rows.append({"path": rel, "size": os.path.getsize(full)})
+    return rows[:500]
+
+
 def main():
     port = int(os.environ.get("PORT", "8770"))
     bind = os.environ.get("BIND", "127.0.0.1")
     httpd = ThreadingHTTPServer((bind, port), Handler)
-    mode = "ПЕСОЧНИЦА (Docker)" if docker_on() else "ЛОКАЛЬНО без изоляции (Docker нет)"
-    print(f"[+] http://{bind}:{port}/   движок: {mode}", flush=True)
+    mode = "песочница" if docker_on() else "локально (без Docker)"
+    second = "включена" if model_ready() else "выключена"
+    print(f"[+] http://{bind}:{port}/  режим: {mode}; вторая стадия: {second}",
+          flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

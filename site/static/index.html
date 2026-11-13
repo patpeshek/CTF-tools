@@ -3,147 +3,376 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CTF-tools</title>
+<title>toolbox</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: #070707; color: #e8e8e8;
-    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-    display: flex; justify-content: center; padding: 24px 16px;
+    font: 13px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace;
+    display: flex; justify-content: center; padding: 22px 14px 60px;
   }
-  .wrap { width: 100%; max-width: 560px; }
-  .card { background: #0d0d0d; border: 1px solid #1c1c1c; border-radius: 14px; padding: 22px; }
-  .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 18px; }
-  .top b { font-weight: 500; font-size: 15px; letter-spacing: .5px; }
+  .wrap { width: 100%; max-width: 940px; }
+  .card { background: #0d0d0d; border: 1px solid #1c1c1c; border-radius: 14px; padding: 20px; }
+  .card + .card { margin-top: 14px; }
+  .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .top b { font-weight: 500; letter-spacing: .4px; }
   .mode { font-size: 12px; color: #6f6f6f; }
   .drop {
-    border: 1px dashed #2a2a2a; border-radius: 10px; padding: 26px 16px;
-    text-align: center; color: #8a8a8a; cursor: pointer; transition: border-color .4s, color .4s;
-    font-size: 14px;
+    border: 1px dashed #2a2a2a; border-radius: 10px; padding: 22px 14px;
+    text-align: center; color: #8a8a8a; cursor: pointer;
+    transition: border-color .25s, color .25s;
   }
   .drop.hot { border-color: #4a4a4a; color: #d0d0d0; }
   .drop b { color: #e8e8e8; font-weight: 500; }
-  .row { display: flex; gap: 10px; margin-top: 12px; }
-  input[type=text], input[type=number] {
+  .files { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid #222; border-radius: 20px; padding: 2px 10px; font-size: 12px; color: #bdbdbd; }
+  .chip i { color: #777; font-style: normal; margin-left: 6px; cursor: pointer; }
+  label.lbl { display: block; margin: 14px 0 6px; font-size: 12px; color: #8a8a8a; }
+  textarea, input[type=text], input[type=number], select {
     background: #000; border: 1px solid #222; color: #e8e8e8; border-radius: 8px;
-    padding: 8px 10px; font: inherit; font-size: 13px; width: 100%;
+    padding: 8px 10px; font: inherit; width: 100%;
   }
-  input::placeholder { color: #555; }
+  textarea { min-height: 74px; resize: vertical; }
+  select { width: 130px; }
+  input[type=number] { width: 84px; }
+  .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .row.tight { margin-top: 6px; }
+  .field { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
+  .field input[type=text] { flex: 1; }
+  .field .del { color: #777; cursor: pointer; padding: 0 6px; }
+  .field .del:hover { color: #d0d0d0; }
   button {
-    background: #e8e8e8; color: #000; border: 0; border-radius: 8px; padding: 9px 18px;
-    font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
-    transition: opacity .3s;
+    background: #e8e8e8; color: #000; border: 0; border-radius: 8px;
+    padding: 9px 18px; font: inherit; font-weight: 500; cursor: pointer; white-space: nowrap;
+    transition: opacity .2s;
   }
+  button.ghost { background: transparent; color: #cfcfcf; border: 1px solid #262626; }
   button:disabled { opacity: .4; cursor: default; }
-  .log { margin-top: 20px; display: flex; flex-direction: column; gap: 2px; }
-  .line {
-    display: flex; gap: 12px; font-size: 13px; line-height: 1.7;
-    opacity: 0; transform: translateY(6px); animation: in .5s cubic-bezier(.16,1,.3,1) forwards;
-  }
-  @keyframes in { to { opacity: 1; transform: none; } }
-  .line .t { color: #5a5a5a; flex: none; }
-  .line .w { color: #cfcfcf; flex: 1; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  .check { display: flex; gap: 6px; align-items: center; color: #9a9a9a; font-size: 12px; cursor: pointer; }
+  .log { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+  .line { display: flex; gap: 10px; font-size: 12.5px; line-height: 1.7; opacity: 0;
+          animation: in .35s ease forwards; }
+  @keyframes in { to { opacity: 1; } }
+  .line .t { color: #5a5a5a; flex: none; min-width: 62px; }
+  .line .w { color: #cfcfcf; flex: 1; word-break: break-word; }
   .line .s { color: #6f6f6f; flex: none; }
   .s.ok { color: #6f9f6f; } .s.fail { color: #9f6f6f; } .s.run { color: #9a9a6a; }
-  .leads { margin-top: 14px; }
-  .leads .lead { font-size: 12px; color: #8a8a8a; line-height: 1.7; }
-  .flag {
-    margin-top: 22px; padding-top: 18px; border-top: 1px solid #1c1c1c;
-    display: none; justify-content: space-between; align-items: baseline;
-  }
-  .flag.show { display: flex; animation: in .6s ease forwards; }
-  .flag .val { font-size: 19px; color: #fff; word-break: break-all; }
-  .flag .val.miss { font-size: 15px; color: #8a8a8a; }
-  .flag .cp { font-size: 12px; color: #8a8a8a; cursor: pointer; flex: none; margin-left: 12px; }
-  .warn { margin-top: 12px; font-size: 12px; color: #a98b4a; }
+  pre.out { background: #050505; border: 1px solid #171717; border-radius: 8px;
+            padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap;
+            word-break: break-word; margin: 8px 0 0; font-size: 12px; color: #c8c8c8; }
+  .flag { margin-top: 16px; padding-top: 14px; border-top: 1px solid #1c1c1c; display: none;
+          justify-content: space-between; align-items: baseline; gap: 12px; }
+  .flag.show { display: flex; }
+  .flag .val { font-size: 17px; color: #fff; word-break: break-all; }
+  .flag .val.miss { font-size: 14px; color: #8a8a8a; }
+  .flag .cp { font-size: 12px; color: #8a8a8a; cursor: pointer; flex: none; }
+  .warn { margin-top: 10px; font-size: 12px; color: #a98b4a; min-height: 16px; }
+  .hint { font-size: 12px; color: #666; margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .flist { max-height: 240px; overflow: auto; margin-top: 8px; }
+  .frow { display: flex; justify-content: space-between; gap: 10px; padding: 4px 6px;
+          border-radius: 6px; cursor: pointer; color: #c8c8c8; font-size: 12.5px; }
+  .frow:hover { background: #141414; }
+  .frow span { color: #6f6f6f; flex: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
+
   <div class="card">
-    <div class="top"><b>CTF-tools</b><span class="mode" id="mode">…</span></div>
-    <div class="drop" id="drop"><span id="droptext">перетащи файл или <b>выбери</b></span></div>
-    <input type="file" id="file" hidden>
-    <div class="row">
-      <input type="text" id="prefix" placeholder="формат флага, напр. flag (не обязательно)">
-      <input type="number" id="budget" value="90" min="5" max="600" style="width:84px" title="секунд">
-      <button id="go" disabled>решить</button>
+    <div class="top"><b>toolbox</b><span class="mode" id="mode">…</span></div>
+
+    <div class="drop" id="drop">перетащи файлы или <b>выбери</b></div>
+    <input type="file" id="file" multiple hidden>
+    <input type="file" id="dir" webkitdirectory directory multiple hidden>
+    <div class="files" id="chosen"></div>
+    <div class="row tight">
+      <button class="ghost" id="pickfiles">файлы</button>
+      <button class="ghost" id="pickdir">папку</button>
+      <span class="hint" id="count"></span>
     </div>
-    <div id="warn" class="warn"></div>
+
+    <label class="lbl">условие задачи (если есть)</label>
+    <textarea id="task" placeholder="что дано, что нужно найти, формат флага…"></textarea>
+
+    <label class="lbl">данные из условия (необязательно)</label>
+    <div id="fields"></div>
+    <div class="row tight"><button class="ghost" id="addfield">+ поле</button></div>
+
+    <div class="row">
+      <input type="text" id="prefix" placeholder="формат флага, напр. ctf (не обязательно)">
+      <input type="number" id="budget" value="90" min="10" max="900" title="секунд на кит">
+      <label class="check"><input type="checkbox" id="deep"> глубокий режим</label>
+    </div>
+
+    <div class="actions">
+      <button id="go" disabled>решить</button>
+      <button class="ghost" id="stop" disabled>стоп</button>
+      <span class="warn" id="warn"></span>
+    </div>
+
     <div class="log" id="log"></div>
-    <div class="leads" id="leads"></div>
     <div class="flag" id="flagbox"><span class="val" id="flagval"></span><span class="cp" id="cp">скопировать</span></div>
   </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="top"><b>терминал</b><span class="hint">в папке задачи</span></div>
+      <div class="row tight">
+        <input type="text" id="cmd" placeholder="команда…">
+        <button class="ghost" id="run">↵</button>
+      </div>
+      <pre class="out" id="tout">(нет задач)</pre>
+    </div>
+
+    <div class="card">
+      <div class="top"><b>файлы</b><span class="hint" id="fcount"></span></div>
+      <div class="flist" id="flist"></div>
+      <pre class="out" id="fview">(выбери файл)</pre>
+    </div>
+  </div>
 </div>
+
 <script>
 const $ = s => document.querySelector(s);
-const fileInput = $("#file"), drop = $("#drop"), go = $("#go"), log = $("#log"),
-      leads = $("#leads"), flagbox = $("#flagbox"), flagval = $("#flagval"), cp = $("#cp");
-let chosen = null, lines = {}, es = null;
+const ROLES = ["", "ciphertext", "plaintext", "key", "keylen", "nonce", "iv",
+               "salt", "hash", "modulus", "exponent", "signature", "password",
+               "flag-prefix", "hint", "raw"];
+let files = [], jobId = null, es = null, lines = {};
 
 fetch("/health").then(r => r.json()).then(d => {
-  $("#mode").textContent = d.docker ? "песочница" : "локально (без Docker)";
+  $("#mode").textContent = (d.sandbox ? "песочница" : "локально") +
+    " · вторая стадия " + (d.model ? "вкл" : "выкл");
 }).catch(() => {});
 
-drop.onclick = () => fileInput.click();
-["dragover","dragenter"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("hot"); }));
-["dragleave","drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("hot"); }));
-drop.addEventListener("drop", ev => { if (ev.dataTransfer.files[0]) pick(ev.dataTransfer.files[0]); });
-fileInput.onchange = () => { if (fileInput.files[0]) pick(fileInput.files[0]); };
-function pick(f) { chosen = f; $("#droptext").innerHTML = "<b>" + f.name + "</b> · " + f.size + " б"; go.disabled = false; }
+/* ---------- файлы ---------- */
+$("#pickfiles").onclick = () => $("#file").click();
+$("#pickdir").onclick = () => $("#dir").click();
+$("#file").onchange = () => addFiles($("#file").files);
+$("#dir").onchange = () => addFiles($("#dir").files);
+const drop = $("#drop");
+["dragover", "dragenter"].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.add("hot");
+}));
+["dragleave", "drop"].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.remove("hot");
+}));
+drop.addEventListener("drop", async ev => {
+  ev.preventDefault();
+  const items = [...(ev.dataTransfer.items || [])];
+  if (items.length && items[0].webkitGetAsEntry) {
+    const out = [];
+    for (const it of items) await walk(it.webkitGetAsEntry(), "", out);
+    addFiles(out);
+  } else {
+    addFiles(ev.dataTransfer.files);
+  }
+});
+async function walk(entry, prefix, out) {
+  if (!entry) return;
+  if (entry.isFile) {
+    const f = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ file: f, path: prefix + f.name });
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    const entries = await new Promise(res => reader.readEntries(res, () => res([])));
+    for (const e of entries) await walk(e, prefix + entry.name + "/", out);
+  }
+}
+function addFiles(list) {
+  for (const f of list) {
+    const item = f.file ? { file: f.file, path: f.path } : { file: f, path: f.webkitRelativePath || f.name };
+    item.path = item.path.replace(/^\/+/, "");
+    files.push(item);
+  }
+  renderFiles();
+}
+function renderFiles() {
+  $("#chosen").innerHTML = "";
+  files.forEach((f, i) => {
+    const el = document.createElement("div");
+    el.className = "chip";
+    el.textContent = f.path + " · " + f.file.size + " б";
+    const x = document.createElement("i"); x.textContent = "×";
+    x.onclick = () => { files.splice(i, 1); renderFiles(); };
+    el.appendChild(x); $("#chosen").appendChild(el);
+  });
+  $("#count").textContent = files.length ? "файлов: " + files.length : "";
+  $("#go").disabled = !files.length;
+}
 
-go.onclick = async () => {
-  if (!chosen) return;
-  go.disabled = true; log.innerHTML = ""; leads.innerHTML = ""; lines = {};
-  flagbox.className = "flag"; $("#warn").textContent = "";
+/* ---------- поля данных ---------- */
+function addField(role = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "field";
+  const sel = document.createElement("select");
+  ROLES.forEach(r => {
+    const o = document.createElement("option");
+    o.value = r; o.textContent = r || "— не указано —";
+    sel.appendChild(o);
+  });
+  sel.value = role;
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.placeholder = "значение (или @файл)"; inp.value = value;
+  const del = document.createElement("span");
+  del.className = "del"; del.textContent = "×";
+  del.onclick = () => row.remove();
+  row.append(sel, inp, del);
+  $("#fields").appendChild(row);
+}
+$("#addfield").onclick = () => addField();
+
+/* ---------- запуск ---------- */
+$("#go").onclick = async () => {
+  if (!files.length) return;
+  $("#go").disabled = true; $("#stop").disabled = false;
+  $("#log").innerHTML = ""; lines = {}; $("#warn").textContent = "";
+  $("#flagbox").className = "flag"; $("#tout").textContent = "(нет задач)";
   if (es) es.close();
-  const res = await fetch("/solve", { method: "POST", body: chosen, headers: {
-    "X-Filename": chosen.name, "X-Flag-Prefix": $("#prefix").value, "X-Budget": $("#budget").value } });
-  if (!res.ok) { $("#warn").textContent = "ошибка загрузки"; go.disabled = false; return; }
-  const { job_id } = await res.json();
-  es = new EventSource("/events/" + job_id);
-  es.onmessage = e => handle(JSON.parse(e.data));
-  es.onerror = () => { es.close(); go.disabled = false; };
-};
 
-function row(n) {
-  if (lines[n]) return lines[n];
-  const el = document.createElement("div"); el.className = "line";
-  el.innerHTML = '<span class="t"></span><span class="w"></span><span class="s run">идёт</span>';
-  log.appendChild(el); lines[n] = el; return el;
+  const payload = {
+    task: $("#task").value,
+    prefix: $("#prefix").value,
+    budget: Number($("#budget").value || 90),
+    deep: $("#deep").checked,
+    files: [],
+    inputs: [...document.querySelectorAll("#fields .field")].map(row => ({
+      role: row.querySelector("select").value,
+      value: row.querySelector("input").value,
+    })).filter(x => x.value.trim()),
+  };
+  for (const f of files) {
+    payload.files.push({ name: f.path, b64: await b64(f.file) });
+  }
+  const res = await fetch("/api/task", { method: "POST", body: JSON.stringify(payload) });
+  if (!res.ok) { $("#warn").textContent = "не принял задачу"; reset(); return; }
+  const data = await res.json();
+  jobId = data.id;
+  await loadFiles();
+
+  es = new EventSource("/api/events/" + jobId);
+  es.onmessage = e => handle(JSON.parse(e.data));
+  es.onerror = () => { if (es) es.close(); reset(); };
+};
+$("#stop").onclick = () => { if (jobId) fetch("/api/stop/" + jobId, { method: "POST" }); };
+function reset() { $("#go").disabled = !files.length; $("#stop").disabled = true; }
+
+function b64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(",")[1] || "");
+    r.onerror = rej; r.readAsDataURL(file);
+  });
+}
+
+/* ---------- события ---------- */
+function row(n, tool, why) {
+  let el = lines[n];
+  if (!el) {
+    el = document.createElement("div"); el.className = "line";
+    el.innerHTML = '<span class="t"></span><span class="w"></span><span class="s run">идёт</span>';
+    $("#log").appendChild(el); lines[n] = el;
+  }
+  if (tool) el.querySelector(".t").textContent = tool;
+  if (why) el.querySelector(".w").textContent = why;
+  return el;
 }
 function handle(ev) {
   const k = ev.event;
-  if (k === "runner_note") { $("#warn").textContent = ev.note || ""; return; }
+  if (k === "runner_note" || k === "agent_stop") {
+    $("#warn").textContent = ev.note || ev.reason || "";
+    return;
+  }
   if (k === "plan") {
     const el = document.createElement("div"); el.className = "line";
     el.innerHTML = '<span class="t">тип</span><span class="w">' + (ev.kind || "?") +
       (ev.steps ? ", шагов: " + ev.steps.length : "") + '</span><span class="s"></span>';
-    log.appendChild(el); return;
+    $("#log").appendChild(el); return;
   }
-  if (k === "step_start") { const el = row(ev.n);
-    el.querySelector(".t").textContent = ev.tool || ""; el.querySelector(".w").textContent = ev.why || ""; return; }
-  if (k === "step_end") { const el = row(ev.n); const s = el.querySelector(".s");
-    const st = ev.status || "ok"; s.textContent = st === "ok" ? (ev.seconds || 0) + "с" : st;
-    s.className = "s " + (st === "ok" ? "ok" : (st === "skipped" ? "" : "fail")); return; }
-  if (k === "lead") { const d = document.createElement("div"); d.className = "lead";
-    d.textContent = "· " + (ev.text || ""); leads.appendChild(d); return; }
+  if (k === "step_start") { row(ev.n, (ev.stage === "second" ? "2· " : "") + ev.tool, ev.why); return; }
+  if (k === "step_end") {
+    const el = row(ev.n); const s = el.querySelector(".s");
+    const st = ev.status || "ok";
+    s.textContent = st === "ok" ? (ev.seconds || 0) + "с" : st;
+    s.className = "s " + (st === "ok" ? "ok" : (st === "skipped" ? "" : "fail"));
+    return;
+  }
+  if (k === "lead") {
+    const d = document.createElement("div"); d.className = "line";
+    d.innerHTML = '<span class="t">зацепка</span><span class="w"></span><span class="s"></span>';
+    d.querySelector(".w").textContent = ev.text || "";
+    $("#log").appendChild(d); return;
+  }
+  if (k === "agent_step") { row("a" + ev.n, "2· " + ev.tool, ev.detail); return; }
+  if (k === "agent_output") {
+    const d = document.createElement("div"); d.className = "line";
+    d.innerHTML = '<span class="t">вывод</span><span class="w"></span><span class="s"></span>';
+    d.querySelector(".w").textContent = (ev.text || "").slice(0, 400);
+    $("#log").appendChild(d); return;
+  }
+  if (k === "answer") {
+    $("#warn").textContent = ev.text || "";
+    return;
+  }
   if (k === "flag" && ev.flag) { showFlag(ev.flag); return; }
   if (k === "done" || k === "runner_end") {
-    go.disabled = false;
     if (ev.flag) showFlag(ev.flag);
-    else if (!flagbox.classList.contains("show")) {
-      flagval.textContent = "флаг не найден"; flagval.className = "val miss";
-      cp.style.display = "none"; flagbox.classList.add("show");
+    else if (!$("#flagbox").classList.contains("show")) {
+      $("#flagval").textContent = "флаг не найден";
+      $("#flagval").className = "val miss";
+      $("#cp").style.display = "none";
+      $("#flagbox").classList.add("show");
     }
     if (es) es.close();
+    reset();
   }
 }
 function showFlag(f) {
-  flagval.textContent = f; flagval.className = "val"; cp.style.display = "";
-  flagbox.classList.add("show");
-  cp.onclick = () => { navigator.clipboard.writeText(f); cp.textContent = "скопировано"; };
+  $("#flagval").textContent = f;
+  $("#flagval").className = "val";
+  $("#cp").style.display = "";
+  $("#flagbox").classList.add("show");
+  $("#cp").onclick = () => { navigator.clipboard.writeText(f); $("#cp").textContent = "скопировано"; };
+}
+
+/* ---------- терминал ---------- */
+$("#run").onclick = runCmd;
+$("#cmd").addEventListener("keydown", e => { if (e.key === "Enter") runCmd(); });
+async function runCmd() {
+  if (!jobId) { $("#tout").textContent = "сначала запусти задачу"; return; }
+  const cmd = $("#cmd").value.trim();
+  if (!cmd) return;
+  $("#tout").textContent = "$ " + cmd + "\n…";
+  const res = await fetch("/api/terminal", { method: "POST", body: JSON.stringify({ id: jobId, cmd }) });
+  const d = await res.json();
+  $("#tout").textContent = "$ " + cmd + "\n" + (d.out || d.error || "") +
+    "\n[rc=" + d.rc + ", " + d.seconds + "s]";
+  await loadFiles();
+}
+
+/* ---------- файлы задачи ---------- */
+async function loadFiles() {
+  if (!jobId) return;
+  const d = await (await fetch("/api/files/" + jobId)).json();
+  $("#fcount").textContent = (d.files || []).length + " шт";
+  $("#flist").innerHTML = "";
+  (d.files || []).forEach(f => {
+    const el = document.createElement("div");
+    el.className = "frow";
+    el.textContent = f.path;
+    const s = document.createElement("span"); s.textContent = f.size + " б";
+    el.appendChild(s);
+    el.onclick = () => viewFile(f.path);
+    $("#flist").appendChild(el);
+  });
+}
+async function viewFile(path) {
+  const d = await (await fetch("/api/file/" + jobId + "?path=" +
+    encodeURIComponent(path))).json();
+  $("#fview").textContent = d.error ? d.error : d.text;
 }
 </script>
 </body>

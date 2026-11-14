@@ -378,6 +378,7 @@ def summarize(traces, out_path):
 
 def main():
     ap = argparse.ArgumentParser(description="Трассы решения из прогонов solve.py")
+    ap.add_argument("--list", help="файл со списком папок-задач (по одной в строке)")
     ap.add_argument("--roots", nargs="+", default=DEFAULT_ROOTS,
                     help="папки с задачами (обход рекурсивный)")
     ap.add_argument("--out", default=r"F:\AIproject\ml-runs\traces.jsonl")
@@ -396,10 +397,15 @@ def main():
         return 0
 
     tasks = []
-    for root in args.roots:
-        got = discover(root)
-        print("[i] %s: %d задач" % (root, len(got)))
-        tasks.extend(got)
+    if args.list:
+        with open(args.list, encoding="utf-8") as fh:
+            tasks = [ln.strip() for ln in fh if ln.strip()]
+        print("[i] из списка %s: %d задач" % (args.list, len(tasks)))
+    else:
+        for root in args.roots:
+            got = discover(root)
+            print("[i] %s: %d задач" % (root, len(got)))
+            tasks.extend(got)
     if args.limit:
         tasks = tasks[:args.limit]
     if not tasks:

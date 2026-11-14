@@ -236,7 +236,8 @@ def main():
             torch.save({"model": model.state_dict(), "arch": args.arch,
                         "families": families, "features": FEATURE_NAMES,
                         "kw": {"dim": args.dim, "layers": args.layers,
-                               "heads": args.heads}}, args.out)
+                               "heads": args.heads,
+                               "hidden": args.hidden, "depth": args.depth}}, args.out)
             print(f"    [+] сохранено (best val_acc={best:.3f}) → {args.out}",
                   flush=True)
 

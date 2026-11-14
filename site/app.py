@@ -613,7 +613,7 @@ class Handler(BaseHTTPRequestHandler):
                            if isinstance(i, dict)][:20],
                 "budget": max(10.0, min(budget, 900.0)),
                 "deep": True,
-                "api": bool(data.get("deep", True)),
+                "api": bool(data.get("deep", False)),   # по умолчанию только кит
                 "reasoning": bool(data.get("reasoning")),
                 "thoughts": bool(data.get("thoughts")),
                 "prefix": (data.get("prefix") or "").strip()[:40] or None,

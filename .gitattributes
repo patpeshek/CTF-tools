@@ -1,0 +1,4 @@
+# Скрипты запуска: окончания строк фиксированы под платформу,
+# иначе bash на Linux спотыкается о CR, а cmd — о LF.
+start_site.sh text eol=lf
+start_site.bat text eol=crlf

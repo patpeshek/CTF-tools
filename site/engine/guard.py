@@ -23,7 +23,7 @@ DENY = [
     (r"\bformat\s+[a-zA-Z]:", "форматирование диска"),
     (r"\bdiskpart\b", "управление разделами"),
     (r"\bbcdedit\b", "загрузчик"),
-    (r"\b(shutdown|reboot|halt|poweroff)\b", "выключение машины"),
+    (r"(?:^|[;&|]\s*|\bsudo\s+)(shutdown|reboot|halt|poweroff)\b", "выключение машины"),
     (r"\bStop-Computer\b|\bRestart-Computer\b", "выключение машины"),
     (r"\btaskkill\b[^\n]*/f", "массовое убийство процессов"),
     (r"\bkill(all)?\s+-9\s+(-1|1)\b", "убийство всех процессов"),
@@ -36,7 +36,7 @@ DENY = [
     (r"(curl|wget)[^\n|]*\|\s*(ba)?sh", "скачать и выполнить скрипт"),
     (r"powershell[^\n]*-enc(odedcommand)?\b", "скрытый powershell"),
     (r":\(\)\s*\{\s*:\|:&\s*\};:", "fork-бомба"),
-    (r"\b(mount|umount)\b", "монтирование"),
+    (r"(?:^|[;&|]\s*|\bsudo\s+)(mount|umount)\b", "монтирование"),
     (r"\b(apt|yum|dnf|pacman)\s+(remove|purge)\b", "удаление пакетов"),
     (r"\bpip\s+uninstall\b[^\n]*\b(pillow|numpy|crypto|scapy)\b",
      "снос зависимостей проекта"),
@@ -61,5 +61,33 @@ def check_command(cmd: str) -> tuple[bool, str]:
         return True, ""
     for rx, why in _DENY:
         if rx.search(cmd):
+            return False, f"запрещено guard: {why}"
+    return True, ""
+
+
+# Для действия "py" команды нет — есть код. Ловим только очевидно разрушительное:
+# удаление по абсолютному пути и системные команды внутри subprocess/os.system.
+CODE_DENY = [
+    (re.compile(r"shutil\.rmtree\s*\(\s*[rRuUbB]{0,2}['\"](?:/|~|[A-Za-z]:[\\/])", re.I),
+     "удаление по абсолютному пути"),
+    (re.compile(r"os\.(?:remove|unlink|rmdir|removedirs)\s*\(\s*[rRuUbB]{0,2}['\"](?:/|~|[A-Za-z]:[\\/])", re.I),
+     "удаление по абсолютному пути"),
+    (re.compile(r"open\s*\(\s*[rRuUbB]{0,2}['\"](?:/|[A-Za-z]:[\\/](?:Windows|Users|Program|System))", re.I),
+     "запись в системный путь"),
+    (re.compile(r"(?:os\.system|subprocess\.\w+)\s*\([^)]*(?:rm\s+-rf\s+/|format\s+[a-zA-Z]:|"
+                r"shutdown|taskkill\s+/f)", re.I),
+     "разрушительная команда"),
+]
+
+
+def check_code(code: str) -> tuple[bool, str]:
+    """Проверка python-кода перед запуском (действие py)."""
+    code = code or ""
+    if len(code) > 20000:
+        return False, f"слишком длинный код ({len(code)} > 20000)"
+    if allow_all():
+        return True, ""
+    for rx, why in CODE_DENY:
+        if rx.search(code):
             return False, f"запрещено guard: {why}"
     return True, ""

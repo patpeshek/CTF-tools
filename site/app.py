@@ -64,6 +64,19 @@ for _d in (JOB_ROOT, BLOB_DIR, ART_DIR):
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 
+# Сайт — только для этого компьютера: и по bind, и по заголовку Host/Origin.
+# Иначе чужой сайт в браузере мог бы дёргать локальный API (терминал, задачи).
+LOOPBACK = {"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"}
+
+
+def host_only(value: str) -> str:
+    v = (value or "").strip().lower()
+    if v.startswith("["):
+        return v[1:].split("]", 1)[0]
+    if v.count(":") == 1:
+        return v.rsplit(":", 1)[0]
+    return v
+
 
 def sha256_bytes(data: bytes) -> str:
     import hashlib
@@ -85,9 +98,17 @@ def save_history(rows: list) -> None:
     os.replace(tmp, HISTORY)
 
 
-def safe_name(name: str) -> str:
-    name = os.path.basename((name or "").replace("\\", "/")) or "file.bin"
-    return "".join(c for c in name if c.isalnum() or c in "._-")[:120] or "file.bin"
+def safe_rel(name: str) -> str:
+    """Относительный путь внутри папки задачи: подпапки сохраняются,
+    '..' и мусор выкидываются (иначе файлы из разных подпапок затирают друг друга)."""
+    parts = [p for p in (name or "").replace("\\", "/").split("/")
+             if p and p not in (".", "..")]
+    clean = []
+    for p in parts:
+        c = "".join(ch for ch in p if ch.isalnum() or ch in "._- ")[:80].strip()
+        if c:
+            clean.append(c)
+    return "/".join(clean[-6:]) or "file.bin"
 
 
 def docker_on() -> bool:
@@ -106,14 +127,31 @@ def model_ready() -> bool:
 
 # ------------------------------------------------------------------ движок кита
 
+def flag_prefixes(prefix: str | None) -> list[str]:
+    """Набор префиксов для кита: дефолтные + введённый (почищенный) префикс."""
+    try:
+        if ROOT not in sys.path:
+            sys.path.append(ROOT)
+        import common
+        out = list(common.DEFAULT_PREFIXES)
+    except Exception:
+        out = ["ctf", "flag"]
+    clean = re.sub(r"[^A-Za-z0-9_]", "", str(prefix or ""))[:40]
+    if clean and clean.lower() not in {p.lower() for p in out}:
+        out.append(clean)
+    return out
+
+
 def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None,
-                   stop_check=None):
+                   stop_check=None, desc_file: str | None = None):
     cmd = [sys.executable, os.path.join(ROOT, "solve.py"), path,
            "--events", "-", "--time", str(int(budget))]
     if deep:
         cmd.append("--deep")
-    if prefix:
-        cmd += ["--flag-prefix", prefix]
+    if desc_file:
+        cmd += ["--desc-file", desc_file]
+    for p in flag_prefixes(prefix):
+        cmd += ["--flag-prefix", p]
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     yield {"event": "runner_note", "note": "прогон инструментов кита"}
     try:
@@ -174,7 +212,9 @@ def _agent_events(job: dict):
     if not (engine and model_ready()):
         return
     ws = engine.Workspace(job["work"],
-                          cancel=lambda: job.get("stop", False))
+                          cancel=lambda: job.get("stop", False),
+                          env={"FLAG_PREFIXES":
+                               ",".join(flag_prefixes(job.get("prefix")))})
     task = job["task"] or ""
     if job["inputs"]:
         lines = [f"[{i.get('role') or 'данные'}] {i.get('value', '')}"
@@ -256,11 +296,28 @@ def worker(job_id: str):
     files = [f for f in os.listdir(target)]
     single = os.path.join(target, files[0]) if len(files) == 1 else target
     out: queue.Queue = queue.Queue()
+    desc_path = os.path.join(job["meta"], "task.txt")
+    desc = job["task"].strip()
+    extra = [f"[{i.get('role') or 'данные'}] {i.get('value', '')}"
+             for i in job.get("inputs") or [] if str(i.get("value", "")).strip()]
+    if desc or extra:
+        try:
+            with open(desc_path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(desc + ("\n\nДанные из условия:\n" + "\n".join(extra)
+                                 if extra else ""))
+        except OSError:
+            desc_path = None
+    else:
+        desc_path = None
 
     def stage_kit():
         try:
+            if not files:
+                out.put(("kit", {"event": "runner_note",
+                                 "note": "файлов нет — кит пропущен, работаю по тексту"}))
+                return
             for ev in toolkit_events(single, job["budget"], job["deep"],
-                                     job["prefix"],
+                                     job["prefix"], desc_file=desc_path,
                                      stop_check=lambda: job.get("stop")):
                 out.put(("kit", ev))
         except Exception as exc:  # pragma: no cover
@@ -351,9 +408,29 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def _local_only(self) -> bool:
+        if os.environ.get("ALLOW_REMOTE") == "1":
+            return True
+        host = host_only(self.headers.get("Host", ""))
+        if host and host not in LOOPBACK:
+            return False
+        origin = self.headers.get("Origin")
+        if origin:
+            from urllib.parse import urlsplit
+            try:
+                ohost = (urlsplit(origin).hostname or "").lower()
+            except ValueError:
+                return False
+            if ohost not in LOOPBACK:
+                return False
+        return True
+
     # ---------------- GET
 
     def do_GET(self):
+        if not self._local_only():
+            self._json(403, {"error": "только с этого компьютера"})
+            return
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
             try:
@@ -419,6 +496,9 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------- POST
 
     def do_POST(self):
+        if not self._local_only():
+            self._json(403, {"error": "только с этого компьютера"})
+            return
         path = self.path.split("?", 1)[0]
         if path == "/api/task":
             self._task()
@@ -436,9 +516,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _task(self):
         data = self._body()
+        if not data and int(self.headers.get("Content-Length", 0) or 0) > MAX_TOTAL:
+            self._json(413, {"error": "слишком большой запрос (лимит 128 МБ): "
+                                      "загрузи файлы по одному или архивом"})
+            return
         files = data.get("files") or []
-        if not files:
-            self._json(400, {"error": "нужен хотя бы один файл"})
+        if not files and not str(data.get("task") or "").strip():
+            self._json(400, {"error": "нужна задача или хотя бы один файл"})
             return
         job_id = uuid.uuid4().hex
         job_dir = os.path.join(JOB_ROOT, job_id)
@@ -450,7 +534,9 @@ class Handler(BaseHTTPRequestHandler):
         saved = 0
         uploaded = []
         for item in files[:MAX_FILES]:
-            name = safe_name(item.get("name", "file.bin"))
+            name = safe_rel(item.get("name", "file.bin"))
+            dst_in = os.path.join(in_dir, name.replace("/", os.sep))
+            dst_work = os.path.join(work_dir, name.replace("/", os.sep))
             try:
                 blob = base64.b64decode(item.get("b64", ""))
             except Exception:
@@ -462,13 +548,21 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.exists(cached):
                 with open(cached, "wb") as fh:
                     fh.write(blob)
-            shutil.copyfile(cached, os.path.join(in_dir, name))
-            shutil.copyfile(cached, os.path.join(work_dir, name))
+            os.makedirs(os.path.dirname(dst_in), exist_ok=True)
+            os.makedirs(os.path.dirname(dst_work), exist_ok=True)
+            shutil.copyfile(cached, dst_in)
+            shutil.copyfile(cached, dst_work)
             uploaded.append({"name": name, "size": len(blob), "sha": digest})
             saved += len(blob)
         input_hash = sha256_bytes(
             json.dumps(sorted((u["name"], u["sha"]) for u in uploaded),
                        ensure_ascii=False).encode())
+        if not uploaded:
+            # задача без файлов: ключ кеша — текст и поля условия, иначе
+            # наработки разных текстовых задач смешаются
+            seed = str(data.get("task", "")) + json.dumps(
+                data.get("inputs") or [], ensure_ascii=False, sort_keys=True)
+            input_hash = sha256_bytes(("text:" + seed).encode())
         # артефакты прошлой попытки с теми же входными файлами
         reused = []
         art_dir = os.path.join(ART_DIR, input_hash)
@@ -500,7 +594,7 @@ class Handler(BaseHTTPRequestHandler):
                 "reasoning": bool(data.get("reasoning")),
                 "thoughts": bool(data.get("thoughts")),
                 "prefix": (data.get("prefix") or "").strip()[:40] or None,
-                "q": queue.Queue(), "flag": None, "started": False,
+                "q": queue.Queue(), "flag": None, "started": True,
                 "stop": False, "status": "new", "created": time.time(),
                 "uploaded": uploaded, "input_hash": input_hash,
                 "reused": reused,
@@ -585,11 +679,15 @@ def list_files(root: str):
 
 
 def main():
-    port = int(os.environ.get("PORT", "8770"))
-    bind = os.environ.get("BIND", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8771"))
+    bind = (os.environ.get("BIND") or "127.0.0.1").strip()
+    if bind not in LOOPBACK and os.environ.get("ALLOW_REMOTE") != "1":
+        print(f"[!] BIND={bind}: наружу не отдаю. Нужно осознанно — ALLOW_REMOTE=1")
+        sys.exit(2)
     httpd = ThreadingHTTPServer((bind, port), Handler)
     mode = "песочница" if docker_on() else "локально (без Docker)"
     print(f"[+] http://{bind}:{port}/  режим: {mode}", flush=True)
+    print("[+] доступ только с этого компьютера (127.0.0.1)", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

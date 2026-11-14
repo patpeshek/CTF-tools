@@ -51,12 +51,28 @@
   button:disabled { opacity: .4; cursor: default; }
   .actions { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
   .check { display: flex; gap: 6px; align-items: center; color: #9a9a9a; font-size: 12px; cursor: pointer; }
-  .log { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+  .log { margin-top: 4px; display: flex; flex-direction: column; gap: 2px;
+         overflow-y: auto; transition: max-height .25s ease; }
+  .log.collapsed {
+    max-height: 78px; cursor: pointer;
+    -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+  }
+  .logbar { display: flex; gap: 8px; align-items: center; margin-top: 10px;
+            padding: 5px 10px; border: 1px solid #1c1c1c; border-radius: 8px;
+            background: #0a0a0a; cursor: pointer; user-select: none; }
+  .logbar:hover { border-color: #2a2a2a; }
+  .logbar b { font-weight: 500; color: #bdbdbd; }
+  .logbar .chev { width: 10px; color: #8a8a8a; transition: transform .2s; }
+  .logbar.open .chev { transform: rotate(90deg); }
+  .logbar .spacer { flex: 1; }
   .line { display: flex; gap: 10px; font-size: 12.5px; line-height: 1.7; opacity: 0;
           animation: in .35s ease forwards; }
   @keyframes in { to { opacity: 1; } }
   .line .t { color: #5a5a5a; flex: none; min-width: 62px; }
   .line .w { color: #cfcfcf; flex: 1; word-break: break-word; }
+  .line .w.fold { max-height: 3.4em; overflow: hidden; cursor: zoom-in; }
+  .line .w.fold.open { max-height: none; cursor: zoom-out; }
   .line .s { color: #6f6f6f; flex: none; }
   .s.ok { color: #6f9f6f; } .s.fail { color: #9f6f6f; } .s.run { color: #9a9a6a; }
   pre.out { background: #050505; border: 1px solid #171717; border-radius: 8px;
@@ -114,7 +130,13 @@
       <span class="warn" id="warn"></span>
     </div>
 
-    <div class="log" id="log"></div>
+    <div class="logbar" id="logbar">
+      <span class="chev">▸</span><b>лог</b>
+      <span class="hint" id="logsum"></span>
+      <span class="spacer"></span>
+      <span class="hint" id="logtoggle">развернуть</span>
+    </div>
+    <div class="log collapsed" id="log"></div>
     <div class="flag" id="flagbox"><span class="val" id="flagval"></span><span class="cp" id="cp">скопировать</span></div>
   </div>
 
@@ -138,6 +160,28 @@
 
 <script>
 const $ = s => document.querySelector(s);
+
+/* ---------- лог: свёрнут в полоску, разворачивается кликом ---------- */
+function logOpen(open) {
+  $("#log").classList.toggle("collapsed", !open);
+  $("#logbar").classList.toggle("open", open);
+  $("#logtoggle").textContent = open ? "свернуть" : "развернуть";
+  if (open) $("#log").scrollTop = $("#log").scrollHeight;
+}
+$("#logbar").onclick = () => logOpen($("#log").classList.contains("collapsed"));
+$("#log").onclick = () => {
+  if ($("#log").classList.contains("collapsed")) logOpen(true);
+};
+$("#log").addEventListener("scroll", () => {
+  const b = $("#log");
+  b.dataset.pin = (b.scrollTop + b.clientHeight >= b.scrollHeight - 6) ? "1" : "0";
+});
+function addLog(el) {
+  const box = $("#log");
+  box.appendChild(el);
+  $("#logsum").textContent = box.children.length ? box.children.length + " стр." : "";
+  if (box.dataset.pin !== "0") box.scrollTop = box.scrollHeight;
+}
 const ROLES = ["", "ciphertext", "plaintext", "key", "keylen", "nonce", "iv",
                "salt", "hash", "modulus", "exponent", "signature", "password",
                "flag-prefix", "hint", "raw"];
@@ -200,7 +244,12 @@ function renderFiles() {
     el.appendChild(x); $("#chosen").appendChild(el);
   });
   $("#count").textContent = files.length ? "файлов: " + files.length : "";
-  $("#go").disabled = !files.length;
+  canGo();
+}
+
+/* задача может быть и без файлов: числа, шифртекст, вопрос — всё в тексте */
+function canGo() {
+  $("#go").disabled = !(files.length || $("#task").value.trim());
 }
 
 /* ---------- поля данных ---------- */
@@ -223,12 +272,13 @@ function addField(role = "", value = "") {
   $("#fields").appendChild(row);
 }
 $("#addfield").onclick = () => addField();
+$("#task").oninput = canGo;
 
 /* ---------- запуск ---------- */
 $("#go").onclick = async () => {
-  if (!files.length) return;
+  if (!files.length && !$("#task").value.trim()) return;
   $("#go").disabled = true; $("#stop").disabled = false;
-  $("#log").innerHTML = ""; lines = {}; $("#warn").textContent = "";
+  $("#log").innerHTML = ""; $("#logsum").textContent = ""; lines = {}; $("#warn").textContent = "";
   $("#flagbox").className = "flag"; $("#tout").textContent = "(нет задач)";
   if (es) es.close();
 
@@ -257,7 +307,7 @@ $("#go").onclick = async () => {
   es.onerror = () => { if (es) es.close(); reset(); };
 };
 $("#stop").onclick = () => { if (jobId) fetch("/api/stop/" + jobId, { method: "POST" }); };
-function reset() { $("#go").disabled = !files.length; $("#stop").disabled = true; }
+function reset() { canGo(); $("#stop").disabled = true; }
 
 function b64(file) {
   return new Promise((res, rej) => {
@@ -273,7 +323,7 @@ function row(n, tool, why) {
   if (!el) {
     el = document.createElement("div"); el.className = "line";
     el.innerHTML = '<span class="t"></span><span class="w"></span><span class="s run">идёт</span>';
-    $("#log").appendChild(el); lines[n] = el;
+    addLog(el); lines[n] = el;
   }
   if (tool) el.querySelector(".t").textContent = tool;
   if (why) el.querySelector(".w").textContent = why;
@@ -289,7 +339,7 @@ function handle(ev) {
     const el = document.createElement("div"); el.className = "line";
     el.innerHTML = '<span class="t">тип</span><span class="w">' + (ev.kind || "?") +
       (ev.steps ? ", шагов: " + ev.steps.length : "") + '</span><span class="s"></span>';
-    $("#log").appendChild(el); return;
+    addLog(el); return;
   }
   if (k === "step_start") { row(ev.n, ev.tool, ev.why); return; }
   if (k === "step_end") {
@@ -302,18 +352,29 @@ function handle(ev) {
   if (k === "lead") {
     const d = document.createElement("div"); d.className = "line";
     d.innerHTML = '<span class="t">зацепка</span><span class="w"></span><span class="s"></span>';
-    d.querySelector(".w").textContent = ev.text || "";
-    $("#log").appendChild(d); return;
+    const w = d.querySelector(".w");
+    w.textContent = ev.text || "";
+    w.classList.add("fold");
+    w.title = "нажми, чтобы развернуть";
+    w.onclick = e => { e.stopPropagation(); w.classList.toggle("open"); };
+    addLog(d); return;
   }
   if (k === "agent_step") { row("a" + ev.n, ev.tool, ev.detail); return; }
   if (k === "agent_output") {
     const d = document.createElement("div"); d.className = "line";
     d.innerHTML = '<span class="t">вывод</span><span class="w"></span><span class="s"></span>';
-    d.querySelector(".w").textContent = (ev.text || "").slice(0, 400);
-    $("#log").appendChild(d); return;
+    const w = d.querySelector(".w");
+    w.textContent = ev.text || "";
+    w.classList.add("fold");
+    w.title = "нажми, чтобы развернуть";
+    w.onclick = e => { e.stopPropagation(); w.classList.toggle("open"); };
+    addLog(d); return;
   }
   if (k === "answer") {
-    if ((ev.status || "done") === "not_found") return;
+    if ((ev.status || "done") === "not_found") {
+      $("#warn").textContent = "не найдено: " + (ev.text || "нет зацепки");
+      return;
+    }
     $("#warn").textContent = ev.text || "";
     return;
   }
@@ -325,6 +386,7 @@ function handle(ev) {
       $("#flagval").className = "val miss";
       $("#cp").style.display = "none";
       $("#flagbox").classList.add("show");
+      $("#warn").textContent = "добавь в условие пароль/подсказку/формат и нажми «решить» ещё раз — прошлые наработки подхватятся";
     }
     if (es) es.close();
     reset();

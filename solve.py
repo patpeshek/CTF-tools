@@ -1211,7 +1211,8 @@ _PASS_QUOTED_RE = re.compile(
     r"\bkey\b|ключ|secret|секрет|\bpin\b)\w*(?:\s+(?!is\b|это\b)\w+){0,3}?"
     r"\s*(?:is|=|:|—|-|это)?\s*[`\"«“]([^`\"»”\n]{1,64})[`\"»”]")
 _PASS_PLAIN_RE = re.compile(
-    r"(?i)(?:password|passphrase|пароль|\bkey\b|ключ)\s*(?:is|=|:|—|это)\s*"
+    r"(?i)(?:password|passphrase|пароль|\bkey\b|ключ)"
+    r"(?:\s+(?!is\b|это\b)\w+){0,3}?\s*(?:is|=|:|—|это)\s*"
     r"([^\s`\"«»“”,;]{2,64})")
 _QUOTED_RE = re.compile(r"[\"«“`]([^\"»”`\n]{2,80})[\"»”`]")
 _URL_RE = re.compile(r"https?://[^\s<>\"'`)\]»”]+", re.I)
@@ -1424,6 +1425,9 @@ def statement_steps(st, target):
             data = b""
         text = read_text(target) if data and common.printable_ratio(data[:4096]) >= 0.85 else ""
         for k in keys:
+            if data and (common.is_rtf(data) or text):
+                extra.append(("ws", [target, "--mode", "snow", "--password", k],
+                              "пароль из условия — SNOW (snow -p)", 20))
             if data and len(data) % 16 == 0 and len(data) >= 16:
                 extra.append(("ecb", [target, "--key", k, "--decrypt"],
                               "ключ из условия — AES-ECB", 30))

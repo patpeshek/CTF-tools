@@ -55,6 +55,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 TOOLBOX = os.path.join(ROOT, "toolbox.py")
 
 
+def clip(text: str, limit: int) -> str:
+    """Обрезка с сохранением начала и конца: данные часто в хвосте вывода."""
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3
+    tail = limit - head
+    return (text[:head] + "\n...[середина опущена]...\n" + text[-tail:])
+
+
 def _tool_name_ok(name: str) -> bool:
     return bool(re.fullmatch(r"[a-z][a-z0-9_]{0,30}", name or ""))
 
@@ -62,9 +71,10 @@ def _tool_name_ok(name: str) -> bool:
 class Workspace:
     """Рабочая папка задачи: всё внутри корня, ничего наружу."""
 
-    def __init__(self, root: str, cancel=None):
+    def __init__(self, root: str, cancel=None, env: dict | None = None):
         self.root = os.path.abspath(root)
         self.cancel = cancel
+        self.env = dict(env or {})
 
     def safe(self, rel: str) -> str:
         rel = (rel or "").replace("\\", "/").lstrip("/")
@@ -101,7 +111,9 @@ class Workspace:
             proc = subprocess.Popen(argv, cwd=self.root, shell=shell,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True,
-                                    encoding="utf-8", errors="replace")
+                                    encoding="utf-8", errors="replace",
+                                    env=dict(os.environ, **self.env)
+                                    if self.env else None)
         except OSError as exc:
             return f"OSERROR: {exc}"
         end = time.time() + timeout
@@ -119,9 +131,13 @@ class Workspace:
                     proc.communicate()
                     return f"TIMEOUT {timeout}s"
         text = ((out or "") + (err or "")).strip()
-        if len(text) > MAX_OUT:
-            text = text[:MAX_OUT] + "\n...[обрезано]"
-        return f"rc={proc.returncode}\n{text}"
+        # Флаг мог оказаться за пределами обрезки (длинный strings/hashcat):
+        # ищем по полному выводу и выносим находку в начало.
+        hit = FLAG_RE.search(text)
+        body = clip(text, MAX_OUT)
+        if hit and looks_like_flag(hit.group(0)):
+            body = f"в выводе найден флаг: {hit.group(0)}\n{body}"
+        return f"rc={proc.returncode}\n{body}"
 
     def run(self, cmd: str, timeout: int = DEFAULT_CMD_TIMEOUT) -> str:
         ok, why = guard.check_command(cmd)
@@ -130,6 +146,9 @@ class Workspace:
         return self._exec(cmd, timeout, shell=True)
 
     def run_py(self, code: str, timeout: int = DEFAULT_CMD_TIMEOUT) -> str:
+        ok, why = guard.check_code(code)
+        if not ok:
+            return f"ОТКАЗ: {why}"
         fd, path = tempfile.mkstemp(suffix=".py", dir=self.root)
         os.close(fd)
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -280,10 +299,19 @@ def _file_hints(root: str) -> str:
     """Детерминированные подсказки по файлам: словарь, шифротекст, RTF, архив."""
     files = []
     try:
-        for n in sorted(os.listdir(root))[:60]:
-            p = os.path.join(root, n)
-            if os.path.isfile(p) and os.path.getsize(p) <= 2_000_000:
-                files.append((n, p, os.path.getsize(p)))
+        rows = []
+        for base, dirs, names in os.walk(root):
+            dirs[:] = [d for d in sorted(dirs) if d != "__pycache__"][:20]
+            for n in sorted(names):
+                p = os.path.join(base, n)
+                try:
+                    size = os.path.getsize(p)
+                except OSError:
+                    continue
+                if size <= 2_000_000:
+                    rel = os.path.relpath(p, root).replace("\\", "/")
+                    rows.append((rel, p, size))
+        files = rows[:60]
     except OSError:
         return ""
     if not files:
@@ -335,17 +363,17 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
     """Генератор событий. Останавливается на флаге/ответе/лимитах."""
     deadline = deadline or (time.time() + 600)
     listing = ws.tree()
+    hints = _file_hints(ws.root)
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content":
             f"Условие задачи:\n{task_text or '(не задано)'}\n\n"
-            f"Файлы в рабочей папке:\n{listing}"},
+            f"Файлы в рабочей папке:\n{listing}{hints}"},
     ]
     if reasoning:
         messages.append({"role": "user", "content":
                          "Перед каждым действием заполняй поле thought "
                          "короткой заметкой о плане."})
-
     for step in range(1, max_steps + 1):
         if cancel and cancel():
             yield {"event": "agent_stop", "reason": "остановлено"}
@@ -458,9 +486,9 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             yield {"event": "flag", "flag": found.group(0), "source": "agent"}
             return
 
-        yield {"event": "agent_output", "text": result[:1200]}
+        yield {"event": "agent_output", "text": clip(result, 1200)}
         messages.append({"role": "user", "content":
-                         f"Результат шага {step}:\n```\n{result[:4000]}\n```\n"
+                         f"Результат шага {step}:\n```\n{clip(result, 4000)}\n```\n"
                          "Что дальше? Один JSON-объект."})
 
     yield {"event": "answer", "status": "not_found",

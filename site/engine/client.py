@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -53,7 +54,7 @@ def ready() -> bool:
 
 
 def chat(messages, *, model: str | None = None, temperature: float = 0.2,
-         max_tokens: int = 2000, timeout: int = 120,
+         max_tokens: int = 2000, timeout: int = 90,
          json_mode: bool = False) -> str:
     cfg = settings()
     if not cfg["key"] or not cfg["base"]:
@@ -67,14 +68,23 @@ def chat(messages, *, model: str | None = None, temperature: float = 0.2,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    try:
-        return _post(cfg, payload, timeout)
-    except RuntimeError as exc:
-        # провайдер может не знать response_format — повторяем без него
-        if json_mode and "response_format" in str(exc):
-            payload.pop("response_format", None)
+    retryable = ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504",
+                 "timed out", "URLError", "Connection reset", "Remote end closed",
+                 "IncompleteRead", "Temporary failure")
+    for attempt in range(3):
+        try:
             return _post(cfg, payload, timeout)
-        raise
+        except RuntimeError as exc:
+            msg = str(exc)
+            # провайдер может не знать response_format — повторяем без него
+            if json_mode and "response_format" in msg:
+                payload.pop("response_format", None)
+                return _post(cfg, payload, timeout)
+            if attempt < 2 and any(k in msg for k in retryable):
+                time.sleep((1, 3, 7)[attempt])
+                continue
+            raise
+    raise RuntimeError("модель не ответила после повторов")
 
 
 def _post(cfg: dict, payload: dict, timeout: int) -> str:
@@ -90,6 +100,8 @@ def _post(cfg: dict, payload: dict, timeout: int) -> str:
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")[:300]
         raise RuntimeError(f"HTTP {exc.code}: {body}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise RuntimeError(f"сеть: {exc}") from exc
     try:
         return data["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError) as exc:

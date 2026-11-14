@@ -1,18 +1,18 @@
-"""solve_both.py — два прогона одновременно: обычный и с ИИ-порядком шагов.
+"""smart_solve.py — два прогона одновременно: обычный и умный порядок шагов.
 
-Зачем: правила и модель ошибаются по-разному, и спорить «кто лучше» без
-одновременного замера бессмысленно. Скрипт запускает два независимых
+Зачем: правила и локальный роутер ошибаются по-разному, и спорить «кто лучше»
+без одновременного замера бессмысленно. Скрипт запускает два независимых
 солвера на одну и ту же цель:
 
   * `solve.py <target>`          — как всегда, порядок из правил;
-  * `solve.py <target> --ai`     — тот же набор шагов, но модель решает,
-                                   что пробовать первым.
+  * `solve.py <target> --smart`  — тот же набор шагов, но локальный роутер
+                                   решает, что пробовать первым.
 
 Оба пишут поток событий (`--events -`), из него берём флаги, число шагов и
 время. В конце — таблица и победитель.
 
-  python solve_both.py "F:\\...\\task" --time 60
-  python solve_both.py "F:\\...\\task" --time 60 --expect CTF{...}
+  python smart_solve.py "F:\\...\\task" --time 60
+  python smart_solve.py "F:\\...\\task" --time 60 --expect CTF{...}
 """
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ import time
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
-def run(target, ai, budget, results, key, desc_file=""):
+def run(target, smart, budget, results, key, desc_file=""):
     cmd = [sys.executable, os.path.join(ROOT, "solve.py"), target,
            "--time", str(budget), "--events", "-"]
-    if ai:
-        cmd.append("--ai")
+    if smart:
+        cmd.append("--smart")
     if desc_file:
         cmd += ["--desc-file", desc_file]
     t0 = time.time()
@@ -74,16 +74,16 @@ def main() -> int:
     threads = [threading.Thread(target=run, args=(args.target, False, args.time,
                                                   results, "rules", args.desc_file)),
                threading.Thread(target=run, args=(args.target, True, args.time,
-                                                  results, "ai", args.desc_file))]
+                                                  results, "smart", args.desc_file))]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
 
-    rules, ai = results.get("rules", {}), results.get("ai", {})
+    rules, smart = results.get("rules", {}), results.get("smart", {})
     print()
     print(f"{'':12s} {'флаг':38s} {'шагов':>6s} {'сек':>6s}")
-    for name, r in (("правила", rules), ("ИИ-порядок", ai)):
+    for name, r in (("правила", rules), ("умный порядок", smart)):
         flag = (r.get("flags") or ["—"])[0]
         mark = ""
         if args.expect and r.get("flags"):
@@ -97,12 +97,12 @@ def main() -> int:
         return bool(r.get("flags"))
 
     print()
-    if won(rules) and won(ai):
-        w = "правила" if rules["seconds"] <= ai["seconds"] else "ИИ"
+    if won(rules) and won(smart):
+        w = "правила" if rules["seconds"] <= smart["seconds"] else "роутер"
         print(f"[=] обе нашли флаг; быстрее {w} "
-              f"({min(rules['seconds'], ai['seconds']):.1f} с)")
-    elif won(ai):
-        print("[=] флаг нашёл только ИИ-порядок")
+              f"({min(rules['seconds'], smart['seconds']):.1f} с)")
+    elif won(smart):
+        print("[=] флаг нашёл только роутер")
     elif won(rules):
         print("[=] флаг нашли только правила")
     else:

@@ -9,7 +9,7 @@ solve.py — автопилот: прогнать по артефакту всё
   python solve.py 10.0.0.5:1337
   python solve.py file.png --plan        # только показать, что будет запускать
 
-Работает офлайн, без ИИ и без сети (кроме явных URL/сервисов). Шаги идут от
+Работает офлайн, без внешних сервисов и без сети (кроме явных URL). Шаги идут от
 дешёвых к дорогим, после каждого вывода ищутся флаги; на первом — стоп.
 Всё, что важно, печатает; модули переиспользуются как есть (subprocess),
 поэтому solve ничего не дублирует.
@@ -871,11 +871,11 @@ def admin_dir(path):
         return False
 
 
-# --- ИИ-режим: порядок шагов по мнению локальной модели -------------------
+# --- умный режим: порядок шагов по оценке локального роутера ----------------
 # Модель (`ml/np_router.py`) отдаёт вероятности семейств; каждое семейство
 # знает свои «первые инструменты». Складываем вероятности по инструментам и
 # сортируем план. Правила не выкидываются — меняется только порядок.
-AI_ORDER = {"router": None}
+SMART_ORDER = {"router": None}
 # сколько вложенных архивов разворачивать («матрёшка»). 4 уровня — это уже
 # xz(gzip(zip(tar))); глубже обычно не математика, а мусор, и время кончается.
 MAX_NEST = int(os.environ.get("SOLVER_MAX_NEST", "5"))
@@ -924,6 +924,41 @@ def _ai_sample(target):
     return b""
 
 
+def _index_of_coincidence(text: str) -> float:
+    """Индекс совпадений: ~0.066 у обычного текста, ~0.045 у Виженера.
+
+    Нужен как фильтр: гонять «взлом Виженера» по любой прозе бессмысленно.
+    """
+    letters = [c.lower() for c in text if c.isalpha()]
+    n = len(letters)
+    if n < 50:
+        return 0.0
+    counts = {}
+    for c in letters:
+        counts[c] = counts.get(c, 0) + 1
+    return sum(v * (v - 1) for v in counts.values()) / (n * (n - 1))
+
+
+_COMMON_WORDS = {
+    "the", "and", "that", "with", "you", "for", "are", "this", "not", "but",
+    "have", "from", "they", "will", "would", "there", "their", "what", "been",
+    "и", "в", "не", "на", "что", "это", "как", "все", "она", "так", "его",
+}
+
+
+def _looks_like_plain(text: str) -> bool:
+    """Похоже на обычный текст (а не на шифртекст)?
+
+    В шифртексте частые слова языка исчезают; в прозе они есть. Это дешевле
+    и точнее индекса совпадений, который на коротких текстах врёт.
+    """
+    words = re.findall(r"[A-Za-zА-Яа-я]+", text.lower())
+    if len(words) < 20:
+        return True
+    hits = sum(1 for w in words if w in _COMMON_WORDS)
+    return hits / len(words) >= 0.05
+
+
 def _chain_args(path, deep):
     """Аргументы chain: в глубоком режиме — больше слоёв и времени."""
     if deep:
@@ -956,9 +991,9 @@ def _derive_targets(path):
     return out
 
 
-def ai_order(steps, target, verbose=True):
+def smart_order(steps, target, verbose=True):
     """Переставить шаги по вероятностям модели; правила остаются на месте."""
-    router = AI_ORDER.get("router")
+    router = SMART_ORDER.get("router")
     if router is None or not steps:
         return steps
     data = _ai_sample(target)
@@ -976,7 +1011,7 @@ def ai_order(steps, target, verbose=True):
     ordered = sorted(steps, key=lambda s: -score(s))
     if verbose:
         top = ", ".join(f"{s[0]} {score(s):.2f}" for s in ordered[:5])
-        print(f"[ai] порядок шагов по модели: {top}")
+        print(f"[smart] порядок шагов по роутеру: {top}")
     return ordered
 
 
@@ -1282,9 +1317,14 @@ def steps_for(path, deep=False, depth=0):
                 add(("chain", _chain_args(path, deep)[0],
                      "многослойные кодировки: base64→hex→ROT13→XOR…", 30))
             add(("autocrack", ["--file", path], "цезарь/XOR/кодировки/хеши", 60))
-            if len(re.findall(r"[A-Za-zА-Яа-я]", text)) >= 200:
+            # Виженер ищем только там, где на него похоже: много букв и
+            # «не английский» индекс совпадений. Раньше запускался на любом
+            # тексте длиннее 200 букв и съедал по 7 с на задачу (717 с в трассах).
+            letters = re.findall(r"[A-Za-zА-Яа-я]", text)
+            if (len(letters) >= 200 and not _looks_like_plain(text)
+                    and 0.038 <= _index_of_coincidence(text) <= 0.062):
                 add(("classical", ["vigenere-crack", "--text", text[:6000]],
-                     "длинный текст без пробелов — Виженер/Цезарь", 40))
+                     "текст похож на шифртекст: Виженер/Цезарь", 15))
             _ints = re.findall(r"\d{5,20}", text)
             if len(_ints) >= 6 and len(_ints) >= len(text.split()) * 0.9:
                 if len(_ints) >= 624:
@@ -1373,8 +1413,8 @@ def solve_file(target, runner, deep, plan_only, statement=None):
         # условие: добавить шаги с паролями/ключами и поднять подсказанные
         steps = _dedupe_steps(order_steps(statement_steps(statement, target) + steps,
                                           statement))
-    if AI_ORDER.get("router") is not None:
-        steps = ai_order(steps, target)
+    if SMART_ORDER.get("router") is not None:
+        steps = smart_order(steps, target)
     runner.note_plan(steps, kind, "dir" if os.path.isdir(target) else "file",
                      target, statement)
     print(f"[+] тип: {kind}")
@@ -1952,16 +1992,16 @@ def main():
                     help="поток событий JSON Lines (plan/step_start/step_end/lead/flag/"
                          "done) в файл или '-' (stdout)")
     ap.add_argument("--both", action="store_true",
-                    help="решать двумя потоками: обычные правила и ИИ-порядок шагов")
-    ap.add_argument("--ai", action="store_true",
-                    help="переставить шаги по мнению локальной модели (роутера)")
+                    help="решать двумя потоками: обычные правила и умный порядок шагов")
+    ap.add_argument("--smart", action="store_true",
+                    help="переставить шаги по оценке локального роутера")
     ap.add_argument("--router", default=os.environ.get("SOLVER_ROUTER", ""),
                     help="путь к router_*.npz (по умолчанию $SOLVER_ROUTER)")
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
-    if args.ai:
-        # ИИ-режим по умолчанию глубокий: модель уже расставила приоритеты,
+    if args.smart:
+        # умный режим по умолчанию глубокий: роутер уже расставил приоритеты,
         # экономить на шагах смысла нет
         args.deep = True
     if args.nest:
@@ -1974,19 +2014,19 @@ def main():
         if args.desc_file:
             cmd += ["--desc-file", args.desc_file]
         raise SystemExit(subprocess.call(cmd, cwd=here))
-    if args.ai:
+    if args.smart:
         path = args.router or os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "ml", "router_best.npz")
         if not os.path.exists(path):
-            print(f"[!] --ai: нет файла роутера {path} — работаю без модели")
+            print(f"[!] --smart: нет файла роутера {path} — работаю без модели")
         else:
             sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "ml"))
             try:
                 from np_router import Router
-                AI_ORDER["router"] = Router(path)
-                print(f"[ai] роутер: {path}")
+                SMART_ORDER["router"] = Router(path)
+                print(f"[smart] роутер: {path}")
             except Exception as exc:
-                print(f"[!] --ai: роутер не загрузился ({exc})")
+                print(f"[!] --smart: роутер не загрузился ({exc})")
     if args.any_prefix:
         os.environ["FLAG_ANY"] = "1"
 

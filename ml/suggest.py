@@ -1,4 +1,4 @@
-"""suggest.py — что модель советует делать с файлом (без torch, без сети).
+"""suggest.py — что советует роутер делать с файлом (без torch, без сети).
 
 Читает экспортированный роутер (`export_numpy.py`) и печатает не только
 вероятности семейств, но и **с чего начать**: первые инструменты кита для
@@ -62,7 +62,7 @@ FIRST_STEPS = {
 
 
 def _dir_report(router, path, top=5):
-    """«Куча файлов»: усредняем мнение модели по папке."""
+    """«Куча файлов»: усредняем оценка роутера по папке."""
     files = []
     for dirpath, dirs, names in os.walk(path):
         dirs[:] = [d for d in dirs if d not in (".git", "__pycache__")]
@@ -100,7 +100,7 @@ def _dir_report(router, path, top=5):
     print(f"[+] папка {os.path.basename(path) or path}: {len(files)} файлов")
     print("    по отдельным файлам: " + ", ".join(
         f"{k}×{v}" for k, v in sorted(votes.items(), key=lambda kv: -kv[1])[:6]))
-    print("    усреднённое мнение:")
+    print("    усреднённая оценка:")
     for i in order:
         print(f"      {router.families[i]:12s} {acc[i]:5.3f}  {'█' * int(acc[i] * 25)}")
     best = router.families[int(order[0])]
@@ -123,7 +123,7 @@ def main() -> int:
     best, prob = top[0]
     print(f"[+] {os.path.basename(path)}: {len(data)} байт")
     if prob < 0.5:
-        print(f"[?] модель не уверена (max {prob:.2f}) — проверь вручную")
+        print(f"[?] роутер не уверен (max {prob:.2f}) — проверь вручную")
     for fam, p in top:
         print(f"    {fam:12s} {p:5.3f}  {'█' * int(p * 25)}")
     steps = FIRST_STEPS.get(best, ["facts", "chain"])

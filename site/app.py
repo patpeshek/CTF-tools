@@ -691,13 +691,25 @@ def list_files(root: str):
     return rows[:500]
 
 
+class QuietServer(ThreadingHTTPServer):
+    """Не печатает трейсбеки, когда браузер/health закрыл соединение."""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, ConnectionAbortedError,
+                            BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
     port = int(os.environ.get("PORT", "8771"))
     bind = (os.environ.get("BIND") or "127.0.0.1").strip()
     if bind not in LOOPBACK and os.environ.get("ALLOW_REMOTE") != "1":
         print(f"[!] BIND={bind}: наружу не отдаю. Нужно осознанно — ALLOW_REMOTE=1")
         sys.exit(2)
-    httpd = ThreadingHTTPServer((bind, port), Handler)
+    httpd = QuietServer((bind, port), Handler)
     mode = "песочница" if docker_on() else "локально (без Docker)"
     print(f"[+] http://{bind}:{port}/  режим: {mode}", flush=True)
     print("[+] доступ только с этого компьютера (127.0.0.1)", flush=True)

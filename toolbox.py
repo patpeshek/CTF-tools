@@ -109,6 +109,8 @@ REGISTRY = [
     ("crypto", "ecb", "crypto/aes_ecb.py", "детект/расшифровка ECB"),
     ("crypto", "hash_id", "crypto/hash_id.py", "тип хеша + режим hashcat"),
     ("crypto", "hashcat", "crypto/hashcat_run.py", "запуск hashcat по режиму"),
+    ("crypto", "ecc", "crypto/ecc.py",
+     "эллиптическая кривая: BSGS, Полиг-Хеллман, сингулярная кривая"),
     ("crypto", "rsa", "crypto/rsa_tool.py",
      "RSA: gcd/Ферма/малая e/Винер/Coppersmith/Boneh-Durfee"),
     ("crypto", "oracles", "crypto/block_oracles.py",

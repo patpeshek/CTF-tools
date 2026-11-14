@@ -58,6 +58,7 @@ FIRST_STEPS = {
     "git_pack": ["strings", "carve"],
     "git_ref": ["hunt", "facts"],
     "git_config": ["hunt", "admin"],
+    "ecc_task": ["ecc --file"],
 }
 
 

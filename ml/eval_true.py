@@ -88,6 +88,9 @@ def expected(data: bytes, path: str = "") -> str:
         return "py_src"
     if sample.lstrip().startswith(b"#!"):
         return "py_src"
+    if re.search(rb"(?i)elliptic|y\^2\s*=\s*x\^3|secp\d+|EllipticCurve|"
+                 rb"\bQ\s*=\s*\(", sample):
+        return "ecc_task"
     if CONF_RE.search(sample):
         return "config_text"
     if TS_RE.search(sample) or ISO_RE.search(sample):

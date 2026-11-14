@@ -132,6 +132,10 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--dim", type=int, default=128)
+    ap.add_argument("--hidden", type=int, default=256,
+                    help="ширина MLP-роутера")
+    ap.add_argument("--depth", type=int, default=2,
+                    help="сколько слоёв в MLP (2 = как раньше)")
     ap.add_argument("--layers", type=int, default=4)
     ap.add_argument("--heads", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
@@ -172,7 +176,8 @@ def main():
     test_dl = dl(tensors(test_rows, fam_to_idx), False)
 
     model = build(args.arch, len(FEATURE_NAMES), n_classes, dim=args.dim,
-                  layers=args.layers, heads=args.heads).to(device)
+                  layers=args.layers, heads=args.heads,
+                  hidden=args.hidden, depth=args.depth).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[+] параметров: {n_params:,}", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)

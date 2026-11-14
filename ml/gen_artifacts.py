@@ -1228,6 +1228,41 @@ def make_git_config(rng: random.Random) -> bytes:
             f"\temail = {rng.choice(['mira', 'ci'])}@corp\n").encode()
 
 
+# --------------------------------------------------------------- ecc ---------
+def make_ecc_task(rng: random.Random) -> bytes:
+    """Текст ECC-задачи: параметры кривой и точки — как их дают на CTF."""
+    small = rng.choice([True, False])
+    if small:
+        p = rng.choice([9739, 1021, 10177, 65537, 1000003])
+    else:
+        p = rng.choice([2 ** 61 - 1, 2 ** 127 - 1, 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF])
+    a = rng.randint(1, 2000)
+    b = rng.randint(1, 2000)
+    gx, gy = rng.randrange(p), rng.randrange(p)
+    qx, qy = rng.randrange(p), rng.randrange(p)
+    n = rng.randint(p // 2, p) if p > 3 else 3
+    style = rng.random()
+    if style < 0.4:
+        body = (f"p = {p}\na = {a}\nb = {b}\n"
+                f"G = ({gx}, {gy})\nQ = ({qx}, {qy})\nn = {n}\n"
+                "Find the private key d such that Q = d*G.\n")
+    elif style < 0.7:
+        body = (f"E = EllipticCurve(GF({p}), [{a}, {b}])\n"
+                f"G = E({gx}, {gy})\nQ = E({qx}, {qy})\n"
+                f"# order = {n}\n# flag = d\n")
+    else:
+        body = (f"Curve: y^2 = x^3 + {a}x + {b} over GF({p})\n"
+                f"Generator G = ({gx}, {gy})\nPublic point Q = ({qx}, {qy})\n"
+                f"Curve order n = {n}\nRecover d.\n")
+    if rng.random() < 0.25:
+        # «голые» параметры без единого слова-подсказки — так тоже дают
+        body = (f"p = {p}\na = {a}\nb = {b}\nn = {n}\n"
+                f"G = ({gx}, {gy})\nQ = ({qx}, {qy})\n")
+    if rng.random() < 0.5:
+        body += "flag format: CTF{d}\n"
+    return body.encode()
+
+
 MAKERS = {
     "png": make_png,
     "gif": make_gif,
@@ -1268,6 +1303,7 @@ MAKERS = {
     "git_pack": make_git_pack,
     "git_ref": make_git_ref,
     "git_config": make_git_config,
+    "ecc_task": make_ecc_task,
 }
 
 

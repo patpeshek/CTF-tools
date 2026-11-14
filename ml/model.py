@@ -12,17 +12,17 @@ from torch import nn
 
 
 class FeatureMLP(nn.Module):
-    def __init__(self, n_hand: int, n_hist: int, n_classes: int, hidden: int = 256):
+    def __init__(self, n_hand: int, n_hist: int, n_classes: int, hidden: int = 256,
+                 depth: int = 2, dropout: float = 0.15):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_hand + n_hist, hidden),
-            nn.GELU(),
-            nn.Dropout(0.15),
-            nn.Linear(hidden, hidden // 2),
-            nn.GELU(),
-            nn.Dropout(0.15),
-            nn.Linear(hidden // 2, n_classes),
-        )
+        layers = [nn.Linear(n_hand + n_hist, hidden), nn.GELU(),
+                  nn.Dropout(dropout)]
+        width = hidden
+        for _ in range(max(0, depth - 2)):
+            layers += [nn.Linear(width, width), nn.GELU(), nn.Dropout(dropout)]
+        layers += [nn.Linear(width, max(width // 2, 32)), nn.GELU(),
+                   nn.Dropout(dropout), nn.Linear(max(width // 2, 32), n_classes)]
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x_bytes, x_hand, x_hist):
         return self.net(torch.cat([x_hand, x_hist], dim=1))
@@ -58,7 +58,9 @@ class ByteTransformer(nn.Module):
 
 def build(arch: str, n_hand: int, n_classes: int, **kw):
     if arch == "mlp":
-        return FeatureMLP(n_hand, 256, n_classes)
+        return FeatureMLP(n_hand, 256, n_classes,
+                          hidden=kw.get("hidden", 256),
+                          depth=kw.get("depth", 2))
     if arch == "transformer":
         return ByteTransformer(n_hand, n_classes, **kw)
     raise ValueError(arch)

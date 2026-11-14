@@ -30,8 +30,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 def run(target, smart, budget, results, key, desc_file=""):
     cmd = [sys.executable, os.path.join(ROOT, "solve.py"), target,
            "--time", str(budget), "--events", "-"]
-    if smart:
-        cmd.append("--smart")
+    cmd.append("--smart" if smart else "--rules-only")
     if desc_file:
         cmd += ["--desc-file", desc_file]
     t0 = time.time()

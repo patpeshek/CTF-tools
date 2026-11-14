@@ -896,6 +896,7 @@ FAMILY_TOOLS = {
     "py_src": ["hunt", "strings"], "config_text": ["admin", "hunt"],
     "plain_log": ["logs", "hunt"], "json_log": ["hunt", "ws"],
     "doc_text": ["facts"], "raw_text": ["ws", "enc", "chain"],
+    "ecc_task": ["ecc"], "git_object": ["chain", "strings"],
     "reverse": ["chain", "enc"], "random_bin": ["facts", "carve"],
 }
 
@@ -1278,6 +1279,11 @@ def steps_for(path, deep=False, depth=0):
                 add(("rsa", ["shared", "--json", path, "--target", tgt0,
                              "--e", str(e0), "--cipher-field", cf0],
                      "JSON-реестр модулей: общий множитель + ключ сессии", 60))
+            # эллиптическая кривая: d из G и Q
+            if re.search(r"(?i)elliptic|\bsecp\d+\b|y\^2\s*=\s*x\^3|"
+                         r"\bG\s*=\s*\(", text) and re.search(r"(?i)\bQ\s*=\s*\(", text):
+                add(("ecc", ["--file", path],
+                     "ECC: дискретный логарифм d из G и Q", 60))
             add(("ws", [path], "пробелы/zero-width", 30))
             if near_dup_text(path):
                 add(("nearlines", [path], "почти одинаковые строки: отличия", 40))
@@ -1992,7 +1998,11 @@ def main():
                     help="поток событий JSON Lines (plan/step_start/step_end/lead/flag/"
                          "done) в файл или '-' (stdout)")
     ap.add_argument("--both", action="store_true",
-                    help="решать двумя потоками: обычные правила и умный порядок шагов")
+                    help="двумя потоками (это режим по умолчанию)")
+    ap.add_argument("--rules-only", action="store_true",
+                    help="только правила, без роутера")
+    ap.add_argument("--smart-only", action="store_true",
+                    help="только умный порядок, без обычного прогона")
     ap.add_argument("--smart", action="store_true",
                     help="переставить шаги по оценке локального роутера")
     ap.add_argument("--router", default=os.environ.get("SOLVER_ROUTER", ""),
@@ -2007,9 +2017,13 @@ def main():
     if args.nest:
         global MAX_NEST
         MAX_NEST = max(1, args.nest)
-    if args.both and args.target:
+    if args.smart_only:
+        args.smart = True
+    plain_run = (args.smart or args.rules_only or args.plan
+                 or args.json or args.events or not args.target)
+    if not plain_run:
         here = os.path.dirname(os.path.abspath(__file__))
-        cmd = [sys.executable, os.path.join(here, "ai_solve.py"), args.target,
+        cmd = [sys.executable, os.path.join(here, "smart_solve.py"), args.target,
                "--time", str(args.time)]
         if args.desc_file:
             cmd += ["--desc-file", args.desc_file]

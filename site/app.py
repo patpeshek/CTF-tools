@@ -344,9 +344,9 @@ def worker(job_id: str):
 
     def stage_second():
         try:
-            if not job.get("api", True):
+            if not job.get("second", False):
                 out.put(("second", {"event": "runner_note",
-                                    "note": "API-помощник выключен — работает только кит"}))
+                                    "note": "дополнительный проход выключен — работает только кит"}))
                 return
             for ev in _agent_events(job):
                 out.put(("second", ev))
@@ -613,7 +613,7 @@ class Handler(BaseHTTPRequestHandler):
                            if isinstance(i, dict)][:20],
                 "budget": max(10.0, min(budget, 900.0)),
                 "deep": True,
-                "api": bool(data.get("deep", False)),   # по умолчанию только кит
+                "second": bool(data.get("deep", False)),  # доп. проход, по умолчанию выкл
                 "reasoning": bool(data.get("reasoning")),
                 "thoughts": bool(data.get("thoughts")),
                 "prefix": (data.get("prefix") or "").strip()[:40] or None,

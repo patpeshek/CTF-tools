@@ -32,7 +32,9 @@ import common  # noqa: E402
 
 
 # порядок каналов внутри пикселя (индексы в RGBA)
-SEQS = {"rgb": (0, 1, 2), "rgba": (0, 1, 2, 3), "bgr": (2, 1, 0),
+SEQS = {"rgb": (0, 1, 2), "rbg": (0, 2, 1), "grb": (1, 0, 2),
+        "gbr": (1, 2, 0), "brg": (2, 0, 1), "bgr": (2, 1, 0),
+        "rgba": (0, 1, 2, 3),
         "r": (0,), "g": (1,), "b": (2,), "a": (3,)}
 
 
@@ -62,6 +64,23 @@ def bits_from_image(path, channel="all", nbits=1, order="lsb", offset=0):
     shifts = range(nbits) if order == "lsb" else range(nbits - 1, -1, -1)
     table = [bytes((v >> s) & 1 for s in shifts) for v in range(256)]
     return b"".join(map(table.__getitem__, data))
+
+
+def bits_cycle(raw, order=(0, 1, 2), nbits=1, bit_order="lsb", offset=0):
+    """Один бит на пиксель, каналы циклически: R,B,G,R,B,G…
+
+    Так пишут, когда «по одному биту в пиксель», но канал меняют по кругу;
+    это не то же самое, что каналы подряд (planes).
+    """
+    bits = []
+    total = len(raw) // 4
+    shifts = range(nbits) if bit_order == "lsb" else range(nbits - 1, -1, -1)
+    for i in range(offset, total):
+        c = order[(i - offset) % len(order)]
+        v = raw[i * 4 + c]
+        for s in shifts:
+            bits.append((v >> s) & 1)
+    return bytes(bits)
 
 
 def bits_diff(img_a, img_b, channel="r", nbits=1, order="lsb"):
@@ -110,8 +129,9 @@ def main():
     ap.add_argument("image")
     ap.add_argument("--diff", help="вторая картинка: читать биты там, где канал отличается")
     ap.add_argument("--channel", default="all",
-                    choices=["all", "rgb", "rgba", "bgr", "r", "g", "b", "a"],
-                    help="all = R,G,B подряд + перебор rgba/bgr/r/g/b/a")
+                    choices=["all", "rgb", "rbg", "grb", "gbr", "brg", "bgr",
+                             "rgba", "r", "g", "b", "a"],
+                    help="all = R,G,B подряд + перебор каналов и порядков")
     ap.add_argument("--bits", type=int, default=1)
     ap.add_argument("--order", default="lsb", choices=["lsb", "msb"])
     ap.add_argument("--offset", type=int, default=0)
@@ -134,7 +154,7 @@ def main():
     # rgb может не совпасть со способом записи (с альфой, BGR, один канал) —
     # пробуем остальные и показываем только то, что похоже на текст/флаг
     if args.channel == "all" and raw is not None:
-        for ch in ("rgba", "bgr", "r", "g", "b", "a"):
+        for ch in ("rgba", "rbg", "grb", "gbr", "brg", "bgr", "r", "g", "b", "a"):
             try:
                 d = bits_to_bytes(bits_from_image(raw, ch, args.bits,
                                                   args.order, args.offset))
@@ -144,6 +164,20 @@ def main():
                 continue
             if common.find_flags(d) or common.printable_ratio(d) > 0.92:
                 print(f"\n[+] каналы {ch} дают читаемый результат:")
+                show(d)
+        # цикл по каналам: один бит на пиксель, R,B,G,R,B,G…
+        for order in ((0, 1, 2), (0, 2, 1), (1, 0, 2),
+                      (1, 2, 0), (2, 0, 1), (2, 1, 0)):
+            try:
+                d = bits_to_bytes(bits_cycle(raw, order, args.bits,
+                                             args.order, args.offset))
+            except Exception:
+                continue
+            if not d or d == data:
+                continue
+            if common.find_flags(d) or common.printable_ratio(d) > 0.92:
+                name = "".join("rgb"[c] for c in order)
+                print(f"\n[+] цикл каналов {name} даёт читаемый результат:")
                 show(d)
 
 

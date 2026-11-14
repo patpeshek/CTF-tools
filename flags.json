@@ -7,7 +7,8 @@
     "innoctf",
     "vosh",
     "npc",
-    "uaz"
+    "uaz",
+    "htb"
   ],
   "extended": [
     "ctf",
@@ -19,7 +20,7 @@
     "vosh",
     "voshctf",
     "htb",
-    "picocft",
+    "picoctf",
     "uiuctf",
     "corctf",
     "lactf",

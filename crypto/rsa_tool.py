@@ -377,6 +377,31 @@ def convergents(a: int, b: int):
         a, b = b, a - q * b
 
 
+def wiener_attack(n: int, e: int):
+    """Атака Винера: (p, q, d) при малом d или None."""
+    p_prev, p_cur = 0, 1
+    q_prev, q_cur = 1, 0
+    for q in convergents(e, n):
+        p_prev, p_cur = p_cur, q * p_cur + p_prev
+        q_prev, q_cur = q_cur, q * q_cur + q_prev
+        k, d = p_cur, q_cur
+        if k == 0 or (e * d - 1) % k:
+            continue
+        phi = (e * d - 1) // k
+        s = n - phi + 1
+        disc = s * s - 4 * n
+        if disc < 0:
+            continue
+        r = iroot(disc, 2)
+        if r * r != disc:
+            continue
+        p = (s + r) // 2
+        q2 = (s - r) // 2
+        if p * q2 == n:
+            return p, q2, d
+    return None
+
+
 def cmd_wiener(args):
     n, e = to_int(args.n), to_int(args.e)
     # цепная дробь e/n, подходящие дроби k/d
@@ -749,7 +774,8 @@ def cmd_auto(args):
     e = labeled.get("e") or labeled.get("exp") or labeled.get("exponent")
     if not e:
         e = max(small) if small else 65537
-    e = e if e < 2**32 else 65537
+    # e бывает огромным (Wiener): не подменяем его на 65537
+    e = int(e)
 
     n = labeled.get("n") or labeled.get("modulus") or labeled.get("mod")
     cs = [labeled[k] for k in ("c", "cipher", "ct", "ciphertext") if k in labeled]
@@ -762,7 +788,15 @@ def cmd_auto(args):
             try:
                 cs = [int(blob.decode().strip(), 0)]
             except Exception:
-                cs = [int.from_bytes(blob, "big")]
+                # файл вида "c = 123..." / "ciphertext: 0x...": берём число
+                m = re.search(rb"(?i)\b(?:c|cipher|ct|ciphertext|enc)\s*[=:]\s*"
+                              rb"(0x[0-9a-fA-F]+|\d+)", blob)
+                if m:
+                    cs = [int(m.group(1), 0)]
+                else:
+                    txt = blob.decode("utf-8", "replace")
+                    nums = re.findall(r"\d{20,}", txt)
+                    cs = [int(nums[-1])] if nums else [int.from_bytes(blob, "big")]
         else:
             cs = [to_int(cval)]
     if not n:
@@ -787,11 +821,12 @@ def cmd_auto(args):
         if all(32 <= x < 127 or x in (9, 10, 13) for x in b) and len(b) >= 4:
             emit(v, "число как bytes")
 
-    # 2. малая экспонента
-    if n:
+    # 2. малая экспонента (для огромного e, как в Wiener, корень не считаем)
+    if n and e <= 2**32:
+        tries = args.tries if e <= 17 else min(args.tries, 64)
         for c in cs or []:
             if c < n:
-                for k, m in enumerate(try_small_e(n, e, c, args.tries)):
+                for k, m in enumerate(try_small_e(n, e, c, tries)):
                     emit(m, f"small-e (k={k})")
                     break
 
@@ -858,8 +893,8 @@ def cmd_auto(args):
             for c in cs:
                 emit(decrypt_with(sp, n // sp, e, c), "smallq -> decrypt")
 
-    # 4. факторизация n
-    if n and n.bit_length() <= 256:
+    # 4. факторизация n (Ферма полезна и на 1024-битных «близких» p,q)
+    if n and n.bit_length() <= 4096:
         f = None
         import time as _t
         t0 = _t.time()
@@ -878,29 +913,14 @@ def cmd_auto(args):
             for c in cs:
                 emit(decrypt_with(f[0], f[1], e, c), f"{how} -> decrypt")
 
-    # 5. Винера (малый d)
+    # 5. Винер (малый d)
     if n and labeled.get("e"):
-        try:
-            for k, d, _ in convergents(e, n):
-                if k == 0:
-                    continue
-                if (e * d - 1) % k:
-                    continue
-                phi = (e * d - 1) // k
-                s = n - phi + 1
-                disc = s * s - 4 * n
-                if disc < 0:
-                    continue
-                r = isqrt(disc)
-                if r * r == disc:
-                    p, q = (s + r) // 2, (s - r) // 2
-                    if p * q == n:
-                        print(f"[+] Винер: d={d}")
-                        for c in cs:
-                            emit(decrypt_with(p, q, e, c), "Wiener -> decrypt")
-                        break
-        except Exception:
-            pass
+        w = wiener_attack(n, e)
+        if w:
+            p, q2, d = w
+            print(f"[+] Винер: d={d.bit_length()} бит")
+            for c in cs:
+                emit(decrypt_with(p, q2, e, c), "Wiener -> decrypt")
 
     # 6. если p/q даны явно
     p, q = labeled.get("p"), labeled.get("q")

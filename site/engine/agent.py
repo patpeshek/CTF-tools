@@ -6,6 +6,7 @@
   * write / read / list — файлы в рабочей папке задачи;
   * bash — команда оболочки (стоп-лист в guard.py);
   * py — запуск python-кода;
+  * tool — любой инструмент toolbox.py (facts, triage, rsa, ws, …);
   * flag / answer — итог.
 
 Протокол ответа — один JSON-объект на шаг, необязательное поле `thought`
@@ -41,7 +42,16 @@ def looks_like_flag(text: str) -> bool:
     m = FLAG_RE.search(text or "")
     if not m:
         return False
-    inner = m.group(0).split("{", 1)[1][:-1]
+    flag = m.group(0)
+    inner = flag.split("{", 1)[1][:-1]
+    if not inner or len(inner) > 200:
+        return False
+    # те же правила, что у сайта: без управляющих символов, кавычек,
+    # слэшей и скобок внутри (иначе '\x00{' проходит как «флаг»)
+    if any(ord(c) < 32 or ord(c) > 126 for c in inner):
+        return False
+    if any(c in inner for c in '"\\[]{}'):
+        return False
     core = re.sub(r"[^A-Za-z0-9]", "", inner)
     if len(core) < 4:
         return False
@@ -106,14 +116,26 @@ class Workspace:
                 rows.append(f"{os.path.getsize(path):>10}  {rel}")
         return "\n".join(rows) or "(пусто)"
 
+    def files(self) -> list[str]:
+        rows = []
+        for base, dirs, names in os.walk(self.root):
+            dirs[:] = [d for d in sorted(dirs) if d != "__pycache__"]
+            for name in sorted(names):
+                rel = os.path.relpath(os.path.join(base, name), self.root)
+                rows.append(rel.replace("\\", "/"))
+        return rows[:50]
+
     def _exec(self, argv, timeout: int, shell: bool = False) -> str:
+        # ключи модели не должны попадать в команды агента (env/set их покажет)
+        env = dict(os.environ, **self.env) if self.env else dict(os.environ)
+        for key in ("SOLVER_API_KEY", "OPENAI_API_KEY", "SOLVER_API_URL"):
+            env.pop(key, None)
         try:
             proc = subprocess.Popen(argv, cwd=self.root, shell=shell,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True,
                                     encoding="utf-8", errors="replace",
-                                    env=dict(os.environ, **self.env)
-                                    if self.env else None)
+                                    env=env)
         except OSError as exc:
             return f"OSERROR: {exc}"
         end = time.time() + timeout
@@ -173,13 +195,23 @@ class Workspace:
         return self._exec(argv, timeout)
 
 
-SYSTEM = """Ты автономный решатель CTF-задач.
+SYSTEM = """Ты автономный решатель CTF-задач. Ты работаешь руками: файлы, терминал,
+свой код — и сам понимаешь, что за задача, а не действуешь по шаблону
+«тип файла → команда».
 
-Рабочая папка: файлы задачи уже лежат в ней. Доступные действия:
+Сначала ПОЙМИ задачу (это важнее первого действия):
+  1) что дано: файлы, числа, текст, сервис — и что в них необычного;
+  2) что неизвестно: ключ, пароль, алгоритм, формат, протокол;
+  3) 2-3 гипотезы, что это может быть, с грубой оценкой;
+  4) самый дешёвый тест, который их различает.
+После каждого шага обновляй гипотезы. Если два раза не вышло — меняй
+гипотезу, а не команду.
+
+Доступные действия:
   {"action":"list"}
   {"action":"read","path":"файл"}
   {"action":"write","path":"sol.py","content":"..."}
-  {"action":"tool","name":"rsa","args":["auto","keys.txt"]}
+  {"action":"tool","name":"facts","args":["файл"]}
   {"action":"tool","name":"index"}
   {"action":"bash","cmd":"команда"}
   {"action":"py","code":"python-код"}
@@ -187,28 +219,21 @@ SYSTEM = """Ты автономный решатель CTF-задач.
   {"action":"answer","status":"not_found","text":"почему не вышло"}
   {"action":"answer","status":"need_service","text":"host:port"}
 
-В проекте есть готовые инструменты (тот же toolbox.py). Сначала смотри список
-через {"action":"tool","name":"index"} — там всё: rsa, enc, xor, hash, triage,
-carve, chain, ws, audio, pcap, dns, jwt, lsb, zip, sqlite, elf и другие.
-Если задача про RSA/кодировки/архивы/картинки/трафик — СНАЧАЛА вызывай готовый
-инструмент, а свой скрипт пиши только если готового нет или он не справился.
-Пример: {"action":"tool","name":"rsa","args":["auto","chall.txt"]}.
+{"action":"tool","name":"index"} — список инструментов (rsa, enc, xor, hash,
+triage, facts, carve, chain, ws, lsb, audio, pcap, dns, jwt, zip, sqlite, elf
+и другие). Факты о файлах уже посчитаны и даны ниже; facts можно звать ещё.
 
-Типовые заходы (не изобретай своё, если есть готовое):
-  * файл незнакомого типа → {"action":"tool","name":"triage","args":["файл"]};
-  * RTF/DOCX/PDF/ZIP с текстом → {"action":"tool","name":"text","args":["файл"]};
-  * подозрение на пробелы/невидимые символы → {"action":"tool","name":"ws",
-    "args":["файл"]} (режим auto сам перебирает схемы: таб/пробел, 5-8 бит,
-    сдвиги, реверс, длины серий); в конце печатается блок [SNOW] — схема
-    «N пробелов + таб» = 3 бита на блок. Если данные не текст, а в условии
-    есть пароль — {"action":"tool","name":"ws","args":["файл","--password",
-    "ПАРОЛЬ"]};
-  * шифротекст + текстовый словарь → {"action":"tool","name":"classical",
-    "args":["vigdict","--text","ШИФР","--words","words.txt"]};
-    если словарь рядом есть — это ОБЯЗАТЕЛЬНЫЙ первый шаг, свой скрипт для
-    Виженера не пиши (перебор алфавитов и рейтинг уже внутри инструмента);
-  * классический шифр без ключа → {"action":"tool","name":"classical",
-    "args":["vigenere-crack","--text","ШИФР"]} или autocrack.
+Инструменты — примитивы, а не сценарий. Применяй их под свою гипотезу:
+  * если в блоке «Факты о файлах» уже виден флаг — верни его сразу: это вывод
+    инструмента, а не догадка; свой код для того же не пиши;
+  * числа n, e, c (даже e=3 или c в другом файле) — это RSA, но атака
+    зависит от данных: малая e, общий простой, близкие p и q, Wiener, CRT.
+    Смотри разрядности в фактах и выбирай метод; не ограничивайся одним;
+  * стего — не только «пробелы»: палитра, теги, порядок каналов, позиции,
+    невидимые символы. Сначала спроси facts, потом выбирай;
+  * документы и архивы — текстовый слой, метаданные, ревизии, имена;
+  * трафик — потоки по seq, DNS-метки, тела HTTP;
+  * классика — частоты, словари, известный текст (но см. правило о флагах).
 
 Правила (обязательны):
   * Отвечай РОВНО одним JSON-объектом. Никакого текста вокруг, никакого
@@ -223,14 +248,17 @@ carve, chain, ws, audio, pcap, dns, jwt, lsb, zip, sqlite, elf и другие.
   * Не используй echo в терминале — ни для вывода текста, ни для записи файлов,
     тем более с русским текстом. Для файлов есть write, для проверок — py.
     Терминал нужен только для запуска программ и утилит.
+  * Флаг из подгонки ключа под префикс (xorknown/chain/xor) — только кандидат.
+    Прежде чем вернуть, проверь его независимо: другим методом, повторным
+    извлечением, осмысленным текстом вокруг. Флаг, которого нет в данных,
+    хуже, чем «не найдено».
+  * Флаг возвращай только когда он реально был в выводе команды.
   * Если флага нет — НЕ выдумывай его. Верни answer/not_found с короткой
     причиной (что проверил и чего не хватило).
-  * Флаг возвращай только когда он реально был в выводе команды.
 
-Экономия шагов: сначала list, потом один-два точных шага, а не перебор всего.
+Экономия шагов: list один раз, дальше точные проверки гипотез.
 
-Необязательное поле "thought" — короткая заметка, зачем делаешь шаг
-(например {"thought":"проверю заголовок","action":"bash","cmd":"xxd -l 64 f"}).
+Необязательное поле "thought" — короткая заметка, зачем делаешь шаг.
 """
 
 
@@ -353,7 +381,8 @@ def _file_hints(root: str) -> str:
                          '{"action":"tool","name":"triage","args":["' + n + '"]}')
     if not hints:
         return ""
-    return "\n\nЧто видно по файлам (проверено заранее):\n- " + "\n- ".join(hints)
+    return ("\n\nВозможные зацепки (не приказ — проверь гипотезой):\n- "
+            + "\n- ".join(hints))
 
 
 def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
@@ -363,12 +392,23 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
     """Генератор событий. Останавливается на флаге/ответе/лимитах."""
     deadline = deadline or (time.time() + 600)
     listing = ws.tree()
+    facts = []
+    try:
+        for rel in ws.files()[:3]:
+            out = ws.toolbox("facts", [rel], timeout=20)
+            idx = out.find("[facts]")
+            if idx >= 0:
+                facts.append(out[idx:idx + 1800].strip())
+    except Exception:
+        facts = []
+    fact_block = ("\n\nФакты о файлах (посчитано заранее, это не приказ):\n"
+                  + "\n\n".join(facts)) if facts else ""
     hints = _file_hints(ws.root)
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content":
             f"Условие задачи:\n{task_text or '(не задано)'}\n\n"
-            f"Файлы в рабочей папке:\n{listing}{hints}"},
+            f"Файлы в рабочей папке:\n{listing}{fact_block}{hints}"},
     ]
     if reasoning:
         messages.append({"role": "user", "content":

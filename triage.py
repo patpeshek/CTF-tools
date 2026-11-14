@@ -56,6 +56,9 @@ SIGS = [
     (b"RIFF", "RIFF (WAV/AVI/WEBP)"),
     (b"ID3", "MP3 (ID3)"),
     (b"OggS", "OGG"),
+    (b"\xd4\xc3\xb2\xa1", "PCAP"),
+    (b"\xa1\xb2\xc3\xd4", "PCAP"),
+    (b"\x0a\x0d\x0d\x0a", "PCAPNG"),
     (b"\x00\x00\x01\x00", "ICO"),
     (b"LUKS\xba\xbe", "LUKS"),
     (b"{\\rtf", "RTF"),
@@ -71,8 +74,11 @@ def sniff(path: str) -> str:
     with open(path, "rb") as f:
         head = f.read(512)
     for sig, name in SIGS:
-        if head.startswith(sig) or (len(sig) > 2 and sig in head[:64]):
+        if head.startswith(sig):
             return name
+    # TAR держит "ustar" не в начале, а на смещении 257
+    if b"ustar" in head:
+        return "TAR"
     return "unknown"
 
 

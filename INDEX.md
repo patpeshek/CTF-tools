@@ -18,6 +18,7 @@
 | `bench` | скорость важных путей (LLL, поиск флагов) и сравнение с baseline; `--strict` — код 1 при регрессии | `python toolbox.py bench --only lll_27` |
 | `all` | универсальный перебор: файлы/папки/строки, known-plaintext XOR по префиксу флага | `python toolbox.py all dump.bin` |
 | `triage` | первый прогон: тип, флаги, strings, base64, zip | `python toolbox.py triage dump/` |
+| `facts` | факты о файле: тип, энтропия, числа с разрядностью, архивы, палитра, PDF-ревизии, SQLite, UTF-16 строки | `python toolbox.py facts file.bin` |
 | `text` | вытащить текст из DOCX/PDF/ZIP | `python toolbox.py text doc.docx --out doc.txt` |
 | `enc` | base64/32/36/85/ascii85/92/100/z85/hex/url/rot13/47/18/NFKC/octal/MIME; **все кодеки** (utf-16/32, cp1251/866, koi8, latin-1) | `python toolbox.py enc "Q1RGe2ZsYWd9"` / `--file utf16.txt` |
 

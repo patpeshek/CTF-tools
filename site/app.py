@@ -83,6 +83,14 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def child_env(**extra) -> dict:
+    """Окружение для дочерних процессов: без ключей модели."""
+    env = dict(os.environ, **extra)
+    for key in ("SOLVER_API_KEY", "OPENAI_API_KEY", "SOLVER_API_URL"):
+        env.pop(key, None)
+    return env
+
+
 def load_history() -> list:
     try:
         with open(HISTORY, encoding="utf-8") as fh:
@@ -152,7 +160,7 @@ def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None,
         cmd += ["--desc-file", desc_file]
     for p in flag_prefixes(prefix):
         cmd += ["--flag-prefix", p]
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    env = child_env(PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     yield {"event": "runner_note", "note": "прогон инструментов кита"}
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -212,7 +220,8 @@ def _agent_events(job: dict):
     if not (engine and model_ready()):
         return
     ws = engine.Workspace(job["work"],
-                          cancel=lambda: job.get("stop", False),
+                          cancel=lambda: job.get("stop", False)
+                          or job.get("finished", False),
                           env={"FLAG_PREFIXES":
                                ",".join(flag_prefixes(job.get("prefix")))})
     task = job["task"] or ""
@@ -318,7 +327,8 @@ def worker(job_id: str):
                 return
             for ev in toolkit_events(single, job["budget"], job["deep"],
                                      job["prefix"], desc_file=desc_path,
-                                     stop_check=lambda: job.get("stop")):
+                                     stop_check=lambda: job.get("stop")
+                                     or job.get("finished")):
                 out.put(("kit", ev))
         except Exception as exc:  # pragma: no cover
             out.put(("kit", {"event": "runner_note",
@@ -357,11 +367,13 @@ def worker(job_id: str):
             candidate = str(ev.get("flag") or "")
             if not valid_flag(candidate):
                 _emit(job, {"event": "runner_note",
-                            "note": "движок вернул мусор вместо флага — отбросил"})
+                            "note": "движок вернул не флаг, отбросил: "
+                                    + repr(candidate)[:160]})
                 continue
         _emit(job, ev)
         if ev.get("event") == "flag" and ev.get("flag"):
             flag = ev["flag"]
+            job["finished"] = True
             break
 
     job["flag"] = flag
@@ -595,6 +607,7 @@ class Handler(BaseHTTPRequestHandler):
                 "thoughts": bool(data.get("thoughts")),
                 "prefix": (data.get("prefix") or "").strip()[:40] or None,
                 "q": queue.Queue(), "flag": None, "started": True,
+                "finished": False,
                 "stop": False, "status": "new", "created": time.time(),
                 "uploaded": uploaded, "input_hash": input_hash,
                 "reused": reused,
@@ -624,7 +637,7 @@ class Handler(BaseHTTPRequestHandler):
             proc = subprocess.run(cmd, cwd=job["work"], shell=True,
                                   capture_output=True, text=True,
                                   encoding="utf-8", errors="replace",
-                                  timeout=60)
+                                  timeout=60, env=child_env())
             out = ((proc.stdout or "") + (proc.stderr or ""))[:20000]
             self._json(200, {"rc": proc.returncode, "out": out,
                              "seconds": round(time.time() - started, 2)})

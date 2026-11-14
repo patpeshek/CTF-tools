@@ -17,7 +17,7 @@ import urllib.parse
 
 FLAG_CONTENT = r"[^\x00-\x1f{}]{1,300}"
 DEFAULT_PREFIXES = ["ctf", "flag", "nto", "innopolis", "innoctf", "vosh", "npc",
-                    "uaz"]
+                    "uaz", "htb"]
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flags.json")
 
 

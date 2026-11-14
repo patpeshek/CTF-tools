@@ -43,6 +43,25 @@ import toolbox  # noqa: E402
 
 STUB_WORDS = ("missing", "placeholder", "dummy", "fake")
 
+# Инструменты, которые МОГУТ построить флаг подгонкой под префикс
+# (known-plaintext XOR, цепочки с XOR-узлом, autocrack). Их находка —
+# кандидат, а не флаг: без подтверждения она не останавливает прогон.
+WEAK_TOOLS = {"xorknown", "chain", "autocrack"}
+
+
+def flag_structured(flag: str) -> bool:
+    """Похож ли флаг на настоящий: только буквы/цифры/подчёркивания и есть
+    цифра или подчёркивание (либо он длинный). Отсекает 'uaz{atust}' и
+    'Ctf{fduek!ulbnu}' — типичные продукты подгонки ключа."""
+    if "{" not in flag or not flag.endswith("}"):
+        return False
+    inner = flag[flag.find("{") + 1:-1]
+    if not (5 <= len(inner) <= 200):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9_]+", inner):
+        return False
+    return bool(re.search(r"[0-9_]", inner)) or len(inner) >= 8
+
 
 def real_flags(data: bytes):
     found = common.find_flags(data)
@@ -121,6 +140,7 @@ class Runner:
         self.outputs = []
         self.grabs = []
         self.notes = []
+        self.weak = []
         self.jobs = max(1, int(jobs))
         self._lock = threading.Lock()
         self.stop = threading.Event()
@@ -278,6 +298,18 @@ class Runner:
                 self._say("     " + line[:200])
         if flags:
             uniq = list(dict.fromkeys(flags))
+            if name in WEAK_TOOLS:
+                strong = [f for f in uniq if flag_structured(f)]
+                weak = [f for f in uniq if f not in strong]
+                if weak:
+                    with self._lock:
+                        self.weak.extend(weak)
+                    self._say("     [?] кандидат от подгонки (не подтверждён): "
+                              + " | ".join(weak[:4]))
+                uniq = strong
+            if not uniq:
+                self._record(rec)
+                return None
             self._say(f"[!!!] ФЛАГ на шаге «{name}»: {' | '.join(uniq)}")
             rec["flags"] = uniq
             self._record(rec)
@@ -553,6 +585,193 @@ def unpack_one(path):
     return out
 
 
+def wordlist_from_sibling(path):
+    """Слова из соседнего текста (письмо/записка) — как словарь для ZIP."""
+    d = os.path.dirname(path) or "."
+    try:
+        names = sorted(os.listdir(d))[:200]
+    except OSError:
+        return None
+    me = os.path.abspath(path)
+    for name in names:
+        p2 = os.path.join(d, name)
+        if os.path.abspath(p2) == me or not os.path.isfile(p2):
+            continue
+        if not re.search(r"\.(txt|md|log|eml|msg|rtf)$", name, re.I):
+            continue
+        try:
+            if os.path.getsize(p2) > 16384:
+                continue
+            data = open(p2, "rb").read()
+        except OSError:
+            continue
+        if not data or common.printable_ratio(data) < 0.9:
+            continue
+        text = data.decode("utf-8", "replace")
+        words = re.findall(r"[A-Za-z][A-Za-z0-9_]{2,24}", text)
+        if len(words) < 3:
+            continue
+        uniq = list(dict.fromkeys([w.lower() for w in words] + words))[:500]
+        out = os.path.join(tempfile.gettempdir(), "solve_zip")
+        try:
+            os.makedirs(out, exist_ok=True)
+            dst = os.path.join(out, "words_" + os.path.basename(p2) + ".txt")
+            with open(dst, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("\n".join(uniq) + "\n")
+        except OSError:
+            return None
+        return dst
+    return None
+
+
+def crib_sibling(path):
+    """Файл рядом, похожий на известный открытый текст для two-time pad."""
+    d = os.path.dirname(path) or "."
+    try:
+        names = sorted(os.listdir(d))[:200]
+    except OSError:
+        return None
+    me = os.path.abspath(path)
+    for name in names:
+        p2 = os.path.join(d, name)
+        if os.path.abspath(p2) == me or not os.path.isfile(p2):
+            continue
+        if not re.search(r"(known|plain|crib|p1|plaintext)", name, re.I):
+            continue
+        try:
+            if os.path.getsize(p2) > 8192:
+                continue
+            data = open(p2, "rb").read()
+        except OSError:
+            continue
+        if data and common.printable_ratio(data) >= 0.95:
+            return p2
+    return None
+
+
+def rsa_cipher_sibling(path):
+    """Файл рядом, похожий на шифротекст c: метка c=.../ciphertext: или
+    единственное большое число. Без него `rsa auto pub.pem` не знает, что
+    расшифровывать."""
+    d = os.path.dirname(path) or "."
+    try:
+        names = sorted(os.listdir(d))[:200]
+    except OSError:
+        return None
+    me = os.path.abspath(path)
+    for name in names:
+        p2 = os.path.join(d, name)
+        if os.path.abspath(p2) == me or not os.path.isfile(p2):
+            continue
+        try:
+            size = os.path.getsize(p2)
+            if size == 0 or size > 2_000_000:
+                continue
+            raw = open(p2, "rb").read()
+        except OSError:
+            continue
+        text = raw.decode("utf-8", "replace")
+        if re.search(r"(?i)\b(?:c|cipher|ct|ciphertext|enc)\s*[=:]", text):
+            return p2
+        nums = re.findall(r"\d{20,}", text)
+        if len(nums) == 1 and len(text.strip()) <= 8192:
+            return p2
+        if size <= 512 and not nums and common.printable_ratio(raw) < 0.5:
+            return p2
+    return None
+
+
+def rsa_shared_setup(folder):
+    """Два+ ключа с большими n и c рядом → подготовить `rsa shared`.
+
+    Общий простой ищется между всеми n; c может быть decimal или hex
+    (в том числе `c(hex) = ...`).
+    """
+    mods, cipher = [], None
+    try:
+        names = sorted(os.listdir(folder))[:200]
+    except OSError:
+        return None
+    for name in names:
+        p = os.path.join(folder, name)
+        try:
+            if not os.path.isfile(p) or os.path.getsize(p) > 2_000_000:
+                continue
+            text = open(p, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        m = re.search(r"(?im)^\s*n\s*[=:]\s*(\d{40,})", text)
+        if m:
+            mods.append((name, int(m.group(1))))
+        if cipher is None:
+            mc = re.search(
+                r"(?im)^\s*c(?:ipher(?:text)?)?(?:\(hex\))?\s*[=:]\s*"
+                r"(0x[0-9a-fA-F]+|[0-9a-fA-F]{32,}|\d{20,})", text)
+            if mc:
+                raw = mc.group(1)
+                try:
+                    if raw.lower().startswith("0x"):
+                        cipher = int(raw, 16)
+                    elif raw.isdigit():
+                        cipher = int(raw)
+                    else:
+                        cipher = int(raw, 16)
+                except ValueError:
+                    cipher = None
+    if len(mods) < 2 or cipher is None:
+        return None
+    out = os.path.join(tempfile.gettempdir(), "solve_rsa")
+    try:
+        os.makedirs(out, exist_ok=True)
+        path = os.path.join(out, "moduli.txt")
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            for name, n in mods:
+                fh.write(f"{name}: {n}\n")
+    except OSError:
+        return None
+    return {"moduli": path, "target": mods[0][0], "cipher": str(cipher)}
+
+
+def rsa_broadcast_setup(folder):
+    """Три+ пары n/c с одним маленьким e → подготовить `rsa broadcast`."""
+    pairs, e = [], None
+    try:
+        names = sorted(os.listdir(folder))[:200]
+    except OSError:
+        return None
+    for name in names:
+        p = os.path.join(folder, name)
+        try:
+            if not os.path.isfile(p) or os.path.getsize(p) > 2_000_000:
+                continue
+            text = open(p, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        mn = re.search(r"(?im)^\s*n\s*[=:]\s*(\d{40,})", text)
+        mc = re.search(r"(?im)^\s*c\s*[=:]\s*(\d{20,})", text)
+        if mn and mc:
+            pairs.append((int(mn.group(1)), int(mc.group(1))))
+        if e is None:
+            me = re.search(r"(?im)\be\s*[=:]\s*(\d{1,6})\b", text)
+            if me:
+                e = int(me.group(1))
+    if len(pairs) < 3:
+        return None
+    e = e or 3
+    if len(pairs) < e:
+        return None
+    out = os.path.join(tempfile.gettempdir(), "solve_rsa")
+    try:
+        os.makedirs(out, exist_ok=True)
+        path = os.path.join(out, "pairs.txt")
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            for n, c in pairs:
+                fh.write(f"{n}:{c}\n")
+    except OSError:
+        return None
+    return {"file": path, "e": e}
+
+
 def near_dup_text(path, sample=200_000):
     """Много строк и мало уникальных? Значит, задача «одна строка отличается»."""
     try:
@@ -645,6 +864,9 @@ def steps_for(path, deep=False, depth=0):
             add(("admin", [path], "дамп ФС/конфигов: sudo/SUID/cron/секреты, логи, кусты, ВМ", 120))
         return steps, "DIR"
 
+    # «глаза»: тип, строки (в т.ч. UTF-16), числа, архив/палитра/PDF-ревизии
+    add(("facts", [path], "факты о файле: тип, строки, числа", 25))
+
     # Архивы: flag.wav.xz, traffic.pcapng.xz, dump.tar.bz2. Распаковываем
     # и строим план уже для внутреннего файла — иначе solve видит «unknown».
     akind = _archive_kind(path, data) if data else None
@@ -670,6 +892,20 @@ def steps_for(path, deep=False, depth=0):
                            os.path.join(tempfile.gettempdir(), "solve_zip", os.path.basename(path))],
              "бит шифрования без шифрования", 30))
         add(("ziptricks", ["info", path], "записи, флаги шифрования, CRC", 30))
+        try:
+            import zipfile as _zf
+            with _zf.ZipFile(path) as _z:
+                _enc = any(i.flag_bits & 1 for i in _z.infolist())
+        except Exception:
+            _enc = False
+        if _enc:
+            _wl = wordlist_from_sibling(path)
+            if _wl:
+                add(("ziptricks", ["password", path, "--wordlist", _wl,
+                                   "--out", os.path.join(tempfile.gettempdir(),
+                                                         "solve_zip",
+                                                         os.path.basename(path))],
+                     "ZIP: пароль — слова из соседнего текста", 60))
         try:
             import zipfile as _zf
             with _zf.ZipFile(path) as _z:
@@ -860,6 +1096,25 @@ def steps_for(path, deep=False, depth=0):
             for _nm, _inp in sibling_texts(path):
                 add(("esolang", [path, "--input", _inp],
                      f"эзотерика с входом из {_nm}", 40))
+            # two-time pad: c1/c2 в логе + известный открытый текст рядом
+            if (re.search(r"(?im)^\s*c1\s*[=:]", text)
+                    and re.search(r"(?im)^\s*c2\s*[=:]", text)):
+                _crib = crib_sibling(path)
+                _oargs = ["--log", path] + (["--crib-file", _crib] if _crib else [])
+                add(("otp", _oargs, "two-time pad: c1/c2"
+                     + (f" и {os.path.basename(_crib)}" if _crib else ""), 40))
+            # RSA: n/e/c могут быть в разных файлах и разной длины (e=3 — одна
+            # цифра), поэтому смотрим на большие числа и метки n=/c=, а c
+            # подхватываем из соседнего файла.
+            _big = [n for n in re.findall(r"\d{20,}", text) if len(n) >= 40]
+            _labeled = re.search(
+                r"(?im)^\s*(?:n|e|c|p|q|d|modulus|ciphertext)\s*[=:]", text)
+            if _big or (_labeled and re.search(r"\d{10,}", text)):
+                _sib = rsa_cipher_sibling(path)
+                add(("rsa", ["auto", path] + (["--cipher", _sib] if _sib else []),
+                     "RSA: ключ/числа, все атаки"
+                     + (f", c={os.path.basename(_sib)}" if _sib else ""), 70))
+                add(("all", [path, "--time", "25"], "остальные шифры/хеши", 45))
             add(("enc", ["--file", path], "кодировки строкой", 20))
             if len(data) <= 65536:
                 add(("chain", ["--file", path, "--time", "20"],
@@ -873,9 +1128,6 @@ def steps_for(path, deep=False, depth=0):
                 if len(_ints) >= 624:
                     add(("prngstate", ["mt", path], "624+ 32-битных чисел: клон MT19937", 30))
                 add(("prngstate", ["lcg", path], "ряд чисел: параметры LCG", 30))
-            if len(re.findall(r"\d{10,}", text)) >= 2:
-                add(("rsa", ["auto", path], "RSA: числа из текста, все атаки", 60))
-                add(("all", [path, "--time", "25"], "остальные шифры/хеши", 45))
             hashes = list(dict.fromkeys(re.findall(r"\b[0-9a-fA-F]{32}\b|\b[0-9a-fA-F]{40}\b|"
                                                    r"\b[0-9a-fA-F]{64}\b", text)))[:3]
             local_wl = None
@@ -1017,6 +1269,21 @@ def solve_file(target, runner, deep, plan_only, statement=None):
                 return flag
 
     if os.path.isdir(target):
+        bc = rsa_broadcast_setup(target)
+        if bc:
+            flag = runner.run("rsa", ["broadcast", "--e", str(bc["e"]),
+                                      "--file", bc["file"]],
+                              "RSA: Håstad broadcast (CRT)", 60)
+            if flag:
+                return flag
+        shared = rsa_shared_setup(target)
+        if shared:
+            flag = runner.run("rsa", ["shared", "--moduli", shared["moduli"],
+                                      "--target", shared["target"], "--e", "65537",
+                                      "--cipher", shared["cipher"]],
+                              "RSA: общий простой у двух ключей", 60)
+            if flag:
+                return flag
         picked = toolbox._pick_files(target)
         if picked:
             print(f"[i] в папке {len(picked)} интересных файлов, разбираю "
@@ -1029,7 +1296,7 @@ def solve_file(target, runner, deep, plan_only, statement=None):
                 sub, _ = steps_for(p, deep=deep)
                 sub = order_steps(sub, statement)
                 seq = [(n2, a2, f"{os.path.basename(p)}: {w2}", t2)
-                       for n2, a2, w2, t2 in sub[:6] if n2 != "carve"]
+                       for n2, a2, w2, t2 in sub[:10] if n2 != "carve"]
                 return runner.run_serial(seq)
 
             with ThreadPoolExecutor(max_workers=runner.jobs) as ex:
@@ -1049,7 +1316,7 @@ def solve_file(target, runner, deep, plan_only, statement=None):
                 print(f"--- {k}: {os.path.basename(p)}")
                 sub_steps, _ = steps_for(p, deep=deep)
                 sub_steps = order_steps(sub_steps, statement)
-                for n2, a2, w2, t2 in sub_steps[:6]:
+                for n2, a2, w2, t2 in sub_steps[:10]:
                     if n2 == "carve":
                         continue
                     flag = runner.run(n2, a2, f"{os.path.basename(p)}: {w2}", t2)
@@ -1425,6 +1692,14 @@ def statement_steps(st, target):
             data = b""
         text = read_text(target) if data and common.printable_ratio(data[:4096]) >= 0.85 else ""
         for k in keys:
+            if data and data[:2] == b"PK":
+                _wl = statement_wordlist(st)
+                _zargs = ["password", target, "--password", k,
+                          "--out", os.path.join(tempfile.gettempdir(), "solve_zip")]
+                if _wl:
+                    _zargs += ["--wordlist", _wl]
+                extra.append(("ziptricks", _zargs,
+                              "пароль из условия — ZIP", 60))
             if data and (common.is_rtf(data) or text):
                 extra.append(("ws", [target, "--mode", "snow", "--password", k],
                               "пароль из условия — SNOW (snow -p)", 20))
@@ -1619,6 +1894,10 @@ def main():
 
     if not flag and not suggest:
         print("\n[-] флаг не найден за отведённое время.")
+        if runner.weak:
+            print("[i] кандидаты от подгонки (НЕ подтверждены, за флаг не считаю):")
+            for w in dict.fromkeys(runner.weak):
+                print("   ", w)
         if runner.grabs:
             print("[i] зацепки (не флаг, но полезно):")
             for g in dict.fromkeys(runner.grabs):
@@ -1646,6 +1925,7 @@ def main():
         "flag": flag,
         "flags": flags,
         "leads": runner.leads,
+        "weak": runner.weak,
         "stubs": runner.notes,
         "suggest": [cmd for _, cmd in suggest],
     })

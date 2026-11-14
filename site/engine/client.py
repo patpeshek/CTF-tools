@@ -50,6 +50,8 @@ def settings() -> dict:
 
 
 def ready() -> bool:
+    if os.environ.get("SOLVER_OFF") == "1":
+        return False
     return all(settings().values())
 
 

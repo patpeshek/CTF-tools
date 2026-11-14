@@ -2006,7 +2006,10 @@ def main():
     ap.add_argument("--jobs", type=int, default=4, help="сколько шагов считать параллельно")
     ap.add_argument("--nest", type=int, default=0,
                     help="сколько вложенных архивов разворачивать (по умолчанию 5)")
-    ap.add_argument("--deep", action="store_true", help="включить дорогие шаги")
+    ap.add_argument("--deep", action="store_true", default=True,
+                    help="дорогие шаги (по умолчанию включены)")
+    ap.add_argument("--shallow", action="store_true",
+                    help="только дешёвые шаги")
     ap.add_argument("--verbose", action="store_true", help="печатать вывод каждого шага")
     ap.add_argument("--plan", action="store_true", help="только показать план")
     ap.add_argument("--log", help="сохранить полный вывод шагов")
@@ -2034,17 +2037,19 @@ def main():
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
-    if args.smart:
-        # умный режим по умолчанию глубокий: роутер уже расставил приоритеты,
-        # экономить на шагах смысла нет
-        args.deep = True
+    if args.shallow:
+        args.deep = False
     if args.nest:
         global MAX_NEST
         MAX_NEST = max(1, args.nest)
     if args.smart_only:
         args.smart = True
+    # двойной прогон — только для живого терминала. Если stdout это пайп
+    # (selftest, сайт, любые скрипты), два вложенных процесса вешают друг
+    # друга на пайпах: проверено на тесте "solve.py jwt step".
     plain_run = (args.smart or args.rules_only or args.plan
-                 or args.json or args.events or not args.target)
+                 or args.json or args.events or not args.target
+                 or not sys.stdout.isatty())
     if not plain_run:
         here = os.path.dirname(os.path.abspath(__file__))
         cmd = [sys.executable, os.path.join(here, "smart_solve.py"), args.target,

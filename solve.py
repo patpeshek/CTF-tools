@@ -58,7 +58,7 @@ def flag_structured(flag: str) -> bool:
     inner = flag[flag.find("{") + 1:-1]
     if not (5 <= len(inner) <= 200):
         return False
-    if not re.fullmatch(r"[A-Za-z0-9_]+", inner):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", inner):
         return False
     return bool(re.search(r"[0-9_]", inner)) or len(inner) >= 8
 
@@ -702,7 +702,10 @@ def rsa_shared_setup(folder):
             continue
         m = re.search(r"(?im)^\s*n\s*[=:]\s*(\d{40,})", text)
         if m:
-            mods.append((name, int(m.group(1))))
+            try:
+                mods.append((name, int(m.group(1))))
+            except ValueError:
+                pass
         if cipher is None:
             mc = re.search(
                 r"(?im)^\s*c(?:ipher(?:text)?)?(?:\(hex\))?\s*[=:]\s*"
@@ -750,7 +753,10 @@ def rsa_broadcast_setup(folder):
         mn = re.search(r"(?im)^\s*n\s*[=:]\s*(\d{40,})", text)
         mc = re.search(r"(?im)^\s*c\s*[=:]\s*(\d{20,})", text)
         if mn and mc:
-            pairs.append((int(mn.group(1)), int(mc.group(1))))
+            try:
+                pairs.append((int(mn.group(1)), int(mc.group(1))))
+            except ValueError:
+                pass
         if e is None:
             me = re.search(r"(?im)\be\s*[=:]\s*(\d{1,6})\b", text)
             if me:

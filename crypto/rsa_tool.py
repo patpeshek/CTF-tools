@@ -893,27 +893,7 @@ def cmd_auto(args):
             for c in cs:
                 emit(decrypt_with(sp, n // sp, e, c), "smallq -> decrypt")
 
-    # 4. факторизация n (Ферма полезна и на 1024-битных «близких» p,q)
-    if n and n.bit_length() <= 4096:
-        f = None
-        import time as _t
-        t0 = _t.time()
-        f = fermat_factor(n, args.fermat)
-        how = "Ферма"
-        if not f:
-            p = pollard_pm1(n)
-            if p:
-                f, how = (p, n // p), "p-1"
-        if not f:
-            p = pollard_rho(n, args.rho)
-            if p:
-                f, how = (p, n // p), "rho"
-        if f:
-            print(f"[+] факторизация ({how}): {f[0].bit_length()}/{f[1].bit_length()} бит")
-            for c in cs:
-                emit(decrypt_with(f[0], f[1], e, c), f"{how} -> decrypt")
-
-    # 5. Винер (малый d)
+    # 4. Винер (малый d) — дёшево, поэтому до факторизации
     if n and labeled.get("e"):
         w = wiener_attack(n, e)
         if w:
@@ -921,6 +901,25 @@ def cmd_auto(args):
             print(f"[+] Винер: d={d.bit_length()} бит")
             for c in cs:
                 emit(decrypt_with(p, q2, e, c), "Wiener -> decrypt")
+
+    # 5. факторизация n: Ферма — для близких p,q (до 2048 бит);
+    # p-1/rho ищут только МАЛЫЕ множители, на больших n это пустой расход
+    if n and n.bit_length() <= 2048:
+        f = None
+        f = fermat_factor(n, args.fermat)
+        how = "Ферма"
+        if not f and n.bit_length() <= 1024:
+            p = pollard_pm1(n)
+            if p:
+                f, how = (p, n // p), "p-1"
+        if not f and n.bit_length() <= 512:
+            p = pollard_rho(n, args.rho)
+            if p:
+                f, how = (p, n // p), "rho"
+        if f:
+            print(f"[+] факторизация ({how}): {f[0].bit_length()}/{f[1].bit_length()} бит")
+            for c in cs:
+                emit(decrypt_with(f[0], f[1], e, c), f"{how} -> decrypt")
 
     # 6. если p/q даны явно
     p, q = labeled.get("p"), labeled.get("q")

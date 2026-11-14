@@ -126,9 +126,9 @@ class Workspace:
         return rows[:50]
 
     def _exec(self, argv, timeout: int, shell: bool = False) -> str:
-        # ключи модели не должны попадать в команды агента (env/set их покажет)
+        # ключи доступа не должны попадать в команды агента (env/set их покажет)
         env = dict(os.environ, **self.env) if self.env else dict(os.environ)
-        for key in ("SOLVER_API_KEY", "OPENAI_API_KEY", "SOLVER_API_URL"):
+        for key in ("SOLVER_API_KEY", "SOLVER_API_URL"):
             env.pop(key, None)
         try:
             proc = subprocess.Popen(argv, cwd=self.root, shell=shell,
@@ -425,7 +425,7 @@ def run(ws: Workspace, task_text: str, *, max_steps: int = 14,
             reply = client.chat(messages, model=model, temperature=0.15,
                                 max_tokens=1800, json_mode=True)
         except Exception as exc:
-            yield {"event": "agent_stop", "reason": f"модель недоступна: {exc}"}
+            yield {"event": "agent_stop", "reason": f"решатель недоступен: {exc}"}
             return
         action = _parse_action(reply)
         if not action:

@@ -10,7 +10,7 @@
   GET  /api/files/<id>      список файлов задачи
   GET  /api/file/<id>?path= содержимое файла
   POST /api/stop/<id>       остановить
-  GET  /health              {ok, sandbox, model}
+  GET  /health              {ok, sandbox}
   GET  /                    index.html
 
 Только стандартная библиотека.
@@ -84,9 +84,9 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def child_env(**extra) -> dict:
-    """Окружение для дочерних процессов: без ключей модели."""
+    """Окружение для дочерних процессов: без ключей доступа."""
     env = dict(os.environ, **extra)
-    for key in ("SOLVER_API_KEY", "OPENAI_API_KEY", "SOLVER_API_URL"):
+    for key in ("SOLVER_API_KEY", "SOLVER_API_URL"):
         env.pop(key, None)
     return env
 
@@ -234,7 +234,8 @@ def _agent_events(job: dict):
                           deadline=time.time() + max(120, job["budget"] * 3),
                           reasoning=job.get("reasoning", False),
                           show_thoughts=job.get("thoughts", False),
-                          cancel=lambda: job.get("stop", False))
+                          cancel=lambda: job.get("stop", False)
+                          or job.get("finished", False))
 
 
 # ---------------------------------------------------------------------- worker
@@ -452,8 +453,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, "text/plain; charset=utf-8", b"no index.html")
             return
         if path == "/health":
-            self._json(200, {"ok": True, "sandbox": docker_on(),
-                             "model": model_ready()})
+            self._json(200, {"ok": True, "sandbox": docker_on()})
             return
         if path.startswith("/api/events/"):
             self._events(path.rsplit("/", 1)[-1])

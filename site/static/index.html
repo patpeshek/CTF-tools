@@ -188,8 +188,7 @@ const ROLES = ["", "ciphertext", "plaintext", "key", "keylen", "nonce", "iv",
 let files = [], jobId = null, es = null, lines = {};
 
 fetch("/health").then(r => r.json()).then(d => {
-  const base = d.sandbox ? "песочница" : "локально";
-  $("#mode").textContent = base + (d.model ? " · ИИ" : " · без ИИ");
+  $("#mode").textContent = d.sandbox ? "песочница" : "локально";
 }).catch(() => {});
 
 /* ---------- файлы ---------- */

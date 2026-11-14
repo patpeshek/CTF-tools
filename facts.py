@@ -106,14 +106,20 @@ def numbers(text: str) -> dict:
         out["labeled"].append({"label": m.group(1).lower(), "bits": val.bit_length()})
         if len(out["labeled"]) >= 12:
             break
-    big = []
+    out["big"] = []
+    seen = set()
     for m in NUM_RE.finditer(text):
         raw = m.group(1)
-        if raw not in big:
-            big.append(raw)
-        if len(big) >= 12:
+        if raw in seen:
+            continue
+        seen.add(raw)
+        try:
+            bits = int(raw).bit_length()
+        except ValueError:
+            bits = 0
+        out["big"].append({"digits": len(raw), "bits": bits})
+        if len(out["big"]) >= 12:
             break
-    out["big"] = [{"digits": len(x), "bits": int(x).bit_length()} for x in big]
     return out
 
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""client.py — минимальный клиент OpenAI-совместимого chat-completions.
+"""client.py — минимальный клиент chat-completions.
 
 Настройки (в порядке приоритета):
   1. переменные окружения: SOLVER_API_URL, SOLVER_API_KEY, SOLVER_MODEL;
-  2. файл site/engine/.env  (KEY=VALUE, по строке; в git не попадает).
+  2. файл .solver.env в корне проекта (KEY=VALUE, по строке; в git не попадает);
+  3. старый путь site/engine/.env (если ещё лежит).
 
 Ничего не логирует: ключ не печатается и не сохраняется.
 """
@@ -17,21 +18,27 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ENV_FILE = os.path.join(HERE, ".env")
+ROOT = os.path.dirname(os.path.dirname(HERE))
+ENV_FILES = [
+    os.path.join(ROOT, ".solver.env"),
+    os.path.join(HERE, ".env"),
+]
 
 
 def _load_env_file() -> dict:
     out = {}
-    try:
-        with open(ENV_FILE, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                out[k.strip()] = v.strip().strip('"').strip("'")
-    except OSError:
-        pass
+    for path in ENV_FILES:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    out[k.strip()] = out.get(k.strip()) or \
+                        v.strip().strip('"').strip("'")
+        except OSError:
+            continue
     return out
 
 
@@ -41,8 +48,8 @@ def settings() -> dict:
     def pick(name: str, default: str = "") -> str:
         return os.environ.get(name) or file_env.get(name) or default
 
-    base = pick("SOLVER_API_URL") or pick("OPENAI_BASE_URL")
-    key = pick("SOLVER_API_KEY") or pick("OPENAI_API_KEY")
+    base = pick("SOLVER_API_URL")
+    key = pick("SOLVER_API_KEY")
     model = pick("SOLVER_MODEL")
     if base and not base.rstrip("/").endswith("/v1"):
         base = base.rstrip("/") + "/v1"
@@ -86,7 +93,7 @@ def chat(messages, *, model: str | None = None, temperature: float = 0.2,
                 time.sleep((1, 3, 7)[attempt])
                 continue
             raise
-    raise RuntimeError("модель не ответила после повторов")
+    raise RuntimeError("сервис не ответил после повторов")
 
 
 def _post(cfg: dict, payload: dict, timeout: int) -> str:

@@ -25,8 +25,21 @@
   вероятности по примерам. `http://127.0.0.1:8773/`.
 - `predict.py` — inference для файла/строки: top-5 семейств, уверенность,
   самые «влиятельные» признаки.
+- `eval_dir.py` — прогон модели по **реальным** файлам из папки: top-3 на
+  каждый файл, сколько раз выбрано семейство, сколько «не уверен».
+- `eval_true.py` — то же, но ключ выводится из сигнатур и текстовых
+  эвристик, поэтому точность считается автоматически на любом наборе файлов.
+- `realdata.py` — собирает настоящие файлы в npz той же формы, что
+  `gen_tasks.py` (`split="real"`), с метками из `eval_true.expected`.
+- `eval_npz.py` — быстрый замер модели по npz (синтетика или реальные).
+- `finetune_real.py` — эксперимент «дообучение на реальных»: делит реальные
+  файлы по хешу на train/test, меряет синтетику и реальные до и после, чтобы
+  видеть, не портит ли доменная подстройка основную задачу.
+- `BACKLOG.md` — живой список дырок и решений.
 - `train_hf.py` — дообучение готового энкодера (DeBERTa/ModernBERT) как
-  decision model. Требует `transformers` (пока не установлен).
+  decision model. `--view meta` даёт модели компактное описание артефакта
+  (`size`, `printable`, начало текста или hex) — иначе бинарь превращается в
+  поток символов-заменителей. Пишет `<out>/train.jsonl` для дашборда.
 
 ## Как запускать
 
@@ -66,6 +79,25 @@ F:\ml\gdrl\python\venv\Scripts\tensorboard.exe ^
 ... python.exe ml\predict.py --model F:\AIproject\ml-runs\mlp_100k.pt --file chall.bin
 ```
 
+## Настоящие файлы из задач (не синтетика)
+
+```
+... python.exe ml\realdata.py --out F:\AIproject\ml-runs\real_v1.npz ^
+    --roots F:\AIproject\ctf-files\таски F:\AIproject\ctf-files\BCACTF ^
+            F:\AIproject\ctf-files\corpus F:\AIproject\_scratch\custom_tasks
+
+... python.exe ml\eval_npz.py --model F:\AIproject\ml-runs\mlp_v8.pt ^
+    --npz F:\AIproject\ml-runs\real_v1.npz
+
+... python.exe ml\finetune_real.py --syn F:\AIproject\ml-runs\data_v8_100k.npz ^
+    --real F:\AIproject\ml-runs\real_v1.npz --epochs 6 --repeat 12
+```
+
+Реальных файлов сотни, а не сотни тысяч: их нельзя просто подмешать в 100k —
+утонут. Поэтому порядок такой: сначала синтетика задаёт правила, потом
+`finetune_real` аккуратно подстраивает под реальное распределение, а
+`eval_npz`/`eval_true` показывают, что при этом не сломалась основная задача.
+
 ## Первые результаты (синтетика, 100k)
 
 - MLP: **99.7%** test, top-2 **100%**, ~1 с/эпоха.
@@ -79,6 +111,16 @@ F:\ml\gdrl\python\venv\Scripts\tensorboard.exe ^
 только семейства.
 
 ## Готовые модели (вариант «скачать и переобучить»)
+
+Установлено 2026-11-14 через `uv` в тот же venv:
+
+```
+transformers 4.46.3, accelerate 1.15.0, sentencepiece 0.2.3, tokenizers 0.20.3
+```
+
+Важно: `transformers 5.x` требует свежий torch и с 2.5.1 просто отключает
+torch-бэкенд («PyTorch was not found») — поэтому держим 4.46.x.
+Кэш моделей: `HF_HOME=F:\AIproject\ml-runs\hf`.
 
 На 8 ГБ 3070 влезает:
 

@@ -140,6 +140,12 @@ SIGS = [
     (b"RIFF", "RIFF"),
     (b"ustar", "TAR"),
     (b"{\\rtf", "RTF"),
+    (b"caff", "CAF"),
+    (b"\x1aE\xdf\xa3", "MKV"),
+    (b"II*\x00", "TIFF"),
+    (b"MM\x00*", "TIFF"),
+    (b"8BPS", "PSD"),
+    (b"\x00\x00\x01\x00", "ICO"),
 ]
 
 
@@ -306,6 +312,9 @@ def sniff(head: bytes) -> str:
         if kind == b"AVI ":
             return "AVI"
         return "RIFF"
+    # IFF: FORM....AIFF / AIFC / 8SVX — звук Apple; расширение часто .wav
+    if head[:4] == b"FORM" and len(head) >= 12 and head[8:12] in (b"AIFF", b"AIFC", b"8SVX"):
+        return "AIFF"
     # OLE2 — старые .doc/.xls/.ppt, .msi.
     if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
         return "OLE"

@@ -209,13 +209,57 @@ def strings(raw: bytes, limit: int = 8) -> list[dict]:
 
 
 def utf16_strings(raw: bytes, limit: int = 6) -> list[dict]:
-    """UTF-16LE строки: теги ID3, метаданные, «широкие» строки в бинарниках."""
+    """UTF-16 строки: теги ID3, метаданные, «широкие» строки в бинарниках.
+
+    Ловим и латиницу (младший байт печатный, старший 0x00), и кириллицу
+    (старший байт 0x04): русский текст в ID3/реестре тоже UTF-16.
+    """
     out = []
-    for m in re.finditer(rb"(?:[\x20-\x7e]\x00){6,}", raw[:4_000_000]):
-        out.append({"offset": m.start(),
-                    "text": m.group().decode("utf-16-le", "replace")[:80]})
+    rx = re.compile(rb"(?:[\x20-\x7e\x00-\xff][\x00\x04]){6,}")
+    for m in rx.finditer(raw[:4_000_000]):
+        try:
+            txt = m.group().decode("utf-16-le")
+        except UnicodeDecodeError:
+            continue
+        if not txt.strip():
+            continue
+        out.append({"offset": m.start(), "text": txt[:80]})
         if len(out) >= limit:
             break
+    return out
+
+
+EMB_B64_RE = re.compile(rb"[A-Za-z0-9+/]{40,}={0,2}")
+EMB_HEX_RE = re.compile(rb"(?:[0-9a-fA-F]{2}){32,}")
+
+
+def runs(raw: bytes, limit: int = 6) -> list[dict]:
+    """Прогоны base64/hex внутри файла + превью того, что получится.
+
+    Байтовый файл (png, pdf, mp3) редко декодируется как текст целиком, но
+    внутри у него часто лежит base64 или hex. Это тот же приём, что с UTF-16:
+    ищем прогон алфавита, а не декодируем всё.
+    """
+    out = []
+    for kind, rx in (("b64", EMB_B64_RE), ("hex", EMB_HEX_RE)):
+        for m in rx.finditer(raw[:4_000_000]):
+            run = m.group(0)
+            try:
+                if kind == "b64":
+                    dec = base64.b64decode(run + b"=" * (-len(run) % 4))
+                else:
+                    dec = bytes.fromhex(run.decode("ascii"))
+            except Exception:
+                continue
+            if len(dec) < 8:
+                continue
+            txt = dec.decode("utf-8", "replace")
+            preview = "".join(c if 32 <= ord(c) < 127 or c in "\n\r\t" else "." for c in txt[:60])
+            out.append({"kind": kind, "offset": m.start(), "chars": len(run),
+                        "bytes": len(dec), "printable": printable_ratio(dec),
+                        "preview": preview})
+            if len(out) >= limit:
+                return out
     return out
 
 
@@ -263,6 +307,9 @@ def build(path: str) -> dict:
         utf16 = utf16_strings(raw)
         if utf16:
             info["strings_utf16"] = utf16
+    emb = runs(raw)
+    if emb:
+        info["runs"] = emb
     return info
 
 
@@ -310,6 +357,11 @@ def show(info: dict) -> None:
         print("  UTF-16 строки:")
         for s in info["strings_utf16"][:6]:
             print(f"    @{s['offset']:#08x} {s['text']}")
+    if info.get("runs"):
+        print("  вшитые прогоны (не текст целиком, а кусок внутри):")
+        for r in info["runs"][:6]:
+            print(f"    @{r['offset']:#08x} {r['kind']} {r['chars']} симв. → "
+                  f"{r['bytes']} байт, печатных {r['printable']}: {r['preview']}")
     print(f"  первые байты: {info['first_bytes']}")
 
 

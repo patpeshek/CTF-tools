@@ -245,6 +245,49 @@ def decode_bits(text: str):
 
 ZW = {"\u200b": "0", "\u200c": "1", "\u200d": " ", "\u2060": "", "\ufeff": ""}
 
+# все невидимые символы, которыми обычно пишут данные (не только ZWSP/ZWNJ)
+ZW_ALPHA = ("\u200b\u200c\u200d\u200e\u200f\u2060\u2061\u2062\u2063"
+            "\u180e\u00ad\ufeff")
+
+
+def decode_zero_width_base(text: str):
+    """Невидимые символы как цифры в системе счисления по основанию 2^k.
+
+    Часто пишут не «бит на символ» (200b/200c), а сразу пару бит на символ
+    (base4: 200b=00, 200c=01, 200d=10, feff=11) — тогда 4 символа = байт.
+    Порядок может быть обычный (старшая пара вперёд) или обратный («от
+    младшей пары к старшей»), а значения цифр — прямыми или перевёрнутыми.
+    Перебираем все варианты: алфавит = то, что реально встретилось в файле.
+    """
+    chars = [c for c in text if c in ZW_ALPHA]
+    alpha = sorted(dict.fromkeys(chars))
+    k = len(alpha)
+    res = []
+    if k < 2 or k & (k - 1):        # не степень двойки — раскладка не наша
+        return res
+    width = 8 // (k.bit_length() - 1)          # символов на байт
+    if width < 1:
+        return res
+    digits = [alpha.index(c) for c in chars]
+    for flip in (False, True):
+        vals = [k - 1 - d if flip else d for d in digits]
+        for rev in (False, True):
+            out = bytearray()
+            for i in range(0, len(vals) - width + 1, width):
+                chunk = vals[i:i + width]
+                if rev:
+                    chunk = chunk[::-1]
+                v = 0
+                for d in chunk:
+                    v = (v << (k.bit_length() - 1)) | d
+                out.append(v)
+            name = (f"zw base{k} "
+                    + " ".join(f"{ord(c):04x}={k-1-alpha.index(c) if flip else alpha.index(c)}"
+                               for c in alpha)
+                    + (", младшая пара вперёд" if rev else ""))
+            res.append((name, bytes(out)))
+    return res
+
 
 def decode_zero_width(text: str):
     chars = [c for c in text if c in ZW]
@@ -253,7 +296,8 @@ def decode_zero_width(text: str):
                  ("\u200b", "\u200d"), ("\u200d", "\u200b")):
         bits = "".join("1" if c == b else "0" if c == a else "" for c in chars)
         res.append((f"zw {ord(a):04x}=0 {ord(b):04x}=1", bits_to_bytes(bits)))
-    return res
+    # base4/base8/base16 теми же символами — когда бит на символ не сходится
+    return res + decode_zero_width_base(text)
 
 
 def decode_variation(text: str):

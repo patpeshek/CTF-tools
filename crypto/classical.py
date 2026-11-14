@@ -181,6 +181,54 @@ def alphabet_candidates(text: str):
     return out
 
 
+def phrase_keys(text: str, max_words: int = 6, limit: int = 2000):
+    """Кандидаты в ключ Виженера из связного текста: стих, письмо, цитата.
+
+    Ключ-фразу в задачах берут словами из условия: «первые три слова второй
+    строки», «вся строка без пробелов», «акростих». Поэтому из каждой строки
+    источника собираем все окна по 2..max_words слов, начала/хвосты строк,
+    акростих и строку целиком.
+    """
+    keys, seen = [], set()
+
+    def push(words):
+        k = "".join(words).lower()
+        if 2 <= len(k) <= 60 and k.isalpha() and k not in seen:
+            seen.add(k)
+            keys.append(k)
+
+    for line in [ln for ln in text.splitlines() if ln.strip()][:60]:
+        words = re.findall(r"[A-Za-z]+", line)
+        if len(words) < 2:
+            continue
+        n_max = min(max_words, len(words))
+        for n in range(2, n_max + 1):
+            push(words[:n])                 # первые n слов строки
+            push(words[-n:])                # последние n слов
+            for i in range(len(words) - n + 1):
+                push(words[i:i + n])        # любое окно из n слов подряд
+        push([w[0] for w in words])         # акростих
+        if len(words) > n_max:
+            push(words)                     # вся строка без пробелов
+    return keys[:limit]
+
+
+def vigenere_phrase_crack(text: str, source: str, top: int = 8):
+    """Виженер, где ключ — фраза из источника; результат по качеству текста."""
+    res = []
+    for key in phrase_keys(source):
+        plain = vigenere(text, key)
+        sc = score_text(plain)
+        try:
+            if common.find_flags(plain.encode("utf-8", "replace")):
+                sc += 500
+        except Exception:
+            pass
+        res.append((sc, key, plain))
+    res.sort(key=lambda x: -x[0])
+    return res[:top]
+
+
 def vigdict_crack(text: str, words: list[str], alphabets=None, need=None,
                   top: int = 10):
     """Словарная атака на Виженера: каждое слово словаря — кандидат в ключ.
@@ -418,10 +466,12 @@ def vigenere_crack(text: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cipher", choices=["caesar", "affine", "vigenere", "vigenere-crack",
-                                       "vigdict", "atbash", "morse", "multitap",
-                                       "playfair"])
+                                       "vigdict", "vigenere-phrase", "atbash", "morse",
+                                       "multitap", "playfair"])
     ap.add_argument("--text", required=True)
     ap.add_argument("--key")
+    ap.add_argument("--key-file",
+                    help="файл-источник ключа для vigenere-phrase (стих, письмо)")
     ap.add_argument("--a", type=int)
     ap.add_argument("--b", type=int)
     ap.add_argument("--known")
@@ -496,6 +546,22 @@ def main():
         for sc, klen, key, plain in res:
             print(f"\n[score={sc:.1f}] keylen={klen} key={key}")
             print(plain[:600])
+    elif args.cipher == "vigenere-phrase":
+        if not args.key_file:
+            print("[-] нужен --key-file: текст, из которого взят ключ (стих, письмо)")
+            return
+        try:
+            source = open(args.key_file, encoding="utf-8", errors="replace").read()
+        except OSError as e:
+            print(f"[-] не могу прочитать источник ключа: {e}")
+            return
+        res = vigenere_phrase_crack(args.text, source, args.top)
+        if not res:
+            print("[-] в источнике не нашлось слов для ключа")
+            return
+        for sc, key, plain in res:
+            print(f"\n[score={sc:6.1f}] key={key}  (из {os.path.basename(args.key_file)})")
+            print(f"  {plain[:300]}")
     elif args.cipher == "atbash":
         table = str.maketrans(string.ascii_lowercase + string.ascii_uppercase,
                               string.ascii_lowercase[::-1] + string.ascii_uppercase[::-1])

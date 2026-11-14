@@ -34,6 +34,7 @@ import argparse
 import base64
 import binascii
 import bz2
+import gzip
 import hashlib
 import lzma
 import os
@@ -390,8 +391,201 @@ def text_ops(b: bytes, root: bool = False):
 ENC_DUPES = {"rot13", "rot47", "atbash", "reverse"}
 
 
+# --- UTF-16 внутри бинарника ------------------------------------------------
+# ID3-теги mp3, ресурсы Windows, кусты реестра, часть игр хранят текст в
+# UTF-16. Байтовый декодер такого не видит: половина байтов нулевая, доля
+# печатных символов низкая, ни один текстовый слой не срабатывает. Поэтому
+# ищем «прогоны» UTF-16 прямо в байтах: младший байт печатный, старший 0x00
+# (латиница) или 0x04 (кириллица).
+UTF16_LE_RE = re.compile(rb"(?:[\x20-\x7e\t\r\n][\x00\x04]){6,}")
+UTF16_BE_RE = re.compile(rb"(?:[\x00\x04][\x20-\x7e\t\r\n]){6,}")
+
+
+def utf16_ops(b: bytes, limit: int = 8):
+    """Куски UTF-16LE/BE текста внутри бинарных данных."""
+    out = []
+    sample = b[:4 * 1024 * 1024]
+    for name, rx, enc in (("utf16le", UTF16_LE_RE, "utf-16-le"),
+                          ("utf16be", UTF16_BE_RE, "utf-16-be")):
+        for m in list(rx.finditer(sample))[:limit]:
+            try:
+                txt = m.group(0).decode(enc)
+            except UnicodeDecodeError:
+                continue
+            raw = txt.encode("utf-8", "replace")
+            if raw:
+                out.append((name, raw, False))
+    return out
+
+
+# base64/hex, вшитые ВНУТРЬ бинарника: в png после IEND, в pdf-комментарии,
+# в JSON-логе полем "blob". Тот же принцип, что с UTF-16: детектор ищет
+# прогон символов нужного алфавита, а не декодирует файл целиком.
+B64_RUN_RE = re.compile(rb"[A-Za-z0-9+/]{32,}={0,2}")
+HEX_RUN_RE = re.compile(rb"(?:[0-9a-fA-F]{2}){16,}")
+
+
+def run_ops(b: bytes, limit: int = 6):
+    """Декодировать base64/hex-прогоны, найденные внутри файла."""
+    out = []
+    sample = b[:2 * 1024 * 1024]
+    for name, rx in (("emb:b64", B64_RUN_RE), ("emb:hex", HEX_RUN_RE)):
+        for m in list(rx.finditer(sample))[:limit]:
+            run = m.group(0)
+            try:
+                if name.endswith("b64"):
+                    raw = base64.b64decode(run + b"=" * (-len(run) % 4), validate=False)
+                else:
+                    raw = bytes.fromhex(run.decode("ascii"))
+            except (binascii.Error, ValueError):
+                continue
+            if len(raw) >= 8:
+                out.append((name, raw, False))
+    return out
+
+
+COMPRESS_MAGIC = (
+    (b"\x1f\x8b", "gzip"),
+    (b"\xfd7zXZ\x00", "xz"),
+    (b"BZh", "bz2"),
+    (b"\x78\x9c", "zlib"),
+    (b"\x78\x01", "zlib"),
+    (b"\x78\xda", "zlib"),
+    (b"PK\x03\x04", "zip"),
+)
+
+
+def _unzip_items(b: bytes, limit: int = 3):
+    """Содержимое записей zip-архива (без пароля)."""
+    import io
+    import zipfile
+    out = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(b)) as zf:
+            for info in zf.infolist()[:limit]:
+                if info.flag_bits & 1:      # шифрованная запись — не наша
+                    continue
+                if 0 < info.file_size <= 4 * 1024 * 1024:
+                    out.append((f"zip:{info.filename}", zf.read(info), False))
+    except Exception:
+        return []
+    return out
+
+
+def compress_ops(b: bytes, limit: int = 4 * 1024 * 1024):
+    """Распаковка контейнеров: gzip/xz/bz2/zlib.
+
+    Без этого «матрёшка» (файл в файле в файле) не разворачивается: chain
+    умел только кодировки, а сжатие оставлял другим инструментам.
+    """
+    out = []
+    for magic, kind in COMPRESS_MAGIC:
+        if not b.startswith(magic):
+            continue
+        if kind == "zip":
+            out.extend(_unzip_items(b))
+            break
+        try:
+            if kind == "gzip":
+                dec = gzip.decompress(b)
+            elif kind == "xz":
+                dec = lzma.decompress(b)
+            elif kind == "bz2":
+                dec = bz2.decompress(b)
+            else:
+                dec = zlib.decompress(b)
+        except Exception:
+            continue
+        if 0 < len(dec) <= limit:
+            out.append((kind, dec, False))
+        break
+    return out
+
+
+def peel(data: bytes, max_layers: int = 12, limit: int = 8 * 1024 * 1024):
+    """Последовательно снять слои: gzip/xz/bz2/zlib/zip/base64/hex/utf16.
+
+    Матрёшка — это не поиск, а именно последовательность: каждый слой
+    однозначен. Beam-поиск со скорингом тут мешает (бинарный промежуточный
+    слой получает низкий score и отбрасывается), поэтому для вложенных
+    контейнеров есть отдельный прямой проход.
+    """
+    layers = []
+    cur = data
+    for _ in range(max_layers):
+        nxt, op = None, None
+        for magic, kind in COMPRESS_MAGIC:
+            if cur.startswith(magic):
+                if kind == "zip":
+                    items = _unzip_items(cur, limit=1)
+                    if items:
+                        op, nxt = items[0][0], items[0][1]
+                else:
+                    try:
+                        if kind == "gzip":
+                            nxt = gzip.decompress(cur)
+                        elif kind == "xz":
+                            nxt = lzma.decompress(cur)
+                        elif kind == "bz2":
+                            nxt = bz2.decompress(cur)
+                        else:
+                            nxt = zlib.decompress(cur)
+                        op = kind
+                    except Exception:
+                        nxt = None
+                break
+        if nxt is None:
+            s = cur.strip()
+            if 8 <= len(s) <= 2_000_000 and len(s) % 4 in (0, 2, 3) and \
+                    _B64_RE.fullmatch(s) and not s.startswith(b"\x89"):
+                try:
+                    dec = base64.b64decode(s + b"=" * (-len(s) % 4), validate=False)
+                    if dec and dec != cur:
+                        op, nxt = "base64", dec
+                except Exception:
+                    pass
+            if nxt is None and 8 <= len(s) <= 2_000_000 and len(s) % 2 == 0 and \
+                    re.fullmatch(rb"[0-9a-fA-F]+", s):
+                try:
+                    dec = bytes.fromhex(s.decode())
+                    if dec:
+                        op, nxt = "hex", dec
+                except Exception:
+                    pass
+            if nxt is None:
+                # base64/hex внутри текста («hint: decode me» + блоб)
+                for rx, name in ((B64_RUN_RE, "emb:base64"), (HEX_RUN_RE, "emb:hex")):
+                    best = max(rx.finditer(s), key=lambda m: len(m.group(0)), default=None)
+                    if best is None or len(best.group(0)) < 40:
+                        continue
+                    run = best.group(0)
+                    try:
+                        dec = (base64.b64decode(run + b"=" * (-len(run) % 4))
+                               if name.endswith("base64") else bytes.fromhex(run.decode()))
+                    except Exception:
+                        continue
+                    if dec:
+                        op, nxt = name, dec
+                        break
+            if nxt is None and len(cur) >= 16 and cur[1] == 0 and cur[0] != 0:
+                try:
+                    op, nxt = "utf16le", cur.decode("utf-16-le").encode("utf-8")
+                except Exception:
+                    nxt = None
+        if nxt is None or len(nxt) > limit or not nxt:
+            break
+        layers.append({"op": op, "size": len(nxt)})
+        cur = nxt
+        flags = real_flags(cur)
+        if flags and len(layers) > 0:
+            layers[-1]["flags"] = flags
+            break
+    return layers, cur
+
+
 def expand(b: bytes, root: bool = False):
-    return strict_ops(b) + weak_ops(b) + text_ops(b, root)
+    return (strict_ops(b) + compress_ops(b) + utf16_ops(b) + run_ops(b)
+            + weak_ops(b) + text_ops(b, root))
 
 
 def finishers(b: bytes):
@@ -609,6 +803,8 @@ def main():
     ap = argparse.ArgumentParser(description="многослойные цепочки кодировок до флага")
     ap.add_argument("target", nargs="?", help="строка или путь к файлу")
     ap.add_argument("--file", help="прочитать данные из файла")
+    ap.add_argument("--peel", action="store_true",
+                    help="снимать слои последовательно (матрёшка)")
     ap.add_argument("--depth", type=int, default=6, help="максимум слоёв (6)")
     ap.add_argument("--beam", type=int, default=30, help="ширина луча (30)")
     ap.add_argument("--strict-beam", type=int, default=24,
@@ -621,6 +817,21 @@ def main():
     common.apply_flag_args(args)
     if args.any_prefix:
         os.environ["FLAG_ANY"] = "1"
+
+    if args.peel:
+        data = common.read_bytes(args.file or args.target)
+        layers, final = peel(data)
+        print(f"[+] слоёв снято: {len(layers)}")
+        for i, l in enumerate(layers, 1):
+            print(f"   {i:02d}. {l['op']:8s} → {l['size']} байт"
+                  + (f"  флаг: {l['flags'][0]}" if l.get('flags') else ""))
+        flags = real_flags(final)
+        if flags:
+            print(f"[+] ФЛАГ: {flags[0]}")
+            return 0
+        print("[-] флага нет; хвост:")
+        print("    " + show(final, 200))
+        return 1
 
     path = args.file or (args.target if args.target and os.path.isfile(args.target) else None)
     if path:

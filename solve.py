@@ -47,6 +47,10 @@ STUB_WORDS = ("missing", "placeholder", "dummy", "fake")
 # (known-plaintext XOR, цепочки с XOR-узлом, autocrack). Их находка —
 # кандидат, а не флаг: без подтверждения она не останавливает прогон.
 WEAK_TOOLS = {"xorknown", "chain", "autocrack"}
+# Инструменты, чьи флаги часто оказываются приманкой: в задачу специально
+# кладут «флаг» вшитым в файл (hex/base64), и он находится раньше настоящего.
+# Для них не останавливаем прогон, а только запоминаем кандидата.
+DECOY_PRONE = {"chain", "xorknown"}
 
 
 def flag_structured(flag: str) -> bool:
@@ -307,6 +311,18 @@ class Runner:
                     self._say("     [?] кандидат от подгонки (не подтверждён): "
                               + " | ".join(weak[:4]))
                 uniq = strong
+            # Приманка: в задачах специально кладут «флаг», который лежит
+            # вшитым в файл. chain/xorknown находят его первым и раньше
+            # останавливали прогон — настоящий флаг (в DNS, в мусоре, в
+            # структуре) так и не находился. Поэтому такие флаги только
+            # запоминаем и идём дальше.
+            if uniq and name in DECOY_PRONE and "--peel" not in [str(a) for a in args]:
+                with self._lock:
+                    self.weak.extend(uniq)
+                self._say("     [?] похоже на приманку от «%s», иду дальше: %s"
+                          % (name, " | ".join(uniq[:3])))
+                self._record(rec)
+                return None
             if not uniq:
                 self._record(rec)
                 return None
@@ -855,6 +871,115 @@ def admin_dir(path):
         return False
 
 
+# --- ИИ-режим: порядок шагов по мнению локальной модели -------------------
+# Модель (`ml/np_router.py`) отдаёт вероятности семейств; каждое семейство
+# знает свои «первые инструменты». Складываем вероятности по инструментам и
+# сортируем план. Правила не выкидываются — меняется только порядок.
+AI_ORDER = {"router": None}
+# сколько вложенных архивов разворачивать («матрёшка»). 4 уровня — это уже
+# xz(gzip(zip(tar))); глубже обычно не математика, а мусор, и время кончается.
+MAX_NEST = int(os.environ.get("SOLVER_MAX_NEST", "5"))
+
+FAMILY_TOOLS = {
+    "png": ["png_chunks", "lsb", "ocr", "alpha"], "gif": ["gif_frames", "video"],
+    "jpeg": ["jpeg_tail", "exif", "lsb"], "pdf": ["text", "hunt", "pdf_revisions"],
+    "zip": ["zipmeta", "ziptricks", "carve"], "sqlite": ["android", "hunt"],
+    "pcap": ["dns", "creds", "http", "icmp"], "pcapng": ["dns", "creds", "http"],
+    "mp3": ["audio", "audiotools", "chain"], "wav": ["audiotools", "audio"],
+    "aiff": ["audiotools", "audio"], "flac": ["audiotools", "audio"],
+    "elf": ["strings", "disasm", "megarev"], "pe": ["strings", "disasm", "megarev"],
+    "disk_img": ["disk_image"], "b64": ["chain", "enc"], "b32": ["chain", "enc"],
+    "hex": ["chain", "enc"], "rot13": ["chain", "enc"], "caesar": ["chain", "enc"],
+    "xor1": ["chain", "xorknown"], "gzip": ["carve", "chain"],
+    "zlib": ["carve", "chain"], "xz": ["carve", "chain"], "bz2": ["carve", "chain"],
+    "utf16": ["chain", "strings"], "rsa": ["rsa"],
+    "py_src": ["hunt", "strings"], "config_text": ["admin", "hunt"],
+    "plain_log": ["logs", "hunt"], "json_log": ["hunt", "ws"],
+    "doc_text": ["facts"], "raw_text": ["ws", "enc", "chain"],
+    "reverse": ["chain", "enc"], "random_bin": ["facts", "carve"],
+}
+
+
+def _ai_sample(target):
+    """Байты, по которым модель судит о задаче (файл или папка)."""
+    if os.path.isfile(target):
+        try:
+            with open(target, "rb") as fh:
+                return fh.read(2_000_000)
+        except OSError:
+            return b""
+    if os.path.isdir(target):
+        try:
+            picked = toolbox._pick_files(target)[:3]
+        except Exception:
+            picked = []
+        out = b""
+        for p, _kind in picked:
+            try:
+                with open(p, "rb") as fh:
+                    out += fh.read(1_000_000)
+            except OSError:
+                continue
+        return out
+    return b""
+
+
+def _chain_args(path, deep):
+    """Аргументы chain: в глубоком режиме — больше слоёв и времени."""
+    if deep:
+        return ["--file", path, "--time", "30", "--depth", "8"], 40
+    return ["--file", path, "--time", "10", "--depth", "6"], 20
+
+
+def _derive_targets(path):
+    """Рядом зашифрованный файл? Возвращает [(путь, режим)] для derive."""
+    out = []
+    folder = os.path.dirname(os.path.abspath(path)) or "."
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return out
+    for n in names:
+        p = os.path.join(folder, n)
+        if p == path or not os.path.isfile(p) or os.path.getsize(p) > 4 * 1024 * 1024:
+            continue
+        try:
+            with open(p, "rb") as fh:
+                head = fh.read(4)
+                size = os.path.getsize(p)
+        except OSError:
+            continue
+        if head[:2] == b"PK" and size > 64:
+            out.append((p, "zip"))
+        elif size >= 32 and size % 16 == 0:
+            out.append((p, "aes"))
+    return out
+
+
+def ai_order(steps, target, verbose=True):
+    """Переставить шаги по вероятностям модели; правила остаются на месте."""
+    router = AI_ORDER.get("router")
+    if router is None or not steps:
+        return steps
+    data = _ai_sample(target)
+    if not data:
+        return steps
+    probs = router.probs(data)
+    weights = {}
+    for fam, p in zip(router.families, probs):
+        for tool in FAMILY_TOOLS.get(fam, []):
+            weights[tool] = weights.get(tool, 0.0) + float(p)
+
+    def score(step):
+        return weights.get(step[0], 0.01)
+
+    ordered = sorted(steps, key=lambda s: -score(s))
+    if verbose:
+        top = ", ".join(f"{s[0]} {score(s):.2f}" for s in ordered[:5])
+        print(f"[ai] порядок шагов по модели: {top}")
+    return ordered
+
+
 def steps_for(path, deep=False, depth=0):
     """[(имя_инструмента, аргументы, зачем, таймаут)] по типу данных."""
     data = common.read_bytes(path)[:2_000_000] if os.path.isfile(path) else b""
@@ -862,10 +987,27 @@ def steps_for(path, deep=False, depth=0):
     ext = os.path.splitext(path)[1].lower()
     steps = []
     add = steps.append
+    # вшитые кодировки внутри бинарника: base64/hex/utf16 (chain.run_ops).
+    # Стоит копейки (0.0-0.1 c) и ловит флаг, приклеенный после IEND/в теге/в логе.
+    if kind in ("PNG", "JPEG", "GIF", "PDF", "SQLite", "MP3", "PCAP", "PCAPNG",
+                "RIFF", "AIFF", "CAF", "FLAC", "ELF", "PE", "ZIP", "GZIP",
+                "7Z", "RAR", "TAR", "BMP", "TIFF"):
+        ca, ct = _chain_args(path, deep)
+        add(("chain", ca, "вшитые base64/hex/utf16-прогоны внутри файла", ct))
 
     if os.path.isdir(path):
         add(("hunt", [path], "строки/секреты во всех файлах", 60))
         add(("flaghunt", [path], "файлы flag/flag.txt/user.txt", 60))
+        # в папке текст + зашифрованный сосед: ключ выводится из чисел
+        try:
+            picked = [p for p, k in toolbox._pick_files(path)[:8]]
+        except Exception:
+            picked = []
+        for p in picked:
+            for secret, mode in _derive_targets(p)[:1]:
+                add(("derive", [p, "--target", secret, "--mode", mode],
+                     f"ключ из чисел {os.path.basename(p)} → {mode} "
+                     f"{os.path.basename(secret)}", 60))
         if admin_dir(path):
             add(("admin", [path], "дамп ФС/конфигов: sudo/SUID/cron/секреты, логи, кусты, ВМ", 120))
         return steps, "DIR"
@@ -876,9 +1018,13 @@ def steps_for(path, deep=False, depth=0):
     # Архивы: flag.wav.xz, traffic.pcapng.xz, dump.tar.bz2. Распаковываем
     # и строим план уже для внутреннего файла — иначе solve видит «unknown».
     akind = _archive_kind(path, data) if data else None
-    if akind in ("XZ", "BZ2", "GZIP", "ZSTD", "LZ4", "TAR") and depth < 2:
+    if akind:
+        add(("chain", [path, "--peel"], "снять вложенные слои (матрёшка)", 60))
+    if akind in ("XZ", "BZ2", "GZIP", "ZSTD", "LZ4", "TAR") and depth < MAX_NEST:
         inner_files = unpack_one(path)
-        for inner in inner_files[:6]:
+        # на больших глубинах сужаем ветвление, иначе 6^4 путей
+        branch = 6 if depth < 2 else 3
+        for inner in inner_files[:branch]:
             sub, _subkind = steps_for(inner, deep, depth + 1)
             tag = f"{os.path.basename(path)} → {os.path.basename(inner)}"
             for n2, a2, w2, t2 in sub[:12]:
@@ -975,7 +1121,8 @@ def steps_for(path, deep=False, depth=0):
         add(("video", [path, "--every", "10", "--max", "80"],
              "кадры + OCR", 120))
 
-    if kind == "RIFF" or ext in (".wav",):
+    if kind in ("RIFF", "AIFF", "CAF", "FLAC") or ext in (
+            ".wav", ".aiff", ".aif", ".aifc", ".caf", ".flac"):
         add(("audiotools", [path, "--raw"], "морзе/DTMF", 40))
         if deep:
             add(("audio", [path], "спектрограмма", 60))
@@ -1009,6 +1156,15 @@ def steps_for(path, deep=False, depth=0):
             add(("udp", [path], "полезная нагрузка UDP", 40))
             add(("reasm", [path], "склейка TCP-потоков", 60))
             add(("mc", [path], "Minecraft-протокол", 60))
+
+    # ключ, выведенный из данных: рядом лежит зашифрованный файл, а в тексте —
+    # числа и подсказка «сложи и возьми sha256»
+    if data and kind in ("unknown", "TEXT", "json_log", "plain_log", "doc_text"):
+        extra = _derive_targets(path)
+        for secret, mode in extra[:2]:
+            add(("derive", [path, "--target", secret, "--mode", mode],
+                 f"ключ из чисел {os.path.basename(path)} → {mode} {os.path.basename(secret)}",
+                 60))
 
     # admin: образы ВМ, кусты реестра, логи — тип по сигнатурам/содержимому
     adm, _adm_detail = admin_kind(path, data) if data else (None, None)
@@ -1123,7 +1279,7 @@ def steps_for(path, deep=False, depth=0):
                 add(("all", [path, "--time", "25"], "остальные шифры/хеши", 45))
             add(("enc", ["--file", path], "кодировки строкой", 20))
             if len(data) <= 65536:
-                add(("chain", ["--file", path, "--time", "20"],
+                add(("chain", _chain_args(path, deep)[0],
                      "многослойные кодировки: base64→hex→ROT13→XOR…", 30))
             add(("autocrack", ["--file", path], "цезарь/XOR/кодировки/хеши", 60))
             if len(re.findall(r"[A-Za-zА-Яа-я]", text)) >= 200:
@@ -1180,7 +1336,7 @@ def steps_for(path, deep=False, depth=0):
                  "XOR: текст начинается с префикса флага", 20))
             add(("autocrack", ["--file", path], "XOR/кодировки/хеши", 60))
             add(("enc", ["--file", path], "все кодировки/base (utf-16/32, cp, baseN)", 30))
-            add(("chain", ["--file", path, "--time", "20"],
+            add(("chain", _chain_args(path, deep)[0],
                  "многослойные: XOR→ROT13→hex→base64…", 30))
 
     # что осталось — универсальные переборы
@@ -1217,6 +1373,8 @@ def solve_file(target, runner, deep, plan_only, statement=None):
         # условие: добавить шаги с паролями/ключами и поднять подсказанные
         steps = _dedupe_steps(order_steps(statement_steps(statement, target) + steps,
                                           statement))
+    if AI_ORDER.get("router") is not None:
+        steps = ai_order(steps, target)
     runner.note_plan(steps, kind, "dir" if os.path.isdir(target) else "file",
                      target, statement)
     print(f"[+] тип: {kind}")
@@ -1778,6 +1936,8 @@ def main():
                          "(можно не указывать, если адрес есть в --desc)")
     ap.add_argument("--time", type=float, default=90, help="общий бюджет, сек")
     ap.add_argument("--jobs", type=int, default=4, help="сколько шагов считать параллельно")
+    ap.add_argument("--nest", type=int, default=0,
+                    help="сколько вложенных архивов разворачивать (по умолчанию 5)")
     ap.add_argument("--deep", action="store_true", help="включить дорогие шаги")
     ap.add_argument("--verbose", action="store_true", help="печатать вывод каждого шага")
     ap.add_argument("--plan", action="store_true", help="только показать план")
@@ -1791,9 +1951,42 @@ def main():
     ap.add_argument("--events", metavar="FILE|-",
                     help="поток событий JSON Lines (plan/step_start/step_end/lead/flag/"
                          "done) в файл или '-' (stdout)")
+    ap.add_argument("--both", action="store_true",
+                    help="решать двумя потоками: обычные правила и ИИ-порядок шагов")
+    ap.add_argument("--ai", action="store_true",
+                    help="переставить шаги по мнению локальной модели (роутера)")
+    ap.add_argument("--router", default=os.environ.get("SOLVER_ROUTER", ""),
+                    help="путь к router_*.npz (по умолчанию $SOLVER_ROUTER)")
     common.add_flag_args(ap)
     args = ap.parse_args()
     common.apply_flag_args(args)
+    if args.ai:
+        # ИИ-режим по умолчанию глубокий: модель уже расставила приоритеты,
+        # экономить на шагах смысла нет
+        args.deep = True
+    if args.nest:
+        global MAX_NEST
+        MAX_NEST = max(1, args.nest)
+    if args.both and args.target:
+        here = os.path.dirname(os.path.abspath(__file__))
+        cmd = [sys.executable, os.path.join(here, "ai_solve.py"), args.target,
+               "--time", str(args.time)]
+        if args.desc_file:
+            cmd += ["--desc-file", args.desc_file]
+        raise SystemExit(subprocess.call(cmd, cwd=here))
+    if args.ai:
+        path = args.router or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "ml", "router_best.npz")
+        if not os.path.exists(path):
+            print(f"[!] --ai: нет файла роутера {path} — работаю без модели")
+        else:
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "ml"))
+            try:
+                from np_router import Router
+                AI_ORDER["router"] = Router(path)
+                print(f"[ai] роутер: {path}")
+            except Exception as exc:
+                print(f"[!] --ai: роутер не загрузился ({exc})")
     if args.any_prefix:
         os.environ["FLAG_ANY"] = "1"
 
@@ -1899,8 +2092,14 @@ def main():
             print("    ещё: python toolbox.py auto <строка>")
 
     if not flag and not suggest:
-        print("\n[-] флаг не найден за отведённое время.")
         if runner.weak:
+            # сильные инструменты не дали флага, но кандидат есть: отдаём его
+            # как ответ, честно помечая (иначе матрёшка через chain теряется)
+            flag = runner.weak[0]
+            print(f"\n[!!!] ФЛАГ (не подтверждён другими шагами): {flag}")
+        else:
+            print("\n[-] флаг не найден за отведённое время.")
+        if runner.weak and flag != runner.weak[0] or not flag:
             print("[i] кандидаты от подгонки (НЕ подтверждены, за флаг не считаю):")
             for w in dict.fromkeys(runner.weak):
                 print("   ", w)

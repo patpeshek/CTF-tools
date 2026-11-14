@@ -20,7 +20,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from features import FEATURE_NAMES
+from features import FEATURE_NAMES as DEFAULT_FEATURES
 from gen_tasks import NOVEL
 from model import build
 
@@ -135,12 +135,18 @@ def main():
     ap.add_argument("--layers", type=int, default=4)
     ap.add_argument("--heads", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--features-module", default="features",
+                    help="modules with FEATURE_NAMES (для реверса: rev_features)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[+] устройство: {device}", flush=True)
+
+    import importlib
+    feat = importlib.import_module(args.features_module)
+    FEATURE_NAMES = feat.FEATURE_NAMES
 
     rows = load(args.data, args.limit)
     families = sorted({f for f in rows["family"] if f not in NOVEL})

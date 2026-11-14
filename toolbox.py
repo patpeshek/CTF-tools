@@ -173,6 +173,8 @@ REGISTRY = [
     ("misc", "formats", "misc/formats.py", "кэш разметок ответа: спросил один раз"),
     ("misc", "ocr", "misc/ocr.py", "текст с картинки (капча/скриншот/кадр)"),
     ("misc", "video", "misc/video.py", "кадры видео/GIF: OCR, отличия"),
+    ("misc", "derive", "misc/derive.py",
+     "ключ из данных: сумма/xor/склейка чисел → md5/sha → пароль ZIP, ключ AES/XOR"),
     ("misc", "nearlines", "misc/nearlines.py",
      "почти одинаковые строки: уникальные и отличия"),
 ]

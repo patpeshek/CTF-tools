@@ -215,6 +215,71 @@ def transform_bytes(b: bytes, how: str, best, deep=False):
                 add_candidate(best, f"{how}vigenere({key})", plain.encode("latin-1", "replace"))
 
 
+# невидимые символы, которыми прячут данные в обычном тексте
+_ZW_RE = re.compile("[\u200b\u200c\u200d\u200e\u200f\u2060\u2061\u2062\u2063"
+                    "\u180e\u00ad\ufeff]")
+
+
+def zero_width_candidates(data: bytes):
+    """zero-width → байты (base2 парами 200b/200c, base4 4 символа на байт).
+
+    Реализация живёт в stego/whitespace.py (decode_zero_width); здесь только
+    мост, чтобы «перебрать всё разумное» видело невидимые символы.
+    """
+    try:
+        text = data.decode("utf-8", "replace")
+    except Exception:
+        return []
+    if len(_ZW_RE.findall(text)) < 16:
+        return []
+    try:
+        sys.path.insert(0, os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "stego"))
+        import whitespace as wsmod  # noqa: E402
+        return [(f"zero-width: {name}", dec)
+                for name, dec in wsmod.decode_zero_width(text) if dec]
+    except Exception:
+        return []
+
+
+def vigenere_phrase_candidates(raw: bytes, path, best):
+    """Виженер с ключом-фразой из СОСЕДНЕГО текста (стих, письмо, цитата).
+
+    В задачах ключ часто «спрятан» рядом: poem.txt, note.txt, lyrics.txt.
+    Берём слова источника (окна по 2..6 слов, начала строк, акростих) и
+    расшифровываем ими шифротекст; годный вариант ловится по score/флагу.
+    """
+    s = as_text(raw)
+    if not s or not path or len(s) > 20000:
+        return
+    if sum(c.isalpha() for c in s) < 8:
+        return
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    me = os.path.abspath(path)
+    try:
+        names = sorted(os.listdir(d))[:400]
+    except OSError:
+        return
+    sibs = []
+    for nm in names:
+        p2 = os.path.join(d, nm)
+        if os.path.abspath(p2) == me or not os.path.isfile(p2):
+            continue
+        try:
+            if os.path.getsize(p2) > 400_000:
+                continue
+            txt = open(p2, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if printable(txt) < 0.9 or len(re.findall(r"[A-Za-z]", txt)) < 20:
+            continue
+        sibs.append((nm, txt))
+    for nm, txt in sibs[:6]:
+        for key in cl.phrase_keys(txt):
+            add_candidate(best, f"vigenere(ключ {key} из {nm})",
+                          cl.vigenere(s, key).encode("latin-1", "replace"))
+
+
 def rail_fence_decrypt(s: str, rails: int) -> str:
     n = len(s)
     if rails <= 1 or rails >= n:
@@ -268,6 +333,14 @@ def auto_mode(args):
     todo = [("", raw)] + [(h, d) for h, d in frontier]
     for how, data in todo[:60]:
         transform_bytes(data, how, best, deep=args.deep)
+
+    # невидимые символы: 200b/200c/200d/feff как цифры (байт = 8 бит или 4 base4)
+    for how, dec in zero_width_candidates(raw):
+        add_candidate(best, how, dec)
+
+    # Виженер, где ключ — фраза из соседнего текста (стих/письмо/цитата)
+    if args.file:
+        vigenere_phrase_candidates(raw, args.file, best)
 
     ranked = sorted(best.values(), key=lambda x: -x[0])
     shown = 0

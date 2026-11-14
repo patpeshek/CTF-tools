@@ -37,6 +37,11 @@ SEQS = {"rgb": (0, 1, 2), "rbg": (0, 2, 1), "grb": (1, 0, 2),
         "rgba": (0, 1, 2, 3),
         "r": (0,), "g": (1,), "b": (2,), "a": (3,)}
 
+# типовые seed'ы генераторов в задачах + длины записанного сообщения (в байтах)
+PRNG_SEEDS = (1337, 42, 13371337, 0, 1, 7, 13, 123, 1234, 12345, 2023, 2024,
+              777, 999, 1000, 31337, 123456)
+PRNG_BYTES = (16, 24, 32, 48, 64, 120, 128, 256)
+
 
 def load_rgba(path) -> bytes:
     return Image.open(path).convert("RGBA").tobytes()
@@ -81,6 +86,26 @@ def bits_cycle(raw, order=(0, 1, 2), nbits=1, bit_order="lsb", offset=0):
         for s in shifts:
             bits.append((v >> s) & 1)
     return bytes(bits)
+
+
+def bits_prng(raw, seed, nbits, order=(0, 1, 2), skip=0):
+    """Биты из СЛУЧАЙНЫХ пикселей: random.Random(seed).sample(range(W*H), N).
+
+    Так прячут, «чтобы последовательный скан не находил»: автор взял sample по
+    пикселям, а канал менял по кругу (i % 3). N — сколько бит записано; если
+    N неизвестно, srand-поток до N≤~5000 от N почти не зависит, поэтому
+    перебираем несколько длин.
+    """
+    import random
+    total = len(raw) // 4
+    nbits = max(0, min(nbits, total))
+    if not nbits:
+        return b""
+    pos = random.Random(seed).sample(range(total), nbits)
+    bits = bytearray(nbits)
+    for i, p in enumerate(pos):
+        bits[i] = raw[p * 4 + order[i % len(order)]] & 1
+    return bytes(bits[skip:])
 
 
 def bits_diff(img_a, img_b, channel="r", nbits=1, order="lsb"):
@@ -135,6 +160,11 @@ def main():
     ap.add_argument("--bits", type=int, default=1)
     ap.add_argument("--order", default="lsb", choices=["lsb", "msb"])
     ap.add_argument("--offset", type=int, default=0)
+    ap.add_argument("--prng-seed", type=int, action="append",
+                    help="читать биты из позиций random.Random(seed).sample "
+                         "(можно несколько; по умолчанию типовые семена)")
+    ap.add_argument("--no-prng", action="store_true",
+                    help="не пробовать PRNG-позиции")
     args = ap.parse_args()
 
     raw = None
@@ -179,6 +209,25 @@ def main():
                 name = "".join("rgb"[c] for c in order)
                 print(f"\n[+] цикл каналов {name} даёт читаемый результат:")
                 show(d)
+
+    # случайные позиции пикселей: random.Random(seed).sample(range(W*H), N)
+    if raw is not None and not args.no_prng:
+        seen = {data}
+        for seed in (args.prng_seed or PRNG_SEEDS):
+            for nbytes in PRNG_BYTES:
+                for skip in (0, 8, 16):
+                    try:
+                        d = bits_to_bytes(bits_prng(raw, seed, nbytes * 8 + skip))
+                    except (ValueError, MemoryError):
+                        continue
+                    if not d or d in seen:
+                        continue
+                    seen.add(d)
+                    if common.find_flags(d) or (len(d) >= 8
+                                                and common.printable_ratio(d) > 0.92):
+                        print(f"\n[+] PRNG-позиции: seed={seed}, N={nbytes * 8} "
+                              f"бит, сдвиг {skip} → читаемый результат:")
+                        show(d)
 
 
 if __name__ == "__main__":

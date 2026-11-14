@@ -18,11 +18,12 @@ import zlib
 import numpy as np
 
 from features import byte_hist, byte_ids, hand_features
+from gen_artifacts import MAKERS as ARTIFACT_MAKERS
 
 FAMILIES = [
     "raw_text", "b64", "b32", "hex", "rot13", "caesar", "xor1", "reverse",
     "gzip", "zlib", "utf16", "rsa", "random_bin",
-]
+] + list(ARTIFACT_MAKERS)
 # эти семейства не попадают в train: проверяем, умеет ли модель сказать
 # «не знаю» на новом типе, а не выдать уверенную чушь
 NOVEL = {"b32", "utf16"}
@@ -32,10 +33,45 @@ WORDS = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo "
          "victor whiskey xray yankee zulu").split()
 
 
+PROSE_EN = (
+    "The backup server keeps a copy of every message for thirty days, after "
+    "which the oldest batches are pruned automatically.",
+    "Our monitoring noticed a spike in outbound traffic right after the "
+    "maintenance window; the operator says nothing was changed.",
+    "Please review the attached capture and tell me whether the credentials "
+    "were sent in clear text or inside an encrypted tunnel.",
+    "The contractor uploaded the archive on Friday and deleted it on Monday. "
+    "The storage snapshot from Sunday should still hold the original file.",
+)
+PROSE_RU = (
+    "Сервер резервного копирования хранит копию каждого сообщения тридцать дней, "
+    "после чего старые пакеты удаляются автоматически.",
+    "В журнале видно резкий рост исходящего трафика сразу после окна "
+    "обслуживания; оператор утверждает, что ничего не менял.",
+    "Посмотри вложение и скажи, передавались ли учётные данные открытым "
+    "текстом или внутри зашифрованного туннеля.",
+    "Подрядчик загрузил архив в пятницу и удалил в понедельник. Снимок "
+    "хранилища за воскресенье должен содержать исходный файл.",
+)
+
+
 def plaintext(rng: random.Random) -> bytes:
-    body = " ".join(rng.choice(WORDS) for _ in range(rng.randint(2, 8)))
+    """Обычный читаемый текст: и «словесная каша», и проза на EN/RU.
+
+    Раньше был только набор ASCII-слов, из-за чего настоящая кириллица
+    выглядела для модели как XOR-блоб.
+    """
+    roll = rng.random()
+    if roll < 0.5:
+        body = " ".join(rng.choice(WORDS) for _ in range(rng.randint(2, 8)))
+    elif roll < 0.75:
+        body = " ".join(rng.choice(PROSE_EN) for _ in range(rng.randint(1, 3)))
+    else:
+        body = " ".join(rng.choice(PROSE_RU) for _ in range(rng.randint(1, 2)))
     flag = "CTF{" + "".join(rng.choice(string.ascii_lowercase + string.digits + "_")
                            for _ in range(rng.randint(6, 18))) + "}"
+    if rng.random() < 0.3 and "\n" not in body:
+        return f"{body} {flag}\n".encode()
     return f"{body}\n{flag}\n".encode()
 
 
@@ -78,6 +114,8 @@ def make(family: str, rng: random.Random) -> bytes:
         return f"n = {n}\ne = 65537\nc = {c}\n".encode()
     if family == "random_bin":
         return os.urandom(rng.randint(64, 512))
+    if family in ARTIFACT_MAKERS:
+        return ARTIFACT_MAKERS[family](rng)
     raise ValueError(family)
 
 

@@ -58,7 +58,22 @@ SIGS = [
     (b"OggS", "OGG"),
     (b"\xd4\xc3\xb2\xa1", "PCAP"),
     (b"\xa1\xb2\xc3\xd4", "PCAP"),
+    (b"\x4d\x3c\xb2\xa1", "PCAP (ns)"),
+    (b"\xa1\xb2\x3c\x4d", "PCAP (ns)"),
     (b"\x0a\x0d\x0d\x0a", "PCAPNG"),
+    (b"\xff\xfb", "MP3 (кадры)"),
+    (b"\xff\xf3", "MP3 (кадры)"),
+    (b"\xff\xf2", "MP3 (кадры)"),
+    (b"\xff\xe3", "MP3 (кадры)"),
+    (b"\xff\xe2", "MP3 (кадры)"),
+    (b"fLaC", "FLAC"),
+    (b"caff", "CAF"),
+    (b"FORM", "AIFF/CAF (IFF)"),
+    (b"II*\x00", "TIFF"),
+    (b"MM\x00*", "TIFF"),
+    (b"\x1aE\xdf\xa3", "MKV/WebM"),
+    (b"\x00asm", "WASM"),
+    (b"8BPS", "PSD"),
     (b"\x00\x00\x01\x00", "ICO"),
     (b"LUKS\xba\xbe", "LUKS"),
     (b"{\\rtf", "RTF"),
@@ -72,13 +87,31 @@ PRINTABLE = re.compile(rb"[\x20-\x7e]{6,}")
 
 def sniff(path: str) -> str:
     with open(path, "rb") as f:
-        head = f.read(512)
+        head = f.read(4096)
     for sig, name in SIGS:
         if head.startswith(sig):
             return name
     # TAR держит "ustar" не в начале, а на смещении 257
-    if b"ustar" in head:
+    if b"ustar" in head[:512]:
         return "TAR"
+    # MBR: подпись 55 AA в конце первого сектора
+    if len(head) >= 512 and head[510:512] == b"\x55\xaa":
+        return "образ диска (MBR)"
+    # текст без сигнатуры: JSON, XML, лог, обычный текст с кириллицей
+    sample = head[:2048]
+    printable = sum(1 for b in sample if 32 <= b < 127 or b in (9, 10, 13))
+    high = sum(1 for b in sample if b >= 0x80)          # UTF-8 многобайтные
+    if sample and (printable + high) / len(sample) >= 0.9:
+        s = sample.lstrip()
+        if s[:1] in (b"{", b"["):
+            return "JSON/лог (текст)"
+        if s[:1] == b"<":
+            return "XML/HTML (текст)"
+        return "TEXT"
+    # начало текстовое, а дальше бинарь: архив HTTP-запросов, лог с телами
+    first = head[:64]
+    if first and all(32 <= b < 127 or b in (9, 10, 13) for b in first):
+        return "TEXT + бинарные данные"
     return "unknown"
 
 

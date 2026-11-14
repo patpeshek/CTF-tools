@@ -993,28 +993,50 @@ def _derive_targets(path):
 
 
 def smart_order(steps, target, verbose=True):
-    """Переставить шаги по вероятностям модели; правила остаются на месте."""
+    """Переставить шаги по оценке роутера и политики; правила остаются внутри."""
     router = SMART_ORDER.get("router")
-    if router is None or not steps:
+    policy = SMART_ORDER.get("policy")
+    if (router is None and policy is None) or not steps:
         return steps
     data = _ai_sample(target)
     if not data:
         return steps
-    probs = router.probs(data)
-    weights = {}
-    for fam, p in zip(router.families, probs):
-        for tool in FAMILY_TOOLS.get(fam, []):
-            weights[tool] = weights.get(tool, 0.0) + float(p)
+
+    fam_score = {}
+    if router is not None:
+        probs = router.probs(data)
+        for fam, p in zip(router.families, probs):
+            for tool in FAMILY_TOOLS.get(fam, []):
+                fam_score[tool] = fam_score.get(tool, 0.0) + float(p)
+    mx_fam = max(fam_score.values()) if fam_score else 1.0
+
+    pol_score = {}
+    if policy is not None:
+        try:
+            state = policy._state(data)
+            for name, _a, _w, _t in steps:
+                pol_score[name] = policy.score(state, name)
+        except Exception:
+            pol_score = {}
+    mx_pol = max(pol_score.values()) if pol_score else 1.0
 
     def score(step):
-        return weights.get(step[0], 0.01)
+        name = step[0]
+        fam = fam_score.get(name, 0.0) / mx_fam if mx_fam else 0.0
+        pol = pol_score.get(name, 0.0) / mx_pol if mx_pol else 0.0
+        if policy is None:
+            return fam
+        if router is None:
+            return pol
+        return 0.65 * fam + 0.35 * pol
 
     ordered = sorted(steps, key=lambda s: -score(s))
     if verbose:
         top = ", ".join(f"{s[0]} {score(s):.2f}" for s in ordered[:5])
-        print(f"[smart] порядок шагов по роутеру: {top}")
+        src = ("роутер+политика" if (router and policy)
+               else ("роутер" if router else "политика"))
+        print(f"[smart] порядок по оценке ({src}): {top}")
     return ordered
-
 
 def steps_for(path, deep=False, depth=0):
     """[(имя_инструмента, аргументы, зачем, таймаут)] по типу данных."""
@@ -2005,6 +2027,8 @@ def main():
                     help="только умный порядок, без обычного прогона")
     ap.add_argument("--smart", action="store_true",
                     help="переставить шаги по оценке локального роутера")
+    ap.add_argument("--policy", default=os.environ.get("SOLVER_POLICY", ""),
+                    help="путь к policy_*.npz (по умолчанию ml/policy_best.npz)")
     ap.add_argument("--router", default=os.environ.get("SOLVER_ROUTER", ""),
                     help="путь к router_*.npz (по умолчанию $SOLVER_ROUTER)")
     common.add_flag_args(ap)
@@ -2029,18 +2053,29 @@ def main():
             cmd += ["--desc-file", args.desc_file]
         raise SystemExit(subprocess.call(cmd, cwd=here))
     if args.smart:
-        path = args.router or os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "ml", "router_best.npz")
-        if not os.path.exists(path):
-            print(f"[!] --smart: нет файла роутера {path} — работаю без модели")
+        here = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, os.path.join(here, "ml"))
+        router_path = args.router or os.path.join(here, "ml", "router_best.npz")
+        if not os.path.exists(router_path):
+            print(f"[!] --smart: нет роутера {router_path} — работаю по правилам")
         else:
-            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "ml"))
             try:
                 from np_router import Router
-                SMART_ORDER["router"] = Router(path)
-                print(f"[smart] роутер: {path}")
+                SMART_ORDER["router"] = Router(router_path)
+                print(f"[smart] роутер: {os.path.basename(router_path)}")
             except Exception as exc:
                 print(f"[!] --smart: роутер не загрузился ({exc})")
+        # политика — экспериментальная: на замере она не меняла число шагов
+        # (солвер идёт пачками параллельно), а на LSB-задаче ухудшала порядок.
+        # Поэтому включается только явно: --policy PATH или SOLVER_POLICY.
+        pol_path = args.policy
+        if pol_path and os.path.exists(pol_path):
+            try:
+                from np_policy import Policy
+                SMART_ORDER["policy"] = Policy(pol_path)
+                print(f"[smart] политика: {os.path.basename(pol_path)}")
+            except Exception as exc:
+                print(f"[!] --smart: политика не загрузилась ({exc})")
     if args.any_prefix:
         os.environ["FLAG_ANY"] = "1"
 

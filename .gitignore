@@ -54,3 +54,6 @@ secrets.json
 site/engine/.env
 
 .codegraph/
+# эксперимент ml/policy: большие артефакты не в git (полные лежат в F:\AIproject\ml-runs)
+ml/policy/*.pt
+ml/policy/traces*.jsonl

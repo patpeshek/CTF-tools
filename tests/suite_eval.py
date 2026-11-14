@@ -46,7 +46,7 @@ def main() -> int:
         t0 = time.time()
         proc = subprocess.run(
             [sys.executable, os.path.join(ROOT, "solve.py"),
-             os.path.join(args.dir, name), "--time", str(args.time)],
+             os.path.join(args.dir, name), "--time", str(args.time), "--rules-only"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=ROOT)
         dt = time.time() - t0

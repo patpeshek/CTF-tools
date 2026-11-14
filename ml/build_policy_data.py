@@ -23,6 +23,24 @@ from features import byte_hist, hand_features
 
 MAX_TOOLS = 48
 SUSPECT = ("REDACTED", "YOUR_FLAG", "not_the_flag", "flag_here", "example")
+FLAG_RE = __import__("re").compile(r"^[A-Za-z][A-Za-z0-9_]{1,15}\{([^{}\r\n]{4,80})\}$")
+
+
+def plausible_flag(flag: str) -> bool:
+    """Флаг должен быть похож на настоящий: тело из букв/цифр/подчёркиваний.
+
+    Сборщик запускает solve.py с `--any-prefix`, поэтому в трассы попадает
+    мусор вида `Ctf{4tfdyi|4kojz<sgq}`. Учить политику на нём нельзя:
+    модель выучит шум вместо «этот шаг сработал».
+    """
+    if any(s.lower() in flag.lower() for s in SUSPECT):
+        return False
+    m = FLAG_RE.match(flag.strip())
+    if not m:
+        return False
+    body = m.group(1)
+    good = sum(c.isalnum() or c in "_-!." for c in body)
+    return good / len(body) >= 0.9
 
 
 def main_file(task_dir: str, files: list) -> str:
@@ -92,9 +110,11 @@ def main():
             onehot = np.zeros(MAX_TOOLS, dtype=np.float32)
             onehot[tool_idx[tool]] = 1.0
             flags = st.get("flags") or []
-            good = [f for f in flags if not any(s in f for s in SUSPECT)]
-            extra = np.array([si / max(1, n), 1.0 if st.get("status") == "ok" else 0.0,
-                              min(len(flags), 3) / 3.0], dtype=np.float32)
+            good = [f for f in flags if plausible_flag(f)]
+            # ВАЖНО: только то, что известно ДО запуска шага.
+            # status и число флагов — следствие, а не признак: с ними модель
+            # «предсказывала» уже случившееся (фиктивные 0.96 top-1).
+            extra = np.array([si / max(1, n)], dtype=np.float32)
             X.append(np.concatenate([state, onehot, extra]))
             y.append(1.0 if good else 0.0)
             groups.append(ti)

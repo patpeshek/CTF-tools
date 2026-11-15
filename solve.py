@@ -2233,6 +2233,13 @@ def statement_steps(st, target):
         if head[:4] == b"\x7fELF":
             extra.append(("autopwn", [target, "--remote", hosts[0]],
                           f"payload на сервис {hosts[0]}", 60))
+        host, _, port = hosts[0].partition(":")
+        if host and port.isdigit():
+            # сначала просто послушать баннер, потом то же по UDP (nc -u)
+            extra.append(("replay", [host, port, "--wait", "2"],
+                          f"баннер сервиса {hosts[0]} (tcp)", 20))
+            extra.append(("replay", [host, port, "--udp", "--wait", "2"],
+                          f"баннер сервиса {hosts[0]} (udp, как nc -u)", 20))
     return extra
 
 

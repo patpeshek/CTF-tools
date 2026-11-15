@@ -154,6 +154,8 @@ REGISTRY = [
 
     ("pwn", "checksec", "pwn/checksec.py", "защиты ELF/PE"),
     ("pwn", "libcoff", "pwn/libcoff.py", "смещения libc: system, /bin/sh"),
+    ("pwn", "replay", "pwn/replay.py",
+     "подключиться к сервису: tcp/udp/http, отправить данные"),
     ("pwn", "autopwn", "pwn/autopwn.py",
      "статический payload: win/system + кандидаты смещения"),
     ("pwn", "ret2win", "pwn/ret2win.py", "паттерн/оффсет/payload"),

@@ -224,8 +224,12 @@ class Runner:
         # Первые PROBE шагов идут по одному: модели поставили их первыми не
         # просто так. Если они правы, флаг находится за 1-2 запуска и пачку
         # вообще не надо поднимать — это и есть экономия времени.
+        # только в умном режиме: там порядок осмысленный. В обычном прогоне
+        # первый шаг плана может быть «фактами», и ранний выход лишит задачу
+        # профильного инструмента (ловилось тестом solve.py admin config).
+        smart = SMART_ORDER.get("router") is not None
         probe = min(self.jobs, max(0, int(os.environ.get("SOLVER_PROBE", "2")))) \
-            if self.jobs > 1 else 0
+            if (self.jobs > 1 and smart) else 0
         for step in steps[:probe]:
             flag = self._one(step, None)
             if flag:

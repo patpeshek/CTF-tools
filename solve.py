@@ -66,6 +66,35 @@ WEAK_TOOLS = {"xorknown", "chain", "autocrack"}
 DECOY_PRONE = {"chain", "xorknown"}
 
 
+# Формат флага из условия: <lowercase>, <uppercase>, «нижнем регистре» и т.п.
+# Задача может требовать сдать флаг в другом регистре, чем он лежит в файле.
+FLAG_CASE = {"mode": None}
+_CASE_RX = re.compile(
+    r"(?i)<\s*(lowercase|uppercase|lower|upper)\s*>|"
+    r"нижн\w*\s*регистр|верхн\w*\s*регистр|"
+    r"\blowercase\b|\buppercase\b")
+
+
+def parse_flag_case(text: str) -> str | None:
+    if not text:
+        return None
+    m = _CASE_RX.search(text)
+    if not m:
+        return None
+    word = (m.group(1) or m.group(0)).lower()
+    return "upper" if "upper" in word or "верхн" in word else "lower"
+
+
+def apply_flag_case(flag: str) -> str:
+    """Привести флаг к регистру из условия (lower/upper), иначе как есть."""
+    mode = FLAG_CASE.get("mode")
+    if mode == "lower":
+        return flag.lower()
+    if mode == "upper":
+        return flag.upper()
+    return flag
+
+
 def flag_structured(flag: str) -> bool:
     """Похож ли флаг на настоящий: только буквы/цифры/подчёркивания и есть
     цифра или подчёркивание (либо он длинный). Отсекает 'uaz{atust}' и
@@ -333,6 +362,9 @@ class Runner:
                 self._say("     " + line[:200])
         if flags:
             uniq = list(dict.fromkeys(flags))
+            if FLAG_CASE.get("mode"):
+                # регистр из условия: «сдать в нижнем регистре» и т.п.
+                uniq = list(dict.fromkeys(apply_flag_case(f) for f in uniq))
             fakes = [f for f in uniq if flag_is_fake(f)]
             if fakes:
                 uniq = [f for f in uniq if f not in fakes]
@@ -1384,6 +1416,8 @@ def steps_for(path, deep=False, depth=0):
     if kind in ("PCAP", "PCAPNG"):
         # в сетевых задачах сначала ищем сам сервис: mDNS/DNS SRV даёт host:port
         add(("pcapsvc", [path], "сервис задачи: mDNS/SRV → host:port", 40))
+        add(("pcapstream", [path, "--all", "--limit", "20"],
+             "DNS/UDP/TCP-потоки, SNI, HTTP, сборка по seq", 60))
         add(("dns", [path], "канал в DNS", 60))
         add(("creds", [path], "пароли/куки", 40))
         add(("http", [path], "тела HTTP", 40))
@@ -2428,6 +2462,10 @@ def main():
                     "steps": [], "flag": None, "flags": [], "leads": [], "stubs": []})
             sys.exit(2)
         statement = _force_pwn_for_service(parse_statement(desc_text))
+        _case = parse_flag_case(desc_text or "")
+        if _case:
+            FLAG_CASE["mode"] = _case
+            print(f"[i] формат флага: регистр {_case}")
         apply_statement_flags(statement, args.any_prefix or os.environ.get("FLAG_ANY") == "1")
         print_statement(statement)
 

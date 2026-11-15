@@ -154,6 +154,8 @@ REGISTRY = [
 
     ("pwn", "checksec", "pwn/checksec.py", "защиты ELF/PE"),
     ("pwn", "libcoff", "pwn/libcoff.py", "смещения libc: system, /bin/sh"),
+    ("network", "pcapstream", "network/pcap_streams.py",
+     "pcap: DNS/UDP/TCP-потоки, SNI, HTTP, сборка по seq"),
     ("network", "pcapsvc", "network/pcap_service.py",
      "pcap: сервис задачи (mDNS SRV/A -> host:port)"),
     ("stego", "bmp_stego", "stego/bmp_stego.py",

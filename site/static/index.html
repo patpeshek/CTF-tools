@@ -143,9 +143,10 @@
     </div>
 
     <div class="row">
-      <input type="text" id="prefix" placeholder="формат флага, напр. ctf (не обязательно)">
+      <input type="text" id="prefix" placeholder="префикс флага, напр. ctf (не обязательно)">
+      <input type="text" id="fformat" placeholder="формат: ctf{<lowercase>} (регистр и т.п.)">
       <input type="number" id="budget" value="90" min="10" max="900" title="секунд на кит">
-      <label class="check"><input type="checkbox" id="deep" checked> глубокий режим</label>
+      <label class="check"><input type="checkbox" id="deep"> глубокий режим</label>
     </div>
 
     <div class="actions">
@@ -353,6 +354,7 @@ $("#go").onclick = async () => {
   if (purl) payload.inputs.push({ role: "url", value: purl });
   if ($("#plogin").value.trim()) payload.inputs.push({ role: "логин", value: $("#plogin").value.trim() });
   if ($("#ppass").value.trim()) payload.inputs.push({ role: "пароль", value: $("#ppass").value.trim() });
+  if ($("#fformat").value.trim()) payload.inputs.push({ role: "формат", value: $("#fformat").value.trim() });
   if ($("#pcookie").value.trim()) payload.inputs.push({ role: "cookie", value: $("#pcookie").value.trim() });
   if ($("#pheader").value.trim()) payload.inputs.push({ role: "header", value: $("#pheader").value.trim() });
   for (const f of files) {

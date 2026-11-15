@@ -151,11 +151,13 @@ def flag_prefixes(prefix: str | None) -> list[str]:
 
 
 def toolkit_events(path: str, budget: float, deep: bool, prefix: str | None,
-                   stop_check=None, desc_file: str | None = None):
+                   stop_check=None, desc_file: str | None = None,
+                   smart: bool = False):
     cmd = [sys.executable, os.path.join(ROOT, "solve.py"), path,
            "--events", "-", "--time", str(int(budget))]
     if deep:
         cmd.append("--deep")
+    cmd.append("--smart" if smart else "--rules-only")
     if desc_file:
         cmd += ["--desc-file", desc_file]
     for p in flag_prefixes(prefix):
@@ -243,7 +245,7 @@ def _agent_events(job: dict):
 FLAG_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,15}\{[ -~]{1,200}\}$")
 
 
-# локальные приманки: настоящий флаг в задачах с инстансом отдаёт сервер
+# то же, что в solve.py: локальные приманки вместо настоящего флага
 FAKE_FLAG_RX = re.compile(
     r"(?i)(fake|not[_-]?solve|not[_-]?solved|not[_-]?real|not[_-]?the[_-]?real|"
     r"placeholder|example|dummy|decoy|sample[_-]?flag|test[_-]?flag|"
@@ -321,6 +323,7 @@ def worker(job_id: str):
         if not value:
             continue
         role = str(item.get("role") or "").lower()
+        # пароль пишем в форме, которую понимает разбор условия
         if role in ("пароль", "password", "pass"):
             extra.append(f"password: {value}")
         elif role in ("url", "ссылка", "сайт"):
@@ -331,6 +334,8 @@ def worker(job_id: str):
             extra.append(f"cookie: {value}")
         elif role in ("header", "заголовок"):
             extra.append(f"header: {value}")
+        elif role in ("формат", "format"):
+            extra.append(f"формат флага: {value}")
         else:
             extra.append(f"[{item.get('role') or 'данные'}] {value}")
     # сервис для pwn: отдельная строка, чтобы разбор условия точно увидел host:port
@@ -349,25 +354,32 @@ def worker(job_id: str):
     else:
         desc_path = None
 
-    def stage_kit():
-        try:
-            if not files:
-                out.put(("kit", {"event": "runner_note",
-                                 "note": "файлов нет — кит пропущен, работаю по тексту"}))
-                return
-            for ev in toolkit_events(single, job["budget"], job["deep"],
-                                     job["prefix"], desc_file=desc_path,
-                                     stop_check=lambda: job.get("stop")
-                                     or job.get("finished")):
-                out.put(("kit", ev))
-        except Exception as exc:  # pragma: no cover
-            out.put(("kit", {"event": "runner_note",
-                             "note": f"ошибка кита: {exc}"}))
-        finally:
-            out.put(("kit", None))
+    def make_kit_stage(src, smart):
+        """Один прогон кита: rules или smart. Их запускаем два параллельно."""
+        def stage():
+            try:
+                if not files:
+                    out.put((src, {"event": "runner_note",
+                                   "note": "файлов нет — кит пропущен, работаю по тексту"}))
+                    return
+                for ev in toolkit_events(single, job["budget"], True,
+                                         job["prefix"], desc_file=desc_path,
+                                         stop_check=lambda: job.get("stop")
+                                         or job.get("finished"), smart=smart):
+                    out.put((src, ev))
+            except Exception as exc:  # pragma: no cover
+                out.put((src, {"event": "runner_note",
+                               "note": f"ошибка кита: {exc}"}))
+            finally:
+                out.put((src, None))
+        return stage
 
     def stage_second():
         try:
+            if not job.get("second", False):
+                out.put(("second", {"event": "runner_note",
+                                    "note": "дополнительный проход выключен — работает только кит"}))
+                return
             for ev in _agent_events(job):
                 out.put(("second", ev))
         except Exception as exc:  # pragma: no cover
@@ -376,12 +388,13 @@ def worker(job_id: str):
         finally:
             out.put(("second", None))
 
-    threads = [threading.Thread(target=stage_kit, daemon=True),
+    threads = [threading.Thread(target=make_kit_stage("kit", False), daemon=True),
+               threading.Thread(target=make_kit_stage("kit2", True), daemon=True),
                threading.Thread(target=stage_second, daemon=True)]
     for th in threads:
         th.start()
 
-    alive = {"kit": True, "second": True}
+    alive = {"kit": True, "kit2": True, "second": True}
     flag = None
     while any(alive.values()) and not job.get("stop"):
         try:
@@ -395,15 +408,17 @@ def worker(job_id: str):
         ev.setdefault("stage", src)
         if ev.get("event") == "flag":
             candidate = str(ev.get("flag") or "")
-            if valid_flag(candidate) and FAKE_FLAG_RX.search(candidate):
-                _emit(job, {"event": "runner_note",
-                            "note": "приманка из файла (нужен инстанс), "
-                                    "не считаю решением: " + candidate[:80]})
-                continue
             if not valid_flag(candidate):
                 _emit(job, {"event": "runner_note",
                             "note": "движок вернул не флаг, отбросил: "
                                     + repr(candidate)[:160]})
+                continue
+            if FAKE_FLAG_RX.search(candidate):
+                # локальная приманка: в задачах с инстансом настоящий флаг
+                # отдаёт сервер, поэтому «решено» здесь было бы враньём
+                _emit(job, {"event": "runner_note",
+                            "note": "приманка из файла (нужен инстанс), "
+                                    "не считаю решением: " + candidate[:80]})
                 continue
         _emit(job, ev)
         if ev.get("event") == "flag" and ev.get("flag"):
@@ -644,7 +659,8 @@ class Handler(BaseHTTPRequestHandler):
                 "inputs": [i for i in (data.get("inputs") or [])
                            if isinstance(i, dict)][:20],
                 "budget": max(10.0, min(budget, 900.0)),
-                "deep": bool(data.get("deep")),
+                "deep": True,
+                "second": bool(data.get("deep", False)),  # доп. проход, по умолчанию выкл
                 "reasoning": bool(data.get("reasoning")),
                 "thoughts": bool(data.get("thoughts")),
                 "prefix": (data.get("prefix") or "").strip()[:40] or None,

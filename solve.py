@@ -1425,6 +1425,11 @@ def steps_for(path, deep=False, depth=0):
                  "символы и адреса: win / system / /bin/sh", 30))
             add(("autopwn", [path],
                  "заготовка payload: цель + кандидаты смещения", 30))
+            # по умолчанию запускаем: иначе половина задач остаётся «на угадай».
+            # Отключается SOLVER_RUN=0. Запуск идёт в WSL, без песочницы.
+            if os.environ.get("SOLVER_RUN", "1") != "0":
+                add(("autopwn", [path, "--run"],
+                     "payload + проверка запуском через WSL", 60))
         add(("lang", [path], "язык/упаковка (Go/Rust/.NET/Electron)", 40))
         # libc рядом с бинарником — сразу считаем смещения для ret2libc
         if kind == "ELF":
@@ -2153,6 +2158,17 @@ def statement_steps(st, target):
         if b != target:
             extra.append(("chain", ["--time", "15", "--", b],
                           "строка из условия: все слои кодировок", 20))
+    # адрес сервиса из условия: собрать payload и отправить на него
+    hosts = st.get("hosts") or []
+    if hosts and os.path.isfile(target) and os.environ.get("SOLVER_RUN", "1") != "0":
+        try:
+            with open(target, "rb") as fh:
+                head = fh.read(4)
+        except OSError:
+            head = b""
+        if head[:4] == b"\x7fELF":
+            extra.append(("autopwn", [target, "--remote", hosts[0]],
+                          f"payload на сервис {hosts[0]}", 60))
     return extra
 
 

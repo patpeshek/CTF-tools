@@ -1916,6 +1916,7 @@ def _web_auth_args(statement):
 def solve_url(url, runner, deep, statement=None, plan_only=False):
     auth = _web_auth_args(statement)
     steps = [("recon", [url] + auth, "ссылки/формы/JS/куки/robots/флаги", 40),
+             ("jssecret", [url], "секреты в комментариях JS (dev-токены)", 30),
              ("param", [url] + (["--methods", "GET,POST"] if deep else []) + auth,
               "SQLi/XSS/траверсал + поиск флага в ответе", 60)]
     if deep:

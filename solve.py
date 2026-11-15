@@ -1275,6 +1275,12 @@ def steps_for(path, deep=False, depth=0):
     ext = os.path.splitext(path)[1].lower()
     steps = []
     add = steps.append
+    # RTF: данные часто в хвостовых пробелах/табах (Snow-подобное)
+    if data[:5] == b"{\\rtf":
+        add(("ws", [path, "--mode", "rtf"], "RTF: хвостовые пробелы/табы", 40))
+        add(("ws", [path, "--mode", "brute"],
+             "RTF: перебор space/tab-кодировок", 40))
+
     # JWT — отдельная ветка: токен может лежать в любом текстовом/бинарном файле,
     # и без него не видно, что задача про подмену claim (учитель/админ).
     if data:

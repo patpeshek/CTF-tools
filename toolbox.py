@@ -154,6 +154,8 @@ REGISTRY = [
 
     ("pwn", "checksec", "pwn/checksec.py", "защиты ELF/PE"),
     ("pwn", "libcoff", "pwn/libcoff.py", "смещения libc: system, /bin/sh"),
+    ("pwn", "autopwn", "pwn/autopwn.py",
+     "статический payload: win/system + кандидаты смещения"),
     ("pwn", "ret2win", "pwn/ret2win.py", "паттерн/оффсет/payload"),
     ("pwn", "fmtstr", "pwn/fmtstr.py", "format string helper"),
     ("pwn", "oracle", "pwn/oracle.py", "TCP-оракул: вопрос → формула → ответ, N раундов"),

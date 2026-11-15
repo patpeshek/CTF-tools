@@ -221,6 +221,16 @@ class Runner:
         """Несколько независимых шагов; при jobs>1 — параллельно, стоп на флаге."""
         if not steps:
             return None
+        # Первые PROBE шагов идут по одному: модели поставили их первыми не
+        # просто так. Если они правы, флаг находится за 1-2 запуска и пачку
+        # вообще не надо поднимать — это и есть экономия времени.
+        probe = min(self.jobs, max(0, int(os.environ.get("SOLVER_PROBE", "2")))) \
+            if self.jobs > 1 else 0
+        for step in steps[:probe]:
+            flag = self._one(step, None)
+            if flag:
+                return flag
+        steps = steps[probe:]
         if self.jobs == 1:
             for step in steps:
                 flag = self._one(step, None)
@@ -1157,7 +1167,7 @@ def smart_order(steps, target, verbose=True, hint=""):
         # у бинарника первые два шага решают всё остальное: что за язык/упаковка
         # (lang) и какие защиты (checksec). Веса их не поднимают — сумма
         # вероятностей по megarev больше, — поэтому поднимаем явно.
-        fast = ("lang", "checksec", "symbols", "libcoff")
+        fast = ("lang", "checksec", "symbols", "autopwn", "libcoff")
         head = [s for s in ordered if s[0] in fast]
         rest = [s for s in ordered if s[0] not in fast]
         ordered = head + rest
@@ -1413,6 +1423,8 @@ def steps_for(path, deep=False, depth=0):
                  20))
             add(("symbols", [path],
                  "символы и адреса: win / system / /bin/sh", 30))
+            add(("autopwn", [path],
+                 "заготовка payload: цель + кандидаты смещения", 30))
         add(("lang", [path], "язык/упаковка (Go/Rust/.NET/Electron)", 40))
         # libc рядом с бинарником — сразу считаем смещения для ret2libc
         if kind == "ELF":

@@ -1275,6 +1275,11 @@ def steps_for(path, deep=False, depth=0):
     ext = os.path.splitext(path)[1].lower()
     steps = []
     add = steps.append
+    # исходник crackme: массив байт + функция преобразования
+    if ext in (".c", ".cc", ".cpp", ".cxx", ".h") and data:
+        add(("srccheck", [path],
+             "crackme в исходнике: восстановить строку по массиву", 90))
+
     # RTF: данные часто в хвостовых пробелах/табах (Snow-подобное)
     if data[:5] == b"{\\rtf":
         add(("ws", [path, "--mode", "rtf"], "RTF: хвостовые пробелы/табы", 40))

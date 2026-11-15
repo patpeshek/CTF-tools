@@ -538,6 +538,11 @@ def main():
         for sc, alpha, key, plain in res:
             print(f"\n[score={sc:6.1f}] key={key}  алфавит={alpha}")
             print(f"  {plain[:300]}")
+            # плейнтекст часто и есть тело флага: оборачиваем в префикс
+            import re as _re
+            if _re.fullmatch(r"[a-z0-9_]{6,80}", plain or ""):
+                _pre = (common.prefixes() or ["flag"])[0]
+                print(f"[+] кандидат {_pre}{{{plain}}}")
     elif args.cipher == "vigenere-crack":
         res = vigenere_crack(args.text)
         if not res:

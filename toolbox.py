@@ -180,6 +180,8 @@ REGISTRY = [
     ("reverse", "ghidra", "reverse/ghidra_decomp.py", "декомпиляция Ghidra headless в C-подобный код"),
     ("reverse", "megarev", "reverse/megarev.py", "мега-реверс: тип/строки/ключи/перебор"),
     ("reverse", "lang", "reverse/lang_info.py", ".NET/Java/Go/Rust/Electron"),
+    ("reverse", "srccheck", "reverse/source_check.py",
+     "crackme в исходнике: строка по массиву байт (gcc)"),
     ("reverse", "symbols", "reverse/symbols.py", "символы/адреса win, system, /bin/sh"),
     ("reverse", "xorscan", "reverse/xor_scan.py", "поиск XOR-ключа по файлу"),
     ("reverse", "pypack", "reverse/py_pack.py", "PyInstaller/pyarmor/Nuitka"),

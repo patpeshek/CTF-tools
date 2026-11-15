@@ -243,6 +243,13 @@ def _agent_events(job: dict):
 FLAG_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,15}\{[ -~]{1,200}\}$")
 
 
+# локальные приманки: настоящий флаг в задачах с инстансом отдаёт сервер
+FAKE_FLAG_RX = re.compile(
+    r"(?i)(fake|not[_-]?solve|not[_-]?solved|not[_-]?real|not[_-]?the[_-]?real|"
+    r"placeholder|example|dummy|decoy|sample[_-]?flag|test[_-]?flag|"
+    r"local[_-]?only|need[_-]?server|replace[_-]?me|insert[_-]?flag)")
+
+
 def valid_flag(text: str) -> bool:
     """Флаг — одна строка без переводов строк, кавычек, слэшей и скобок внутри."""
     text = (text or "").strip()
@@ -308,8 +315,16 @@ def worker(job_id: str):
     out: queue.Queue = queue.Queue()
     desc_path = os.path.join(job["meta"], "task.txt")
     desc = job["task"].strip()
-    extra = [f"[{i.get('role') or 'данные'}] {i.get('value', '')}"
-             for i in job.get("inputs") or [] if str(i.get("value", "")).strip()]
+    extra = []
+    for item in job.get("inputs") or []:
+        value = str(item.get("value", "")).strip()
+        if not value:
+            continue
+        role = str(item.get("role") or "").lower()
+        if role in ("пароль", "password", "pass"):
+            extra.append(f"password: {value}")
+        else:
+            extra.append(f"[{item.get('role') or 'данные'}] {value}")
     # сервис для pwn: отдельная строка, чтобы разбор условия точно увидел host:port
     hosts = [i.get("value", "") for i in job.get("inputs") or []
              if (i.get("role") or "").lower() in ("адрес", "host", "ip")
@@ -372,6 +387,11 @@ def worker(job_id: str):
         ev.setdefault("stage", src)
         if ev.get("event") == "flag":
             candidate = str(ev.get("flag") or "")
+            if valid_flag(candidate) and FAKE_FLAG_RX.search(candidate):
+                _emit(job, {"event": "runner_note",
+                            "note": "приманка из файла (нужен инстанс), "
+                                    "не считаю решением: " + candidate[:80]})
+                continue
             if not valid_flag(candidate):
                 _emit(job, {"event": "runner_note",
                             "note": "движок вернул не флаг, отбросил: "

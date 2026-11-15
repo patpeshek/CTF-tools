@@ -719,7 +719,9 @@ def rtf_bit_variants(raw: str):
             if not data:
                 continue
             text = bytes(data).decode("latin-1")
-            if "{" in text and "}" in text:
+            printable = sum(32 <= ord(ch) < 127 for ch in text) / max(1, len(text))
+            if printable >= 0.85 and re.search(
+                    r"[A-Za-z0-9_]{2,20}\{[ -~]{3,80}\}", text):
                 out.append(text)
     return out
 

@@ -166,6 +166,8 @@ REGISTRY = [
      "pcap: сервис задачи (mDNS SRV/A -> host:port)"),
     ("stego", "bmp_stego", "stego/bmp_stego.py",
      "BMP: скрытые строки, хвост, битовые плоскости"),
+    ("stego", "rtfgaps", "stego/rtf_gaps.py",
+     "RTF: зазоры/серии как биты, диагностика и вердикт"),
     ("stego", "audiostego", "stego/audio_stego.py",
      "аудио: чанки/хвосты, LSB, спектр (wav/mp3)"),
     ("misc", "cpio", "misc/cpio.py",

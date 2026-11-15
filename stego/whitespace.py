@@ -671,7 +671,57 @@ def rtf_report(path: str, password: str | None = None):
     raw = data.decode("latin-1")
     run_structure(raw)
     run_snow(raw, password=password)
-    return run_brute(raw)
+    found = []
+    for cand in rtf_bit_variants(raw):
+        print(f"[+] RTF-биты: {cand!r}")
+        found.append(cand)
+        m = re.search(r"[A-Za-z0-9_]{2,20}\{[ -~]{3,80}\}", cand)
+        if m:
+            print(f"[!] ФЛАГ: {m.group(0)}")
+    return found or run_brute(raw)
+
+
+def rtf_bit_variants(raw: str):
+    """Биты из хвостовых пробелов/табов RTF; в нечётных строках инверсия.
+
+    Найдено на реальной задаче (`pi.rtf`): чётные строки кодируют space=0/tab=1,
+    нечётные — наоборот. Без этого биты дают мусор.
+    """
+    tails = []
+    for ln in raw.splitlines():
+        t = ln.rstrip("\r\n")
+        core = t.rstrip(" \t")
+        tail = t[len(core):]
+        if tail:
+            tails.append(tail)
+    if not tails:
+        return []
+    out = []
+    for flip in (None, 1, 0):          # None — без инверсии, 1/0 — чётность строки
+        for msb in (True, False):
+            bits = []
+            for i, t in enumerate(tails):
+                inv = flip is not None and (i % 2 == flip)
+                for c in t:
+                    if c == " ":
+                        bits.append(1 if inv else 0)
+                    elif c == "\t":
+                        bits.append(0 if inv else 1)
+            data = bytearray()
+            for i in range(0, len(bits) - 7, 8):
+                chunk = bits[i:i + 8]
+                if not msb:
+                    chunk = list(reversed(chunk))
+                v = 0
+                for x in chunk:
+                    v = (v << 1) | x
+                data.append(v)
+            if not data:
+                continue
+            text = bytes(data).decode("latin-1")
+            if "{" in text and "}" in text:
+                out.append(text)
+    return out
 
 
 def report(name, data):

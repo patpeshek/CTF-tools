@@ -927,6 +927,62 @@ PWN_ADVICE = {
 }
 
 
+# расширения, которые пахнут реверсом даже без магии ELF/PE
+BINARY_EXTS = {".elf", ".so", ".o", ".ko", ".dll", ".exe", ".out", ".bin",
+               ".dylib", ".pyc", ".pyo", ".apk", ".jar", ".dex", ".wasm", ".class"}
+
+
+def _looks_binary(head: bytes) -> bool:
+    return head[:4] == b"\x7fELF" or head[:2] == b"MZ"
+
+
+def _binary_candidates(target, limit: int = 3):
+    """ELF/PE внутри файла или папки задачи (для папки — первые limit штук)."""
+    out = []
+    if os.path.isfile(target):
+        try:
+            with open(target, "rb") as fh:
+                head = fh.read(4)
+        except OSError:
+            return out
+        if _looks_binary(head):
+            out.append(target)
+        return out
+    if not os.path.isdir(target):
+        return out
+    for root, dirs, names in os.walk(target):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__",
+                                                "node_modules")]
+        for n in sorted(names):
+            fp = os.path.join(root, n)
+            try:
+                size = os.path.getsize(fp)
+                if size < 64 or size > 64 * 1024 * 1024:
+                    continue
+                with open(fp, "rb") as fh:
+                    head = fh.read(4)
+            except OSError:
+                continue
+            if _looks_binary(head):
+                out.append(fp)
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def _task_hint(target, statement=None) -> str:
+    """Похожа ли задача на реверс/pwn — по условию, расширению или содержимому."""
+    cat = (statement or {}).get("category") or ""
+    if cat in ("reverse", "pwn"):
+        return cat
+    ext = os.path.splitext(target)[1].lower()
+    if ext in BINARY_EXTS:
+        return "pwn" if ext in (".so", ".ko") else "reverse"
+    if os.path.isdir(target) and _binary_candidates(target, limit=1):
+        return "reverse"
+    return ""
+
+
 def _ai_sample(target):
     """Байты, по которым модель судит о задаче (файл или папка)."""
     if os.path.isfile(target):
@@ -1018,13 +1074,23 @@ def _derive_targets(path):
     return out
 
 
-def smart_order(steps, target, verbose=True):
+def smart_order(steps, target, verbose=True, hint=""):
     """Переставить шаги по оценке роутера и политики; правила остаются внутри."""
     router = SMART_ORDER.get("router")
     policy = SMART_ORDER.get("policy")
     if (router is None and policy is None) or not steps:
         return steps
     data = _ai_sample(target)
+    hint = hint or ""
+    # если прямых байтов-бинарника нет (папка, архив, .pyc), берём найденный ELF/PE
+    if not (data[:4] == b"\x7fELF" or data[:2] == b"MZ"):
+        for cand in _binary_candidates(target, limit=1):
+            try:
+                with open(cand, "rb") as fh:
+                    data = fh.read(2_000_000)
+                break
+            except OSError:
+                continue
     if not data:
         return steps
 
@@ -1044,6 +1110,14 @@ def smart_order(steps, target, verbose=True):
         # язык/упаковка (Go/Rust/.NET) и профиль защит — они меняют весь план
         fam_score["lang"] = fam_score.get("lang", 0.0) + 1.0
         fam_score["checksec"] = fam_score.get("checksec", 0.0) + 0.9
+    if hint == "reverse" and not is_binary:
+        # задача про реверс, но магия не ELF (.pyc, .apk, .wasm…): без модели
+        # всё равно поднимаем реверс-инструменты — это её тип
+        for tool in ("lang", "strings", "megarev", "disasm", "ghidra"):
+            fam_score[tool] = fam_score.get(tool, 0.0) + 0.8
+    if hint == "pwn":
+        for tool in ("checksec", "symbols", "libcoff", "disasm"):
+            fam_score[tool] = fam_score.get(tool, 0.0) + 1.2
     if rev is not None and is_binary:
         try:
             for fam, p in zip(rev.families, rev.probs(data)):
@@ -1524,13 +1598,29 @@ def _dedupe_steps(steps):
 
 
 def solve_file(target, runner, deep, plan_only, statement=None):
+    hint = _task_hint(target, statement)
     steps, kind = steps_for(target, deep)
+    # задача похожа на реверс/pwn, а цель — папка, .pyc, .apk: разбираем
+    # найденные внутри ELF/PE тем же планом, что и обычный бинарник
+    if kind not in ("ELF", "PE"):
+        cands = _binary_candidates(target, limit=1)
+        for cand in cands:
+            sub, _subk = steps_for(cand)
+            steps = _dedupe_steps(steps + sub)
+        if not cands and hint in ("reverse", "pwn"):
+            extra = [("lang", [target], "тип и упаковка (реверс-задача)", 40),
+                     ("strings", [target], "строки с ключевыми словами", 40),
+                     ("megarev", [target, "--no-crypto", "--time", "30"],
+                      "строки/PIN/ключи", 60)]
+            if hint == "pwn":
+                extra.append(("checksec", [target, "--json"], "защиты", 20))
+            steps = _dedupe_steps(steps + extra)
     if statement:
         # условие: добавить шаги с паролями/ключами и поднять подсказанные
         steps = _dedupe_steps(order_steps(statement_steps(statement, target) + steps,
                                           statement))
     if SMART_ORDER.get("router") is not None:
-        steps = smart_order(steps, target)
+        steps = smart_order(steps, target, hint=hint)
     runner.note_plan(steps, kind, "dir" if os.path.isdir(target) else "file",
                      target, statement)
     print(f"[+] тип: {kind}")

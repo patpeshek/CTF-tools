@@ -157,9 +157,15 @@ def label_of(data: bytes) -> str:
         return "pwn_pe"
     if fmt != "elf":
         return ""
+    # ET_DYN без PT_INTERP — это .so (libc и т.п.), а не pwn-задача:
+    # раньше такие файлы падали в pwn_static и портили и метки, и совет
+    import struct as _st
+    e_type = _st.unpack_from("<H", data, 0x10)[0] if len(data) > 18 else 0
+    if e_type == 3 and not p["static"]:
+        return ""            # shared-библиотека: класса нет
     if p["static"]:
         return "pwn_static"
-    if not p["nx"]:
+    if p["nx"] is False:
         return "pwn_shellcode"
     if not p["canary"] and not p["pie"]:
         return "pwn_ret2win"

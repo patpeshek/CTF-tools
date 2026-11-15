@@ -137,6 +137,10 @@
       <input type="text" id="plogin" placeholder="логин (ssh/web, если есть)">
       <input type="password" id="ppass" placeholder="пароль / токен (если есть)">
     </div>
+    <div class="row tight">
+      <input type="text" id="pcookie" placeholder="cookie: session=... (если инстанс не пускает)">
+      <input type="text" id="pheader" placeholder="заголовок, напр. Authorization: Bearer ...">
+    </div>
 
     <div class="row">
       <input type="text" id="prefix" placeholder="формат флага, напр. ctf (не обязательно)">
@@ -349,6 +353,8 @@ $("#go").onclick = async () => {
   if (purl) payload.inputs.push({ role: "url", value: purl });
   if ($("#plogin").value.trim()) payload.inputs.push({ role: "логин", value: $("#plogin").value.trim() });
   if ($("#ppass").value.trim()) payload.inputs.push({ role: "пароль", value: $("#ppass").value.trim() });
+  if ($("#pcookie").value.trim()) payload.inputs.push({ role: "cookie", value: $("#pcookie").value.trim() });
+  if ($("#pheader").value.trim()) payload.inputs.push({ role: "header", value: $("#pheader").value.trim() });
   for (const f of files) {
     payload.files.push({ name: f.path, b64: await b64(f.file) });
   }

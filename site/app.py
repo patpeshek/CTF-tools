@@ -327,6 +327,10 @@ def worker(job_id: str):
             extra.append(f"url: {value}")
         elif role in ("логин", "login", "user"):
             extra.append(f"login: {value}")
+        elif role in ("cookie", "куки", "cookies"):
+            extra.append(f"cookie: {value}")
+        elif role in ("header", "заголовок"):
+            extra.append(f"header: {value}")
         else:
             extra.append(f"[{item.get('role') or 'данные'}] {value}")
     # сервис для pwn: отдельная строка, чтобы разбор условия точно увидел host:port

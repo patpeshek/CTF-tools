@@ -1331,9 +1331,24 @@ def solve_file(target, runner, deep, plan_only, statement=None):
     return None
 
 
+def _web_auth_args(statement):
+    """--cookie/--header из условия: инстанс без авторизации не отдаёт флаг."""
+    extra = []
+    if not statement:
+        return extra
+    for c in (statement.get("cookies") or [])[:2]:
+        if c:
+            extra += ["--cookie", c]
+    for h in (statement.get("headers") or [])[:3]:
+        if h:
+            extra += ["--header", h]
+    return extra
+
+
 def solve_url(url, runner, deep, statement=None, plan_only=False):
-    steps = [("recon", [url], "ссылки/формы/JS/куки/robots/флаги", 40),
-             ("param", [url] + (["--methods", "GET,POST"] if deep else []),
+    auth = _web_auth_args(statement)
+    steps = [("recon", [url] + auth, "ссылки/формы/JS/куки/robots/флаги", 40),
+             ("param", [url] + (["--methods", "GET,POST"] if deep else []) + auth,
               "SQLi/XSS/траверсал + поиск флага в ответе", 60)]
     if deep:
         steps.append(("dirfuzz", [url], "скрытые пути", 90))
@@ -1507,6 +1522,7 @@ def parse_statement(text: str) -> dict:
     text = text or ""
     st = {"category": None, "scores": {}, "hints": [], "flag_prefixes": [],
           "passwords": [], "params": {}, "quoted": [], "urls": [], "hosts": [],
+          "cookies": [], "headers": [],
           "blobs": []}
     if not text.strip():
         return st
@@ -1557,6 +1573,15 @@ def parse_statement(text: str) -> dict:
         if u not in urls:
             urls.append(u)
     st["urls"] = urls
+    # куки/заголовки из условия: без них инстанс часто не пускает
+    cookies = [m.group(1).strip() for m in re.finditer(
+        r"(?im)^\s*cookie\s*:\s*(.+)$", text)]
+    cookies += [m.group(1).strip() for m in re.finditer(
+        r"(?im)^\s*\[cookie\]\s*(.+)$", text)]
+    st["cookies"] = list(dict.fromkeys(c for c in cookies if c))[:3]
+    headers = [m.group(1).strip() for m in re.finditer(
+        r"(?im)^\s*header\s*:\s*(.+)$", text)]
+    st["headers"] = list(dict.fromkeys(h for h in headers if h))[:5]
     no_url = _URL_RE.sub(" ", text)
     hosts = []
     for rx in (_NC_RE, _HOSTPORT_RE):

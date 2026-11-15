@@ -950,10 +950,14 @@ def _binary_candidates(target, limit: int = 3):
         return out
     if not os.path.isdir(target):
         return out
+    scanned = 0
     for root, dirs, names in os.walk(target):
         dirs[:] = [d for d in dirs if d not in (".git", "__pycache__",
                                                 "node_modules")]
         for n in sorted(names):
+            scanned += 1
+            if scanned > 4000:      # большая папка не должна вешать планирование
+                return out
             fp = os.path.join(root, n)
             try:
                 size = os.path.getsize(fp)

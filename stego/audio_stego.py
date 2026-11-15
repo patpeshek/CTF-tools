@@ -519,9 +519,9 @@ def lsb_report(data: bytes, riff: dict, planes: int = 0, max_samples: int = 4_00
             out["planes"].append(pb)
     best = max(out["planes"], key=lambda d: d.get("maxlen_msb", 0), default=None)
     out["best"] = best["plane"] if best else None
-    if best and best.get("maxlen_msb", 0) >= 16:
+    if best and (best.get("flags") or best.get("maxlen_msb", 0) >= 12):
         out["verdict"] = (f"план {out['best']}: текст {best['maxlen_msb']} симв. подряд — "
-                          "похоже на стего, смотри --plane/--offset")
+                          "похоже на стего")
     elif best and best.get("maxlen_msb", 0) >= 10:
         out["verdict"] = f"план {out['best']}: 10+ символов, но это может быть шум"
     else:

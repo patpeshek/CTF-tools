@@ -160,6 +160,8 @@ REGISTRY = [
      "pcap: сервис задачи (mDNS SRV/A -> host:port)"),
     ("stego", "bmp_stego", "stego/bmp_stego.py",
      "BMP: скрытые строки, хвост, битовые плоскости"),
+    ("stego", "audiostego", "stego/audio_stego.py",
+     "аудио: чанки/хвосты, LSB, спектр (wav/mp3)"),
     ("pwn", "replay", "pwn/replay.py",
      "подключиться к сервису: tcp/udp/http, отправить данные"),
     ("pwn", "autopwn", "pwn/autopwn.py",

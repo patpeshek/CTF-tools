@@ -2294,6 +2294,25 @@ def statement_steps(st, target):
         if b != target:
             extra.append(("chain", ["--time", "15", "--", b],
                           "строка из условия: все слои кодировок", 20))
+    # cookie из условия: чаще всего это Flask-сессия или JWT. Без секрета
+    # админку не открыть, поэтому сразу пробуем словарь типовых ключей.
+    _common = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "web", "common_secrets.txt")
+    for ck in (st.get("cookies") or [])[:2]:
+        val = str(ck)
+        if "=" in val and " " in val:
+            val = val.split(";")[0].split("=", 1)[-1]
+        val = val.strip()
+        if not val:
+            continue
+        if os.path.exists(_common):
+            if val.count(".") == 2:
+                extra.append(("jwtbrute", [val, "--wordlist", _common],
+                              "JWT: словарь типовых секретов", 40))
+            elif val.count(".") == 1:
+                extra.append(("flasksess", ["crack", val, "--wordlist", _common],
+                              "Flask-сессия: словарь типовых SECRET_KEY", 40))
+
     # адрес сервиса из условия: собрать payload и отправить на него
     hosts = st.get("hosts") or []
     if hosts and os.path.isfile(target) and os.environ.get("SOLVER_RUN", "1") != "0":

@@ -146,6 +146,8 @@ REGISTRY = [
     ("web", "recon", "web/recon.py", "разведка страницы: ссылки/формы/JS/куки/robots"),
     ("web", "jwt", "web/jwt_tool.py", "JWT decode/forge"),
     ("web", "jwtbrute", "web/jwt_brute.py", "подбор секрета JWT"),
+    ("web", "flasksess", "web/flask_session.py",
+     "Flask-сессия: decode/forge/crack по SECRET_KEY"),
     ("web", "ssti", "web/ssti_probe.py", "поиск SSTI"),
     ("web", "param", "web/param_probe.py", "payload'ы по параметрам"),
     ("web", "dirfuzz", "web/dir_fuzz.py", "перебор директорий"),

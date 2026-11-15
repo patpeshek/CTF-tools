@@ -1257,6 +1257,19 @@ def steps_for(path, deep=False, depth=0):
     ext = os.path.splitext(path)[1].lower()
     steps = []
     add = steps.append
+    # JWT — отдельная ветка: токен может лежать в любом текстовом/бинарном файле,
+    # и без него не видно, что задача про подмену claim (учитель/админ).
+    if data:
+        _head = data[:300000].decode("utf-8", "ignore")
+        _m = re.search(r"eyJ[\w-]{5,}\.[\w-]{5,}\.[\w-]*", _head)
+        if _m:
+            add(("jwt", ["decode", _m.group(0)], "JWT: claims (teacher/admin?)", 20))
+            for _wl in (os.environ.get("SOLVER_WORDLIST"),
+                        r"F:\dev\wordlists\rockyou.txt"):
+                if _wl and os.path.exists(_wl):
+                    add(("jwtbrute", [_m.group(0), "--wordlist", _wl],
+                         "подбор HMAC-секрета JWT по словарю", 120))
+                    break
     # вшитые кодировки внутри бинарника: base64/hex/utf16 (chain.run_ops).
     # Стоит копейки (0.0-0.1 c) и ловит флаг, приклеенный после IEND/в теге/в логе.
     if kind in ("PNG", "JPEG", "GIF", "PDF", "SQLite", "MP3", "PCAP", "PCAPNG",

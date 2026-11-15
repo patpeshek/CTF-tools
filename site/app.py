@@ -310,6 +310,12 @@ def worker(job_id: str):
     desc = job["task"].strip()
     extra = [f"[{i.get('role') or 'данные'}] {i.get('value', '')}"
              for i in job.get("inputs") or [] if str(i.get("value", "")).strip()]
+    # сервис для pwn: отдельная строка, чтобы разбор условия точно увидел host:port
+    hosts = [i.get("value", "") for i in job.get("inputs") or []
+             if (i.get("role") or "").lower() in ("адрес", "host", "ip")
+             and str(i.get("value", "")).strip()]
+    if hosts:
+        extra.append("сервис: " + " ".join(str(h) for h in hosts))
     if desc or extra:
         try:
             with open(desc_path, "w", encoding="utf-8", newline="\n") as fh:

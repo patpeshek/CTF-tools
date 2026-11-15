@@ -118,6 +118,22 @@
     <div id="fields"></div>
     <div class="row tight"><button class="ghost" id="addfield">+ поле</button></div>
 
+    <label class="lbl">pwn: сервис (если задача с сервером)</label>
+    <div class="row tight">
+      <input type="text" id="phost" placeholder="host / IP, напр. 10.0.0.5">
+      <input type="number" id="pport" placeholder="порт" min="1" max="65535">
+      <select id="pconn" title="чем подключаться">
+        <option value="">способ…</option>
+        <option value="nc">nc</option>
+        <option value="socat">socat</option>
+        <option value="ssh">ssh</option>
+        <option value="http">http</option>
+      </select>
+    </div>
+    <div class="row tight">
+      <input type="password" id="ppass" placeholder="пароль / ключ доступа (если есть)">
+    </div>
+
     <div class="row">
       <input type="text" id="prefix" placeholder="формат флага, напр. ctf (не обязательно)">
       <input type="number" id="budget" value="90" min="10" max="900" title="секунд на кит">
@@ -293,6 +309,12 @@ $("#go").onclick = async () => {
       value: row.querySelector("input").value,
     })).filter(x => x.value.trim()),
   };
+  // pwn-сервис: адрес и способ подключения уходят в условие задачи
+  const phost = $("#phost").value.trim();
+  const pport = $("#pport").value.trim();
+  if (phost) payload.inputs.push({ role: "адрес", value: pport ? phost + ":" + pport : phost });
+  if ($("#pconn").value) payload.inputs.push({ role: "подключение", value: $("#pconn").value });
+  if ($("#ppass").value.trim()) payload.inputs.push({ role: "пароль", value: $("#ppass").value.trim() });
   for (const f of files) {
     payload.files.push({ name: f.path, b64: await b64(f.file) });
   }

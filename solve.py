@@ -1474,6 +1474,7 @@ def steps_for(path, deep=False, depth=0):
         add(("pcapsvc", [path], "сервис задачи: mDNS/SRV → host:port", 40))
         add(("pcapstream", [path, "--all", "--limit", "20"],
              "DNS/UDP/TCP-потоки, SNI, HTTP, сборка по seq", 60))
+        add(("dnsb32", [path], "DNS-метки: склейка по номерам (base32)", 40))
         add(("dns", [path], "канал в DNS", 60))
         add(("creds", [path], "пароли/куки", 40))
         add(("http", [path], "тела HTTP", 40))

@@ -1366,6 +1366,8 @@ def steps_for(path, deep=False, depth=0):
                  "рядом ключ и IV — AES-CBC", 40))
 
     if kind in ("PCAP", "PCAPNG"):
+        # в сетевых задачах сначала ищем сам сервис: mDNS/DNS SRV даёт host:port
+        add(("pcapsvc", [path], "сервис задачи: mDNS/SRV → host:port", 40))
         add(("dns", [path], "канал в DNS", 60))
         add(("creds", [path], "пароли/куки", 40))
         add(("http", [path], "тела HTTP", 40))

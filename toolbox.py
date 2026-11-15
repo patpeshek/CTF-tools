@@ -154,6 +154,8 @@ REGISTRY = [
 
     ("pwn", "checksec", "pwn/checksec.py", "защиты ELF/PE"),
     ("pwn", "libcoff", "pwn/libcoff.py", "смещения libc: system, /bin/sh"),
+    ("network", "pcapsvc", "network/pcap_service.py",
+     "pcap: сервис задачи (mDNS SRV/A -> host:port)"),
     ("pwn", "replay", "pwn/replay.py",
      "подключиться к сервису: tcp/udp/http, отправить данные"),
     ("pwn", "autopwn", "pwn/autopwn.py",

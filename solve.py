@@ -1051,6 +1051,7 @@ def smart_order(steps, target, verbose=True):
                     fam_score[tool] = fam_score.get(tool, 0.0) + float(p)
         except Exception:
             pass
+
     mx_fam = max(fam_score.values()) if fam_score else 1.0
 
     pol_score = {}
@@ -1320,6 +1321,12 @@ def steps_for(path, deep=False, depth=0):
                     sys.path.insert(0, _ml)
                 import pwn_features
                 advice = PWN_ADVICE.get(pwn_features.label_of(data), "")
+                if not advice:          # заголовок не разобрался — спросим модель
+                    _pwn = SMART_ORDER.get("pwn")
+                    if _pwn is not None:
+                        fam, prob = _pwn.top(data, 1)[0]
+                        if prob >= 0.5:
+                            advice = PWN_ADVICE.get(fam, "")
             except Exception:
                 advice = ""
         if kind == "ELF":

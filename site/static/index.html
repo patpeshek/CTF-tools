@@ -291,8 +291,30 @@ $("#addfield").onclick = () => addField();
 $("#task").oninput = canGo;
 
 /* ---------- запуск ---------- */
+// pwn-сервис: адрес без порта или способа подключения — не запускаем
+function checkService() {
+  const host = $("#phost").value.trim();
+  const port = $("#pport").value.trim();
+  const conn = $("#pconn").value;
+  const pass = $("#ppass").value.trim();
+  if (!host) {
+    if (port || conn || pass) {
+      return "указан порт/способ/пароль без адреса — добавь host / IP";
+    }
+    return "";
+  }
+  if (!port) return "если указан адрес — нужен порт";
+  const n = Number(port);
+  if (!(n >= 1 && n <= 65535)) return "порт должен быть 1..65535";
+  if (!conn) return "если указан адрес — выбери способ подключения (nc/socat/ssh/http)";
+  if (!pass) $("#ppass").placeholder = "пароль / ключ доступа (если есть)";
+  return "";
+}
+
 $("#go").onclick = async () => {
   if (!files.length && !$("#task").value.trim()) return;
+  const bad = checkService();
+  if (bad) { $("#warn").textContent = bad; return; }
   $("#go").disabled = true; $("#stop").disabled = false;
   $("#log").innerHTML = ""; $("#logsum").textContent = ""; lines = {}; $("#warn").textContent = "";
   $("#flagbox").className = "flag"; $("#tout").textContent = "(нет задач)";

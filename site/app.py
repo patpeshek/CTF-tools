@@ -538,6 +538,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(413, {"error": "слишком большой запрос (лимит 128 МБ): "
                                       "загрузи файлы по одному или архивом"})
             return
+        # адрес сервиса без порта — задача не запускается (нечего подключать)
+        for item in data.get("inputs") or []:
+            role = str(item.get("role") or "").lower()
+            value = str(item.get("value") or "").strip()
+            if role in ("адрес", "host", "ip") and value and ":" not in value:
+                self._json(400, {"error": "адрес сервиса без порта: укажи host:port "
+                                          "(поле «порт»)"})
+                return
         files = data.get("files") or []
         if not files and not str(data.get("task") or "").strip():
             self._json(400, {"error": "нужна задача или хотя бы один файл"})

@@ -164,6 +164,8 @@ REGISTRY = [
      "BMP: скрытые строки, хвост, битовые плоскости"),
     ("stego", "audiostego", "stego/audio_stego.py",
      "аудио: чанки/хвосты, LSB, спектр (wav/mp3)"),
+    ("misc", "cpio", "misc/cpio.py",
+     "cpio/initramfs: список, распаковка, поиск флагов"),
     ("pwn", "replay", "pwn/replay.py",
      "подключиться к сервису: tcp/udp/http, отправить данные"),
     ("pwn", "autopwn", "pwn/autopwn.py",

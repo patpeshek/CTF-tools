@@ -603,12 +603,27 @@ def unpack_one(path):
 
     data = common.read_bytes(path)
     kind = _archive_kind(path, data)
+    if data[:6] in (b"070701", b"070702"):
+        kind = "CPIO"
     base = os.path.join(tempfile.gettempdir(), "solve_unpack",
                         os.path.basename(path).replace(".", "_"))
     os.makedirs(base, exist_ok=True)
     out = []
     try:
-        if kind == "XZ":
+        if kind == "CPIO":
+            sys.path.insert(0, os.path.join(os.path.dirname(
+                os.path.abspath(__file__)), "misc"))
+            import cpio as _cpio
+            os.makedirs(base, exist_ok=True)
+            for name, _mode, content in _cpio.parse_newc(data)[:3000]:
+                if name.endswith("/"):
+                    continue
+                dst = os.path.join(base, _cpio.safe_name(name))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(dst, "wb") as fh:
+                    fh.write(content)
+                out.append(dst)
+        elif kind == "XZ":
             raw = lzma.decompress(data)
             name = os.path.basename(path)
             for suf in (".xz", ".lzma", ".txz", ".tlz"):
@@ -1231,6 +1246,9 @@ def smart_order(steps, target, verbose=True, hint=""):
     if data[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4"):
         head = [s for s in ordered if s[0] == "pcapsvc"]
         ordered = head + [s for s in ordered if s[0] != "pcapsvc"]
+    if data[:6] in (b"070701", b"070702", b"070707"):
+        head = [x for x in ordered if x[0] == "cpio"]
+        ordered = head + [x for x in ordered if x[0] != "cpio"]
     if data[:2] == b"BM":
         # BMP: сначала разбор заголовка/скрытых строк, он и решает задачу
         head = [s for s in ordered if s[0] == "bmp_stego"]
@@ -1424,6 +1442,13 @@ def steps_for(path, deep=False, depth=0):
         if hint.get("iv"):
             add(("aes", [path, "--key", hint["key"], "--iv", hint["iv"]],
                  "рядом ключ и IV — AES-CBC", 40))
+
+    if data[:6] in (b"070701", b"070702", b"070707"):
+        add(("cpio", [path, "--grep", "--list"],
+             "cpio/initramfs: содержимое и флаги", 60))
+        add(("cpio", [path, "--out", os.path.join(tempfile.gettempdir(),
+                                                 "solve_cpio")],
+             "распаковать initramfs для разбора", 90))
 
     if kind == "BMP":
         add(("bmp_stego", [path, "--tail", "--planes"],

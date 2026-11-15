@@ -346,7 +346,10 @@ class Runner:
         # строки-кандидаты (OCR-варианты, «может быть») — не подтверждённый флаг
         scan = "\n".join(
             line for line in out.splitlines()
-            if not line.lstrip().startswith(("[?]", "[i]")) or "ФЛАГ" in line
+            if (not line.lstrip().startswith(("[?]", "[i]"))
+                or "ФЛАГ" in line
+                # явный кандидат от инструмента — это тоже сигнал, не мусор
+                or re.search(r"кандидат", line, re.I))
         )
         flags, stubs = real_flags(scan.encode())
         if stubs and not flags:

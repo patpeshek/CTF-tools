@@ -326,6 +326,10 @@ def worker(job_id: str):
         # пароль пишем в форме, которую понимает разбор условия
         if role in ("пароль", "password", "pass"):
             extra.append(f"password: {value}")
+        elif role in ("url", "ссылка", "сайт"):
+            extra.append(f"url: {value}")
+        elif role in ("логин", "login", "user"):
+            extra.append(f"login: {value}")
         else:
             extra.append(f"[{item.get('role') or 'данные'}] {value}")
     # сервис для pwn: отдельная строка, чтобы разбор условия точно увидел host:port

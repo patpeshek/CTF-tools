@@ -118,7 +118,10 @@
     <div id="fields"></div>
     <div class="row tight"><button class="ghost" id="addfield">+ поле</button></div>
 
-    <label class="lbl">pwn: сервис (если задача с сервером)</label>
+    <label class="lbl">сервис / инстанс (если задача с сервером или сайтом)</label>
+    <div class="row tight">
+      <input type="text" id="purl" placeholder="URL инстанса, напр. http://host:8080/">
+    </div>
     <div class="row tight">
       <input type="text" id="phost" placeholder="host / IP, напр. 10.0.0.5">
       <input type="number" id="pport" placeholder="порт" min="1" max="65535">
@@ -131,7 +134,8 @@
       </select>
     </div>
     <div class="row tight">
-      <input type="password" id="ppass" placeholder="пароль / ключ доступа (если есть)">
+      <input type="text" id="plogin" placeholder="логин (ssh/web, если есть)">
+      <input type="password" id="ppass" placeholder="пароль / токен (если есть)">
     </div>
 
     <div class="row">
@@ -297,6 +301,11 @@ function checkService() {
   const port = $("#pport").value.trim();
   const conn = $("#pconn").value;
   const pass = $("#ppass").value.trim();
+  const url = $("#purl").value.trim();
+  if (url && !/^https?:\/\//i.test(url)) {
+    return "URL инстанса должен начинаться с http:// или https://";
+  }
+  if (url) return "";
   if (!host) {
     if (port || conn || pass) {
       return "указан порт/способ/пароль без адреса — добавь host / IP";
@@ -334,8 +343,11 @@ $("#go").onclick = async () => {
   // pwn-сервис: адрес и способ подключения уходят в условие задачи
   const phost = $("#phost").value.trim();
   const pport = $("#pport").value.trim();
+  const purl = $("#purl").value.trim();
   if (phost) payload.inputs.push({ role: "адрес", value: pport ? phost + ":" + pport : phost });
   if ($("#pconn").value) payload.inputs.push({ role: "подключение", value: $("#pconn").value });
+  if (purl) payload.inputs.push({ role: "url", value: purl });
+  if ($("#plogin").value.trim()) payload.inputs.push({ role: "логин", value: $("#plogin").value.trim() });
   if ($("#ppass").value.trim()) payload.inputs.push({ role: "пароль", value: $("#ppass").value.trim() });
   for (const f of files) {
     payload.files.push({ name: f.path, b64: await b64(f.file) });

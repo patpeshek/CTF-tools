@@ -1609,6 +1609,11 @@ def steps_for(path, deep=False, depth=0):
             pre = (common.prefixes() or ["CTF"])[0]
             add(("xorknown", [path, "--known", f"{pre}{{"],
                  "XOR: текст начинается с префикса флага", 20))
+            # регистр префикса в файле может отличаться: CTF{ vs ctf{
+            for _var in {pre.lower(), pre.upper(), pre.capitalize()}:
+                if _var != pre:
+                    add(("xorknown", [path, "--known", f"{_var}{{"],
+                         f"XOR: префикс {_var}{{ (другой регистр)", 20))
         if text and common.printable_ratio(text) >= 0.85:
             try:
                 doc0 = json.loads(text)

@@ -1192,6 +1192,14 @@ def smart_order(steps, target, verbose=True, hint=""):
         return 0.65 * fam + 0.35 * pol
 
     ordered = sorted(steps, key=lambda s: -score(s))
+    # для pcap сервис задачи важнее всего: без host:port остальное бесполезно
+    if data[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4"):
+        head = [s for s in ordered if s[0] == "pcapsvc"]
+        ordered = head + [s for s in ordered if s[0] != "pcapsvc"]
+    if data[:2] == b"BM":
+        # BMP: сначала разбор заголовка/скрытых строк, он и решает задачу
+        head = [s for s in ordered if s[0] == "bmp_stego"]
+        ordered = head + [s for s in ordered if s[0] != "bmp_stego"]
     if is_binary:
         # у бинарника первые два шага решают всё остальное: что за язык/упаковка
         # (lang) и какие защиты (checksec). Веса их не поднимают — сумма
@@ -1364,6 +1372,14 @@ def steps_for(path, deep=False, depth=0):
         if hint.get("iv"):
             add(("aes", [path, "--key", hint["key"], "--iv", hint["iv"]],
                  "рядом ключ и IV — AES-CBC", 40))
+
+    if kind == "BMP":
+        add(("bmp_stego", [path, "--tail", "--planes"],
+             "BMP: скрытые строки, хвост, битовые плоскости", 60))
+        add(("strings", [path], "строки с ключевыми словами", 30))
+        add(("carve", [path, "--out", os.path.join(tempfile.gettempdir(),
+                                                  "solve_carve")],
+             "вырезать вложения", 40))
 
     if kind in ("PCAP", "PCAPNG"):
         # в сетевых задачах сначала ищем сам сервис: mDNS/DNS SRV даёт host:port

@@ -156,6 +156,8 @@ REGISTRY = [
     ("pwn", "libcoff", "pwn/libcoff.py", "смещения libc: system, /bin/sh"),
     ("network", "pcapsvc", "network/pcap_service.py",
      "pcap: сервис задачи (mDNS SRV/A -> host:port)"),
+    ("stego", "bmp_stego", "stego/bmp_stego.py",
+     "BMP: скрытые строки, хвост, битовые плоскости"),
     ("pwn", "replay", "pwn/replay.py",
      "подключиться к сервису: tcp/udp/http, отправить данные"),
     ("pwn", "autopwn", "pwn/autopwn.py",

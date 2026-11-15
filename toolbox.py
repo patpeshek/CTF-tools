@@ -153,6 +153,7 @@ REGISTRY = [
      "открытый .git → исходники (loose и pack, без запуска git)"),
 
     ("pwn", "checksec", "pwn/checksec.py", "защиты ELF/PE"),
+    ("pwn", "libcoff", "pwn/libcoff.py", "смещения libc: system, /bin/sh"),
     ("pwn", "ret2win", "pwn/ret2win.py", "паттерн/оффсет/payload"),
     ("pwn", "fmtstr", "pwn/fmtstr.py", "format string helper"),
     ("pwn", "oracle", "pwn/oracle.py", "TCP-оракул: вопрос → формула → ответ, N раундов"),
@@ -163,6 +164,7 @@ REGISTRY = [
     ("reverse", "ghidra", "reverse/ghidra_decomp.py", "декомпиляция Ghidra headless в C-подобный код"),
     ("reverse", "megarev", "reverse/megarev.py", "мега-реверс: тип/строки/ключи/перебор"),
     ("reverse", "lang", "reverse/lang_info.py", ".NET/Java/Go/Rust/Electron"),
+    ("reverse", "symbols", "reverse/symbols.py", "символы/адреса win, system, /bin/sh"),
     ("reverse", "xorscan", "reverse/xor_scan.py", "поиск XOR-ключа по файлу"),
     ("reverse", "pypack", "reverse/py_pack.py", "PyInstaller/pyarmor/Nuitka"),
 

@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import torch
 
-from features import FEATURE_NAMES
+import importlib
+
 from model import build
 
 
@@ -27,9 +28,12 @@ def main():
     ap.add_argument("--npz", required=True)
     ap.add_argument("--split", default="")
     ap.add_argument("--top", type=int, default=3)
+    ap.add_argument("--features-module", default="features")
     args = ap.parse_args()
 
     ck = torch.load(args.model, map_location="cpu", weights_only=False)
+    feat = importlib.import_module(args.features_module)
+    FEATURE_NAMES = feat.FEATURE_NAMES
     if len(ck["features"]) != len(FEATURE_NAMES):
         raise SystemExit(
             f"[-] чекпоинт на {len(ck['features'])} признаках, features.py даёт "

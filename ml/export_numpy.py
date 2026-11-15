@@ -28,6 +28,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--temperature", type=float, default=1.0,
                     help="из calibrate.py: делим логиты на T")
+    ap.add_argument("--features-module", default=None,
+                    help="модуль признаков (для реверса: rev_features); "
+                         "по умолчанию берётся из чекпоинта, иначе features")
     args = ap.parse_args()
 
     ck = torch.load(args.model, map_location="cpu", weights_only=False)
@@ -51,6 +54,7 @@ def main():
              families=np.array(ck["families"]),
              features=np.array(ck["features"]),
              temperature=np.array(args.temperature, dtype=np.float32),
+             features_module=np.array(args.features_module or "features"),
              arch=np.array("mlp"))
     size = os.path.getsize(args.out)
     print(f"[+] сохранено: {args.out} ({size / 1024:.0f} КБ), "

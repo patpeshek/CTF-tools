@@ -139,6 +139,8 @@ def main():
     ap.add_argument("--layers", type=int, default=4)
     ap.add_argument("--heads", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--class-weights", action="store_true",
+                    help="взвесить классы обратно частоте (для перекошенных наборов)")
     ap.add_argument("--features-module", default="features",
                     help="modules with FEATURE_NAMES (для реверса: rev_features)")
     args = ap.parse_args()
@@ -184,7 +186,18 @@ def main():
     steps = max(1, len(train_dl) * args.epochs)
     sched = torch.optim.lr_scheduler.OneCycleLR(
         opt, max_lr=args.lr, total_steps=steps, pct_start=0.1)
-    crit = nn.CrossEntropyLoss(label_smoothing=0.05)
+    if args.class_weights:
+        counts = np.bincount([fam_to_idx.get(f, 0) for f in train_rows["family"]],
+                             minlength=n_classes).astype(np.float64)
+        w = np.sqrt(counts.sum() / (n_classes * np.maximum(counts, 1.0)))
+        w = np.clip(w, 0.5, 4.0)      # жёсткие веса ломают большинство
+        crit = nn.CrossEntropyLoss(
+            weight=torch.tensor(w, dtype=torch.float32).to(device),
+            label_smoothing=0.05)
+        print("[+] веса классов: " + ", ".join(f"{f}={v:.2f}" for f, v in
+                                              zip(families, w)), flush=True)
+    else:
+        crit = nn.CrossEntropyLoss(label_smoothing=0.05)
 
     best = -1.0
     history = []

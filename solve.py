@@ -900,6 +900,32 @@ FAMILY_TOOLS = {
     "reverse": ["chain", "enc"], "random_bin": ["facts", "carve"],
 }
 
+# Реверс-модель отвечает не «это elf», а «это Go / Rust / UPX / .NET / …» —
+# от этого зависит первый инструмент. Ключи совпадают с классами
+# ml/rev_features.py; инструменты — с реестром toolbox.py.
+REV_TOOLS = {
+    "elf_go": ["lang", "strings", "megarev", "disasm"],
+    "elf_rust": ["lang", "megarev", "strings", "disasm"],
+    "elf_packed": ["strings", "megarev", "disasm", "chain"],
+    "elf_dynamic": ["strings", "disasm", "ghidra", "megarev"],
+    "elf_static": ["megarev", "disasm", "ghidra"],
+    "elf_stripped": ["megarev", "disasm", "ghidra"],
+    "pe_native": ["strings", "disasm", "megarev"],
+    "pe_dotnet": ["lang", "strings", "megarev"],
+    "pe_packed": ["lang", "strings", "chain"],
+}
+
+# Pwn-модель предсказывает профиль защит — это подсказка, с чего начинать.
+PWN_ADVICE = {
+    "pwn_shellcode": "стек исполняемый: шеллкод или ret2shellcode",
+    "pwn_ret2win": "канарейки нет, PIE нет: переполнение до ret2win",
+    "pwn_ret2libc": "нужна утечка адреса libc → ret2libc/ROP",
+    "pwn_canary_nopie": "канарейка: сначала утечка, потом ROP",
+    "pwn_canary_pie": "канарейка + PIE: утечка адреса и канарейки",
+    "pwn_static": "статическая линковка: ROP по своему коду",
+    "pwn_pe": "PE: DEP/SEH, приёмы другие",
+}
+
 
 def _ai_sample(target):
     """Байты, по которым модель судит о задаче (файл или папка)."""
@@ -1003,11 +1029,28 @@ def smart_order(steps, target, verbose=True):
         return steps
 
     fam_score = {}
+    # роутер форматов работает всегда, как и раньше
     if router is not None:
         probs = router.probs(data)
         for fam, p in zip(router.families, probs):
             for tool in FAMILY_TOOLS.get(fam, []):
                 fam_score[tool] = fam_score.get(tool, 0.0) + float(p)
+    # реверс-модель добавляет свои оценки только для ELF/PE и не отменяет
+    # роутер: сумма по инструментам складывается, порядок роутера сохраняется.
+    rev = SMART_ORDER.get("rev")
+    is_binary = data[:4] == b"\x7fELF" or data[:2] == b"MZ"
+    if is_binary:
+        # для бинарника сначала дешёвые и самые информативные шаги:
+        # язык/упаковка (Go/Rust/.NET) и профиль защит — они меняют весь план
+        fam_score["lang"] = fam_score.get("lang", 0.0) + 1.0
+        fam_score["checksec"] = fam_score.get("checksec", 0.0) + 0.9
+    if rev is not None and is_binary:
+        try:
+            for fam, p in zip(rev.families, rev.probs(data)):
+                for tool in REV_TOOLS.get(fam, []):
+                    fam_score[tool] = fam_score.get(tool, 0.0) + float(p)
+        except Exception:
+            pass
     mx_fam = max(fam_score.values()) if fam_score else 1.0
 
     pol_score = {}
@@ -1031,11 +1074,19 @@ def smart_order(steps, target, verbose=True):
         return 0.65 * fam + 0.35 * pol
 
     ordered = sorted(steps, key=lambda s: -score(s))
+    if is_binary:
+        # у бинарника первые два шага решают всё остальное: что за язык/упаковка
+        # (lang) и какие защиты (checksec). Веса их не поднимают — сумма
+        # вероятностей по megarev больше, — поэтому поднимаем явно.
+        fast = ("lang", "checksec", "symbols", "libcoff")
+        head = [s for s in ordered if s[0] in fast]
+        rest = [s for s in ordered if s[0] not in fast]
+        ordered = head + rest
     if verbose:
         top = ", ".join(f"{s[0]} {score(s):.2f}" for s in ordered[:5])
         src = ("роутер+политика" if (router and policy)
                else ("роутер" if router else "политика"))
-        print(f"[smart] порядок по оценке ({src}): {top}")
+        print(f"[smart] порядок по оценке моделей ({src}): {top}")
     return ordered
 
 def steps_for(path, deep=False, depth=0):
@@ -1259,6 +1310,36 @@ def steps_for(path, deep=False, depth=0):
         add(("rsa", rsa_args, "PEM/DER-ключ: n/e/d и атаки", 60))
 
     if kind in ("ELF", "PE"):
+        # подсказку даёт точный разбор заголовков (pwn_features), а не модель:
+        # защита — факт из файла, ошибаться тут нельзя
+        advice = ""
+        if data[:4] == b"\x7fELF":
+            try:
+                _ml = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ml")
+                if _ml not in sys.path:
+                    sys.path.insert(0, _ml)
+                import pwn_features
+                advice = PWN_ADVICE.get(pwn_features.label_of(data), "")
+            except Exception:
+                advice = ""
+        if kind == "ELF":
+            add(("checksec", [path, "--json"],
+                 "профиль защит" + (f"; вероятнее всего: {advice}" if advice else ""),
+                 20))
+            add(("symbols", [path],
+                 "символы и адреса: win / system / /bin/sh", 30))
+        add(("lang", [path], "язык/упаковка (Go/Rust/.NET/Electron)", 40))
+        # libc рядом с бинарником — сразу считаем смещения для ret2libc
+        if kind == "ELF":
+            try:
+                folder = os.path.dirname(os.path.abspath(path))
+                for nm in sorted(os.listdir(folder)):
+                    if re.match(r"(?i)^(libc[.-]?\d|libc\.so)", nm):
+                        add(("libcoff", [os.path.join(folder, nm)],
+                             "смещения libc: system, execve, /bin/sh", 20))
+                        break
+            except OSError:
+                pass
         add(("strings", [path], "строки с ключевыми словами", 40))
         add(("disasm", [path, "--interesting", "--limit", "400"],
              "дизасм: сравнения, константы, ссылки на строки", 60))
@@ -2070,6 +2151,17 @@ def main():
                 print(f"[smart] роутер: {os.path.basename(router_path)}")
             except Exception as exc:
                 print(f"[!] --smart: роутер не загрузился ({exc})")
+        # специализированные модели: реверс (что за бинарник) и pwn (защиты)
+        for key, fname in (("rev", "rev_best.npz"), ("pwn", "pwn_best.npz")):
+            mp = os.path.join(here, "ml", fname)
+            if not os.path.exists(mp):
+                continue
+            try:
+                from np_router import Router
+                SMART_ORDER[key] = Router(mp)
+                print(f"[smart] {key}-модель: {fname}")
+            except Exception as exc:
+                print(f"[!] --smart: {key}-модель не загрузилась ({exc})")
         # политика — экспериментальная: на замере она не меняла число шагов
         # (солвер идёт пачками параллельно), а на LSB-задаче ухудшала порядок.
         # Поэтому включается только явно: --policy PATH или SOLVER_POLICY.

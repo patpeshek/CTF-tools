@@ -5,8 +5,13 @@
 (`export_numpy.py`), а forward считается вручную: три линейных слоя + GELU.
 Это ~1 мс на файл и никаких зависимостей.
 
+Один и тот же класс обслуживает разные модели: признаки берутся из модуля,
+имя которого сохранено в npz (`features_module`). Так реверс-модель
+(`rev_features`) и pwn-модель (`pwn_features`) работают без отдельного кода.
+
   from np_router import Router
-  r = Router(r"F:\\AIproject\\ml-runs\\router_v10.npz")
+  r = Router(r"F:\\AIproject\\ml-runs\\router_best.npz")          # форматы
+  r = Router(r"F:\\AIproject\\ml-runs\\rev_v1.npz.router")         # реверс
   r.top(data, k=3)             # [('png', 0.64), ('gif', 0.12), ...]
   r.is_confident(data)         # False, если max prob < порога
 
@@ -14,6 +19,7 @@
 """
 from __future__ import annotations
 
+import importlib
 import math
 import os
 import sys
@@ -21,8 +27,6 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from features import byte_hist, hand_features
 
 
 def _erf(x: np.ndarray) -> np.ndarray:
@@ -42,7 +46,7 @@ def _gelu(x: np.ndarray) -> np.ndarray:
 
 
 class Router:
-    def __init__(self, path: str):
+    def __init__(self, path: str, features_module: str | None = None):
         d = np.load(path, allow_pickle=False)
         self.w1, self.b1 = d["w1"], d["b1"]
         self.w2, self.b2 = d["w2"], d["b2"]
@@ -50,13 +54,19 @@ class Router:
         self.families = [str(x) for x in d["families"]]
         self.features = [str(x) for x in d["features"]]
         self.temperature = float(d["temperature"]) if "temperature" in d.files else 1.0
-        if len(self.features) != len(hand_features(b"x")):
+        if features_module is None and "features_module" in d.files:
+            features_module = str(d["features_module"])
+        mod = importlib.import_module(features_module or "features")
+        self.hand_features = mod.hand_features
+        self.byte_hist = mod.byte_hist
+        if len(self.features) != len(self.hand_features(b"x")):
             raise RuntimeError(
                 f"{path}: обучен на {len(self.features)} признаках, "
-                f"features.py даёт {len(hand_features(b'x'))} — переэкспортируй")
+                f"{mod.__name__} даёт {len(self.hand_features(b'x'))} — переэкспортируй")
 
     def logits(self, data: bytes) -> np.ndarray:
-        x = np.concatenate([hand_features(data), byte_hist(data)]).astype(np.float32)
+        x = np.concatenate([self.hand_features(data),
+                            self.byte_hist(data)]).astype(np.float32)
         h = _gelu(x @ self.w1.T + self.b1)
         h = _gelu(h @ self.w2.T + self.b2)
         return h @ self.w3.T + self.b3

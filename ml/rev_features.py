@@ -64,6 +64,33 @@ def _elf_sections(data: bytes) -> list[str]:
         return []
 
 
+def _elf_phdrs(data: bytes) -> list[tuple[int, int]]:
+    """[(p_type, p_flags)] из таблицы программных заголовков ELF."""
+    if data[:4] != b"\x7fELF" or len(data) < 64:
+        return []
+    is64 = data[4] == 2
+    try:
+        if is64:
+            e_phoff = struct.unpack_from("<Q", data, 0x20)[0]
+            e_phentsize = struct.unpack_from("<H", data, 0x36)[0]
+            e_phnum = struct.unpack_from("<H", data, 0x38)[0]
+        else:
+            e_phoff = struct.unpack_from("<I", data, 0x1C)[0]
+            e_phentsize = struct.unpack_from("<H", data, 0x2A)[0]
+            e_phnum = struct.unpack_from("<H", data, 0x2C)[0]
+        if not (0 < e_phnum < 100 and e_phoff and e_phentsize >= 32):
+            return []
+        out = []
+        for i in range(e_phnum):
+            off = e_phoff + i * e_phentsize
+            p_type = struct.unpack_from("<I", data, off)[0]
+            p_flags = struct.unpack_from("<I", data, off + (4 if is64 else 24))[0]
+            out.append((p_type, p_flags))
+        return out
+    except struct.error:
+        return []
+
+
 def _pe_has_dotnet(data: bytes) -> bool:
     if data[:2] != b"MZ":
         return False
@@ -97,6 +124,11 @@ def label_of(data: bytes) -> str:
             return "elf_rust"
         has_interp = ".interp" in secs or b"/lib64/ld-linux" in blob[:100000]
         has_symtab = ".symtab" in secs or ".debug_info" in secs
+        e_type = struct.unpack_from("<H", data, 0x10)[0] if len(data) > 18 else 0
+        # ET_DYN без интерпретатора — это .so (libc и т.п.), а не «stripped exe».
+        # Без этого класса весь архив схлопывался в 'elf_stripped' (1900 из 2300).
+        if e_type == 3 and not has_interp:
+            return "elf_shared"
         if not secs:                     # заголовок не разобрался — stripped
             return "elf_stripped"
         if has_interp and has_symtab:
@@ -117,7 +149,7 @@ def label_of(data: bytes) -> str:
 
 
 LABELS = ["elf_go", "elf_rust", "elf_packed", "elf_dynamic", "elf_static",
-          "elf_stripped", "pe_native", "pe_dotnet", "pe_packed"]
+          "elf_stripped", "elf_shared", "pe_native", "pe_dotnet", "pe_packed"]
 
 # ------------------------------------------------------------ признаки -----
 SEC_RE = re.compile(rb"\.(text|data|rodata|bss|symtab|debug_info|interp|plt\w*|got\w*)")
@@ -140,13 +172,23 @@ def hand_features(data: bytes) -> np.ndarray:
     entropy = float(-(p * np.log2(p)).sum()) if len(p) else 0.0
     strings = len(re.findall(rb"[\x20-\x7e]{6,}", chunk))
 
+    # --- маркеры защит: без них pwn-модель путала ret2libc и canary ---
+    try:
+        phdrs = _elf_phdrs(data) if data[:4] == b"\x7fELF" else []
+    except Exception:
+        phdrs = []
+    gnu_stack = [f for t, f in phdrs if t == 0x6474E551]
+    has_gnu_stack = 1.0 if gnu_stack else 0.0
+    stack_nx = 1.0 if (gnu_stack and not (gnu_stack[0] & 1)) else 0.0
+    e_type = struct.unpack_from("<H", data, 0x10)[0] if len(data) > 18 else 0
+
     vec = [
         np.log1p(len(data)),
         entropy,
         printable,
         zero,
         np.log1p(len(secs)),
-        np.log1p(len(strings)),
+        np.log1p(strings),
         1.0 if ".symtab" in secs else 0.0,
         1.0 if ".debug_info" in secs else 0.0,
         1.0 if ".interp" in secs else 0.0,
@@ -163,6 +205,10 @@ def hand_features(data: bytes) -> np.ndarray:
         data[4] / 2.0 if len(data) > 4 else 0.0,        # 32/64 бит
         (data[18] if len(data) > 18 else 0) / 255.0,    # машина (младший байт)
         float(sum(len(s) for s in secs) / max(1, len(secs))),  # средняя длина имени
+        1.0 if b"__stack_chk_fail" in blob else 0.0,   # канарейка
+        stack_nx,                                      # NX стека (1 = включён)
+        has_gnu_stack,                                 # есть PT_GNU_STACK
+        1.0 if e_type == 3 else 0.0,                   # ET_DYN (PIE/so)
     ]
     return np.asarray(vec, dtype=np.float32)
 
@@ -172,7 +218,7 @@ FEATURE_NAMES = [
     "strings_log", "has_symtab", "has_debug", "has_interp", "has_plt",
     "has_got", "is_elf", "is_pe", "mark_go", "mark_rust", "mark_pack",
     "mark_dotnet", "mark_ld", "upx_head", "elf_class", "elf_machine",
-    "avg_secname",
+    "avg_secname", "mark_canary", "stack_nx", "has_gnu_stack", "et_dyn",
 ]
 
 

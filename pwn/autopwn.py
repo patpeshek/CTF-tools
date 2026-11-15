@@ -124,8 +124,13 @@ def find_offsets(data, is64, symbols):
         if typ == 2 and addr and name.lstrip("_") in VULN_FUNCS:
             funcs.setdefault(name.lstrip("_"), addr)
     targets = [(n, a) for n, a in funcs.items()]
+    # добавляем и все прочие функции: уязвимая часто называется desk/echo/...
+    seen_addr = {a for _n, a in targets}
+    for name, addr, typ in symbols:
+        if typ == 2 and addr and addr not in seen_addr:
+            targets.append((name.lstrip("_"), addr))
     if not targets:
-        return [], "не нашёл main/vuln в символах (stripped?)"
+        return [], "не нашёл функций в символах (stripped?)"
     out = []
     for name, start in targets:
         # окно: от старта функции до 400 байт (main бывает маленьким)
@@ -158,6 +163,57 @@ def find_offsets(data, is64, symbols):
             seen.add(c["offset"])
             uniq.append(c)
     return uniq[:4], ""
+
+
+def find_flag_reader(data: bytes, symbols):
+    """Функция, которая ссылается на путь/строку со словом flag.
+
+    В задачах вида `final_note()` нет символа `win`, но функция открывает
+    `/run/case/flag` и печатает содержимое. Ищем по дизассемблеру: какая
+    функция грузит адрес строки с `flag` через lea.
+    """
+    try:
+        import capstone
+    except Exception:
+        return None
+    # адреса строк со словом flag
+    targets = set()
+    for m in re.finditer(rb"[ -~]{4,120}", data):
+        chunk = m.group(0)
+        if b"flag" in chunk.lower() and (b"/" in chunk or b"{" in chunk or len(chunk) < 40):
+            targets.add(m.start())
+    if not targets:
+        return None
+    # перевести файловые смещения в виртуальные адреса
+    va_of = {}
+    for nm, _t, addr, off, size, _l, _e in elf_symbols._sections(data):
+        for fo in list(targets):
+            if off <= fo < off + size:
+                va_of[addr + (fo - off)] = fo
+    if not va_of:
+        return None
+    md = capstone.Cs(capstone.CS_ARCH_X86,
+                     capstone.CS_MODE_64 if data[4] == 2 else capstone.CS_MODE_32)
+    for name, addr, typ in symbols:
+        if typ != 2 or not addr:
+            continue
+        for sec_addr, sec_off, size in _exec_ranges(data):
+            if not (sec_addr <= addr < sec_addr + size):
+                continue
+            code = data[sec_off + (addr - sec_addr):][:600]
+            for ins in md.disasm(code, addr):
+                if ins.mnemonic == "lea":
+                    m = re.search(r"\[rip ([+-]) (0x[0-9a-f]+)\]", ins.op_str)
+                    if m:
+                        disp = int(m.group(2), 16)
+                        if m.group(1) == "-":
+                            disp = -disp
+                        target = ins.address + ins.size + disp
+                        if target in va_of:
+                            return {"name": name, "addr": addr}
+                if ins.mnemonic in ("ret", "jmp"):
+                    break
+    return None
 
 
 def analyse(path: str):
@@ -205,6 +261,11 @@ def analyse(path: str):
         res["blocked"] = blocked
         return res
 
+    if not win:
+        reader = find_flag_reader(data, syms)
+        if reader:
+            win = {"name": reader["name"], "addr": reader["addr"],
+                   "how": "читает flag-файл"}
     if win:
         chain = [win["addr"]]
         what = f"ret2win → {win['name']}"
